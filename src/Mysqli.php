@@ -52,6 +52,10 @@ class Mysqli
     private $traceQueryStartTime = null;//语句开始执行时间
     private $lastInsertId;
 
+    /*
+     * 事务配置项
+     */
+    private $startTransaction = false;
 
     function __construct(Config $config)
     {
@@ -144,6 +148,53 @@ class Mysqli
     }
 
 
+    public function startTransaction():bool
+    {
+        if($this->startTransaction){
+            return true;
+        }else{
+            $this->connect();
+            $res =  $this->coroutineMysqlClient->query('start transaction');
+            if($res){
+                $this->startTransaction = true;
+            }
+            return $res;
+        }
+    }
+
+    public function commit():bool
+    {
+        if($this->startTransaction){
+            $this->connect();
+            $res =  $this->coroutineMysqlClient->query('commit');
+            if($res){
+                $this->startTransaction = false;
+            }
+            return $res;
+        }else{
+            return true;
+        }
+    }
+
+    public function rollback($commit = true)
+    {
+        if($this->startTransaction){
+            $this->connect();
+            $res =  $this->coroutineMysqlClient->query('rollback');
+            if($res && $commit){
+                $res = $this->commit();
+                if($res){
+                    $this->startTransaction = false;
+                }
+                return $res;
+            }else{
+                return $res;
+            }
+        }else{
+            return true;
+        }
+    }
+
     public function where($whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND'):Mysqli
     {
         if (is_array($whereValue) && ($key = key($whereValue)) != "0") {
@@ -179,6 +230,7 @@ class Mysqli
         $res = $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
+        $this->count = $stmt->affected_rows;
         $this->resetDbStatus();
         return $res;
     }
