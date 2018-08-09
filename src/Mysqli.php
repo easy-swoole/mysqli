@@ -31,7 +31,8 @@ class Mysqli
     private $queryOptions = [];
     private $having = [];
     private $updateColumns = [];
-    private $count = 0;
+    private $affectRows = 0;
+    private $totalCount = 0;
     private $tableName;
     private $forUpdate = false;
     private $lockInShareMode = false;
@@ -113,7 +114,8 @@ class Mysqli
         $this->queryOptions = [];
         $this->having = [];
         $this->updateColumns = [];
-        $this->count = 0;
+        $this->affectRows = 0;
+        $this->totalCount = 0;
         $this->tableName;
         $this->forUpdate = false;
         $this->lockInShareMode = false;
@@ -139,7 +141,7 @@ class Mysqli
         $this->query = $query;
         $stmt = $this->prepareQuery();
         $res = $this->exec($stmt);
-        $this->count = $stmt->affected_rows;
+        $this->affectRows = $stmt->affected_rows;
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
         $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
@@ -230,7 +232,7 @@ class Mysqli
         $res = $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
-        $this->count = $stmt->affected_rows;
+        $this->affectRows = $stmt->affected_rows;
         $this->resetDbStatus();
         return $res;
     }
@@ -286,7 +288,7 @@ class Mysqli
         $this->resetDbStatus();
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
-        $this->count = $stmt->affected_rows;
+        $this->affectRows = $stmt->affected_rows;
 
         return $status;
     }
@@ -315,6 +317,29 @@ class Mysqli
         return array("[I]" => "+" . $num);
     }
 
+    public function withTotalCount()
+    {
+        $this->setQueryOption ('SQL_CALC_FOUND_ROWS');
+        return $this;
+    }
+
+    /**
+     * @return int
+     */
+    public function getTotalCount(): int
+    {
+        return $this->totalCount;
+    }
+
+    /**
+     * @return int
+     */
+    public function getAffectRows(): int
+    {
+        return $this->affectRows;
+    }
+
+
     public function dec(int $num = 1)
     {
         return array("[I]" => "-" . $num);
@@ -331,6 +356,21 @@ class Mysqli
         return $this;
     }
 
+
+    public function setQueryOption ($options) {
+        $allowedOptions = Array ('ALL','DISTINCT','DISTINCTROW','HIGH_PRIORITY','STRAIGHT_JOIN','SQL_SMALL_RESULT',
+            'SQL_BIG_RESULT','SQL_BUFFER_RESULT','SQL_CACHE','SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
+            'LOW_PRIORITY','IGNORE','QUICK');
+        if (!is_array ($options))
+            $options = Array ($options);
+        foreach ($options as $option) {
+            $option = strtoupper ($option);
+            if (!in_array ($option, $allowedOptions))
+                die ('Wrong query option: '.$option);
+            $this->queryOptions[] = $option;
+        }
+        return $this;
+    }
 
     private function buildQuery($numRows = null, $tableData = null)
     {
@@ -370,7 +410,12 @@ class Mysqli
         }else{
             $data = [];
         }
-        return $stmt->execute($data);
+        $ret =  $stmt->execute($data);
+        if (in_array ('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
+            $this->getMysqlClient()->query('SELECT FOUND_ROWS()');
+            $this->totalCount = $this->getMysqlClient()->affected_rows;
+        }
+        return $ret;
     }
 
     private function buildJoin ()
@@ -755,9 +800,9 @@ class Mysqli
         $status = $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
-        $haveOnDuplicate = !empty ($this->_updateColumns);
+        $haveOnDuplicate = !empty ($this->updateColumns);
         $this->resetDbStatus();
-        $this->count = $stmt->affected_rows;
+        $this->affectRows = $stmt->affected_rows;
         if ($stmt->affected_rows < 1) {
             // in case of onDuplicate() usage, if no rows were inserted
             if ($status && $haveOnDuplicate) {
