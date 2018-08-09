@@ -114,8 +114,8 @@ class Mysqli
         $this->queryOptions = [];
         $this->having = [];
         $this->updateColumns = [];
-        $this->affectRows = 0;
-        $this->totalCount = 0;
+//        $this->affectRows = 0;此字段不需要重置
+//        $this->totalCount = 0;
         $this->tableName;
         $this->forUpdate = false;
         $this->lockInShareMode = false;
@@ -412,8 +412,8 @@ class Mysqli
         }
         $ret =  $stmt->execute($data);
         if (in_array ('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
-            $this->getMysqlClient()->query('SELECT FOUND_ROWS()');
-            $this->totalCount = $this->getMysqlClient()->affected_rows;
+            $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
+            $this->totalCount = $hitCount[0]['count'];
         }
         return $ret;
     }
