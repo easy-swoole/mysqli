@@ -74,11 +74,15 @@ class Mysqli
         if($this->coroutineMysqlClient->connected){
             return true;
         }else{
-            $ret =  $this->coroutineMysqlClient->connect($this->config->toArray());
-            if($ret){
-                return true;
-            }else{
-                throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail");
+            try{
+                $ret = $this->coroutineMysqlClient->connect($this->config->toArray());
+                if($ret){
+                    return true;
+                }else{
+                    throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail");
+                }
+            }catch (\Throwable $throwable){
+                throw new ConnectFail($throwable->getMessage());
             }
         }
     }
@@ -134,7 +138,9 @@ class Mysqli
         $this->trace = [];
         return $res;
     }
-
+    /**
+     * @throws \Exception,
+     */
     public function rawQuery($query, array $bindParams = [])
     {
         $this->bindParams = $bindParams;
@@ -215,6 +221,9 @@ class Mysqli
         return $this->where($whereProp, $whereValue, $operator, 'OR');
     }
 
+    /**
+     * @throws \Exception,
+     */
     public function get($tableName, $numRows = null, $columns = '*')
     {
         $this->tableName = $tableName;
@@ -237,6 +246,9 @@ class Mysqli
         return $res;
     }
 
+    /**
+     * @throws \Exception,
+     */
     public function getOne($tableName, $columns = '*')
     {
         $res = $this->get($tableName, 1, $columns);
@@ -250,11 +262,17 @@ class Mysqli
         return null;
     }
 
+    /**
+     * @throws \Exception,
+     */
     public function insert($tableName, $insertData)
     {
         return $this->buildInsert($tableName, $insertData, 'INSERT');
     }
 
+    /**
+     * @throws \Exception,
+     */
     public function delete($tableName, $numRows = null)
     {
         if ($this->config->isSubQuery()) {
@@ -275,12 +293,14 @@ class Mysqli
         return ($stmt->affected_rows > -1);	//	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
     }
 
+    /**
+     * @throws \Exception,
+     */
     public function update($tableName, $tableData, $numRows = null)
     {
         if ($this->config->isSubQuery()) {
             return;
         }
-
         $this->query = "UPDATE " . $tableName;
 
         $stmt = $this->buildQuery($numRows, $tableData);
@@ -468,7 +488,7 @@ class Mysqli
         }
     }
 
-    private function _determineType($item)
+    private function determineType($item)
     {
         switch (gettype($item)) {
             case 'NULL':
@@ -621,6 +641,7 @@ class Mysqli
         }
         $this->query = rtrim($this->query, ', ');
     }
+
     private function buildCondition($operator, &$conditions)
     {
         if (empty($conditions)) {
