@@ -9,6 +9,7 @@
 namespace EasySwoole\Mysqli;
 use EasySwoole\Mysqli\Exceptions\ConnectFail;
 use EasySwoole\Mysqli\Exceptions\JoinFail;
+use EasySwoole\Mysqli\Exceptions\Option;
 use EasySwoole\Mysqli\Exceptions\OrderByFail;
 use EasySwoole\Mysqli\Exceptions\PrepareQueryFail;
 use \Swoole\Coroutine\MySQL as CoroutineMySQL;
@@ -36,6 +37,9 @@ class Mysqli
     private $tableName;
     private $forUpdate = false;
     private $lockInShareMode = false;
+    private $queryAllowOptions = ['ALL','DISTINCT','DISTINCTROW','HIGH_PRIORITY','STRAIGHT_JOIN','SQL_SMALL_RESULT',
+        'SQL_BIG_RESULT','SQL_BUFFER_RESULT','SQL_CACHE','SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
+        'LOW_PRIORITY','IGNORE','QUICK'];
 
     /*
      * 子查询配置
@@ -377,17 +381,20 @@ class Mysqli
     }
 
 
-    public function setQueryOption ($options) {
-        $allowedOptions = Array ('ALL','DISTINCT','DISTINCTROW','HIGH_PRIORITY','STRAIGHT_JOIN','SQL_SMALL_RESULT',
-            'SQL_BIG_RESULT','SQL_BUFFER_RESULT','SQL_CACHE','SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
-            'LOW_PRIORITY','IGNORE','QUICK');
-        if (!is_array ($options))
+    public function setQueryOption ($options)
+    {
+        if (!is_array ($options)){
             $options = Array ($options);
+        }
         foreach ($options as $option) {
             $option = strtoupper ($option);
-            if (!in_array ($option, $allowedOptions))
-                die ('Wrong query option: '.$option);
-            $this->queryOptions[] = $option;
+            if (!in_array ($option, $this->queryAllowOptions)){
+                throw new Option('Wrong query option: '.$option);
+            }else{
+                if(!in_array($option,$this->queryOptions)){
+                    $this->queryOptions[] = $option;
+                }
+            }
         }
         return $this;
     }
