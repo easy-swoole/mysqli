@@ -102,6 +102,7 @@ class Mysqli
      */
     function getMysqlClient():CoroutineMySQL
     {
+        $this->connect();
         return $this->coroutineMysqlClient;
     }
 
