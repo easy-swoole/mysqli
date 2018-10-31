@@ -83,7 +83,9 @@ class Mysqli
                 if($ret){
                     return true;
                 }else{
-                    throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail");
+                    $errno = $this->coroutineMysqlClient->connect_errno;
+                    $error = $this->coroutineMysqlClient->connect_error;
+                    throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail: {$errno} {$error}");
                 }
             }catch (\Throwable $throwable){
                 throw new ConnectFail($throwable->getMessage());
