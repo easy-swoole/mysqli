@@ -272,9 +272,60 @@ class Mysqli
     /**
      * @throws \Exception,
      */
+    public function getValue($tableName, $column, $limit = 1)
+    {
+        $res = $this->get($tableName, $limit, "{$column} AS retval");
+        if (!$res) {
+            return null;
+        }
+        if ($limit == 1) {
+            if (isset($res[0]["retval"])) {
+                return $res[0]["retval"];
+            }
+            return null;
+        }
+        $newRes = Array();
+        for ($i = 0; $i < $this->affectRows; $i++) {
+            $newRes[] = $res[$i]['retval'];
+        }
+        return $newRes;
+    }
+
+    /**
+     * @throws \Exception,
+     */
     public function insert($tableName, $insertData)
     {
         return $this->buildInsert($tableName, $insertData, 'INSERT');
+    }
+
+    /**
+     * @throws \Exception,
+     */
+    public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
+    {
+        $ids = array();
+        foreach ($multiInsertData as $insertData) {
+            if($dataKeys !== null) {
+                // apply column-names if given, else assume they're already given in the data
+                $insertData = array_combine($dataKeys, $insertData);
+            }
+            $id = $this->insert($tableName, $insertData);
+            if(!$id) {
+                return false;
+            }
+            $ids[] = $id;
+        }
+        return $ids;
+    }
+
+    /**
+     * @throws \Exception,
+     */
+    public function has($tableName)
+    {
+        $this->getOne($tableName, '1');
+        return $this->affectRows >= 1;
     }
 
     /**
