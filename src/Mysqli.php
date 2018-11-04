@@ -711,6 +711,22 @@ class Mysqli
     }
 
     /**
+     * 设置单个字段的值 (属于Update的快捷方法 )
+     * 可用于快速更改某个字段的状态
+     * @example $db->whereIn('userId','1,2,3,4')->setValue('user_account','isUse',1)
+     * @param $tableName
+     * @param $filedName
+     * @param $value
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    function setValue($tableName, $filedName, $value)
+    {
+        return $this->update($tableName, [ $filedName => $value ]);
+    }
+
+    /**
      * 更新数据
      * @param string $tableName 表名称
      * @param array $tableData 需要更新的数据
