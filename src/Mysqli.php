@@ -38,6 +38,7 @@ class Mysqli
     private $tableName;
     private $forUpdate = false;
     private $lockInShareMode = false;
+    private $isFetchSql = false;
     private $queryAllowOptions = [ 'ALL', 'DISTINCT', 'DISTINCTROW', 'HIGH_PRIORITY', 'STRAIGHT_JOIN', 'SQL_SMALL_RESULT',
         'SQL_BIG_RESULT', 'SQL_BUFFER_RESULT', 'SQL_CACHE', 'SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
         'LOW_PRIORITY', 'IGNORE', 'QUICK' ];
@@ -133,6 +134,7 @@ class Mysqli
         $this->tableName;
         $this->forUpdate = false;
         $this->lockInShareMode = false;
+        $this->isFetchSql = false;
         // $this->affectRows = 0;  // 此字段不需要重置
         // $this->totalCount = 0;  // 此字段不需要重置
     }
@@ -170,13 +172,18 @@ class Mysqli
     {
         $this->bindParams = $bindParams;
         $this->query = $query;
-        $stmt = $this->prepareQuery();
-        $res = $this->exec($stmt);
-        $this->affectRows = $stmt->affected_rows;
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
-        $this->resetDbStatus();
+        if ($this->isFetchSql) {
+            $res = $this->replacePlaceHolders($this->query, $bindParams);
+            $this->resetDbStatus();
+        } else {
+            $stmt = $this->prepareQuery();
+            $res = $this->exec($stmt);
+            $this->affectRows = $stmt->affected_rows;
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
+            $this->resetDbStatus();
+        }
         return $res;
     }
 
@@ -436,6 +443,9 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return $this;
         }
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $res = $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
@@ -454,7 +464,11 @@ class Mysqli
      */
     public function getOne($tableName, $columns = '*')
     {
+        $isFetch = $this->isFetchSql;
         $res = $this->get($tableName, 1, $columns);
+        if ($isFetch) {
+            return $res;
+        }
         if ($res instanceof Mysqli) {
             return $res;
         } elseif (is_array($res) && isset($res[0])) {
@@ -476,7 +490,11 @@ class Mysqli
      */
     public function getValue($tableName, $column, $limit = 1)
     {
+        $isFetch = $this->isFetchSql;
         $res = $this->get($tableName, $limit, "{$column} AS retval");
+        if ($isFetch) {
+            return $res;
+        }
         if (!$res) {
             return null;
         }
@@ -504,7 +522,11 @@ class Mysqli
      */
     function getColumn($tableName, $columnName, $limit = null)
     {
+        $isFetch = $this->isFetchSql;
         $res = $this->get($tableName, $limit, "{$columnName} AS retval");
+        if ($isFetch) {
+            return $res;
+        }
         if (!$res) {
             return [];
         }
@@ -532,6 +554,7 @@ class Mysqli
      * @return array|bool
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * TODO 多行插入应优化为INSERT INTO ... VALUES (...) , (...)
      */
     public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
     {
@@ -576,7 +599,11 @@ class Mysqli
         if (is_null($filedName)) {
             $filedName = '*';
         }
+        $isFetch = $this->isFetchSql;
         $retval = $this->get($tableName, null, "COUNT({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
         return $retval ? $retval[0]['retval'] : false;
     }
 
@@ -590,7 +617,11 @@ class Mysqli
      */
     public function max($tableName, $filedName)
     {
+        $isFetch = $this->isFetchSql;
         $retval = $this->get($tableName, null, "MAX({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
         return $retval ? $retval[0]['retval'] : false;
     }
 
@@ -604,7 +635,11 @@ class Mysqli
      */
     public function min($tableName, $filedName)
     {
+        $isFetch = $this->isFetchSql;
         $retval = $this->get($tableName, null, "MIN({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
         return $retval ? $retval[0]['retval'] : false;
     }
 
@@ -618,7 +653,11 @@ class Mysqli
      */
     public function sum($tableName, $filedName)
     {
+        $isFetch = $this->isFetchSql;
         $retval = $this->get($tableName, null, "SUM({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
         return $retval ? $retval[0]['retval'] : false;
     }
 
@@ -632,7 +671,11 @@ class Mysqli
      */
     public function avg($tableName, $filedName)
     {
+        $isFetch = $this->isFetchSql;
         $retval = $this->get($tableName, null, "AVG({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
         return $retval ? $retval[0]['retval'] : false;
     }
 
@@ -656,6 +699,9 @@ class Mysqli
             $this->query = 'DELETE FROM ' . $table;
         }
         $stmt = $this->buildQuery($numRows);
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
@@ -681,6 +727,9 @@ class Mysqli
         $this->query = "UPDATE " . $tableName;
 
         $stmt = $this->buildQuery($numRows, $tableData);
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $status = $this->exec($stmt);
         $this->resetDbStatus();
         $this->stmtError = $stmt->error;
@@ -765,6 +814,18 @@ class Mysqli
     public function setDec($tableName, $filedName, $num = 1)
     {
         return $this->update($tableName, [ $filedName => $this->dec($num) ]);
+    }
+
+    /**
+     * 获取即将执行的SQL语句
+     * @param bool $fetch
+     * @author: eValor < master@evalor.cn >
+     * @return Mysqli
+     */
+    function fetchSql(bool $fetch = true)
+    {
+        $this->isFetchSql = $fetch;
+        return $this;
     }
 
     /**
@@ -1332,6 +1393,9 @@ class Mysqli
         $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $tableName;
         $stmt = $this->buildQuery(null, $insertData);
         $status = $this->exec($stmt);
+        if ($this->isFetchSql) {
+            return $this->lastQuery;
+        }
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
         $haveOnDuplicate = !empty ($this->updateColumns);
@@ -1452,7 +1516,7 @@ class Mysqli
     /** 析构被调用时关闭当前链接并释放客户端对象 */
     function __destruct()
     {
-        if ($this->coroutineMysqlClient->connected) {
+        if (isset($this->coroutineMysqlClient) && $this->coroutineMysqlClient->connected) {
             $this->coroutineMysqlClient->close();
         }
         unset($this->coroutineMysqlClient);
