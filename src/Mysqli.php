@@ -564,6 +564,79 @@ class Mysqli
     }
 
     /**
+     * 聚合-计算总数
+     * @param string $tableName 表名称
+     * @param string|null $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function count($tableName, $filedName = null)
+    {
+        if (is_null($filedName)) {
+            $filedName = '*';
+        }
+        $retval = $this->get($tableName, null, "COUNT({$filedName}) as retval");
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求最大值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function max($tableName, $filedName)
+    {
+        $retval = $this->get($tableName, null, "MAX({$filedName}) as retval");
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求最小值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function min($tableName, $filedName)
+    {
+        $retval = $this->get($tableName, null, "MIN({$filedName}) as retval");
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-计算和值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function sum($tableName, $filedName)
+    {
+        $retval = $this->get($tableName, null, "SUM({$filedName}) as retval");
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求平均值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function avg($tableName, $filedName)
+    {
+        $retval = $this->get($tableName, null, "AVG({$filedName}) as retval");
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
      * 删除数据
      * @param string $tableName 表名称
      * @param null|integer $numRows 限制删除的行数
