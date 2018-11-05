@@ -62,6 +62,12 @@ class Mysqli
      */
     private $startTransaction = false;
 
+    /*
+     * fetch_mode模式时
+     */
+
+    private $lastStatement;
+
     function __construct(Config $config)
     {
         $this->config = $config;
@@ -453,6 +459,11 @@ class Mysqli
         return $this;
     }
 
+    public function getLastStatement():?Statement
+    {
+        return $this->lastStatement;
+    }
+
     private function buildQuery($numRows = null, $tableData = null)
     {
         $this->buildJoin();
@@ -486,6 +497,7 @@ class Mysqli
         if(!$this->coroutineMysqlClient->connected){
             $this->connect();
         }
+        $this->lastStatement = $stmt;
         if (!empty($this->bindParams)) {
             $data = $this->bindParams;
         }else{
