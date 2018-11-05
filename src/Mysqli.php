@@ -37,6 +37,7 @@ class Mysqli
     private $tableName;
     private $forUpdate = false;
     private $lockInShareMode = false;
+    private $returnType = 'array';
     private $queryAllowOptions = ['ALL','DISTINCT','DISTINCTROW','HIGH_PRIORITY','STRAIGHT_JOIN','SQL_SMALL_RESULT',
         'SQL_BIG_RESULT','SQL_BUFFER_RESULT','SQL_CACHE','SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
         'LOW_PRIORITY','IGNORE','QUICK'];
@@ -504,6 +505,11 @@ class Mysqli
             $data = [];
         }
         $ret =  $stmt->execute($data);
+	
+	if ($this->config->isFetchMode()) {
+            $ret = $this->_dynamicBindResults($stmt);
+        }	
+
         if (in_array ('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];
@@ -989,4 +995,66 @@ class Mysqli
         }
         unset($this->coroutineMysqlClient);
     }
+
+    public function onDuplicate($updateColumns, $lastInsertId = null)
+    {
+        $this->lastInsertId = $lastInsertId;
+        $this->updateColumns = $updateColumns;
+        return $this;
+    }
+
+    public function jsonBuilder()
+    {
+        $this->returnType = 'json';
+        return $this;
+    }
+
+    public function arrayBuilder()
+    {
+        $this->returnType = 'array';
+        return $this;
+    }
+
+    public function objectBuilder()
+    {
+        $this->returnType = 'object';
+        return $this;
+    }
+
+    protected function _dynamicBindResults($stmt)
+    {
+        $results = array();
+        while ($row = $stmt->fetch()) {
+            if ($this->returnType == 'object') {
+                $result = new \stdClass();
+                foreach ($row as $key => $val) {
+                    if (is_array($val)) {
+                        $result->$key = new stdClass ();
+                        foreach ($val as $k => $v) {
+                            $result->$key->$k = $v;
+                        }
+                    } else {
+                        $result->$key = $val;
+                    }
+                }
+            } else {
+                $result = array();
+                foreach ($row as $key => $val) {
+                    if (is_array($val)) {
+                        foreach ($val as $k => $v) {
+                            $result[$key][$k] = $v;
+                        }
+                    } else {
+                        $result[$key] = $val;
+                    }
+                }
+            }
+            array_push($results, $result);
+        }
+
+        if ($this->returnType == 'json') {
+            return json_encode($results);
+        }
+        return $results;
+    }	
 }
