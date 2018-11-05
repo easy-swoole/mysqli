@@ -21,7 +21,7 @@ class Config extends SplBean
     protected $timeout = 2;
     protected $charset = 'utf8';
     protected $strict_type =  false; //开启严格模式，返回的字段将自动转为数字类型
-    protected $fetch_more = true;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行或获取全部结果集(4.0版本以上)
+    protected $fetch_mode = true;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行或获取全部结果集(4.0版本以上)
     protected $alias = '';
     protected $isSubQuery = false;
 
@@ -156,17 +156,17 @@ class Config extends SplBean
     /**
      * @return bool
      */
-    public function isFetchMore()
+    public function isFetchMode()
     {
-        return $this->fetch_more;
+        return $this->fetch_mode;
     }
 
     /**
-     * @param bool $fetch_more
+     * @param bool $fetch_mode
      */
-    public function setFetchMore($fetch_more)
+    public function setFetchMode($fetch_mode)
     {
-        $this->fetch_more = $fetch_more;
+        $this->fetch_mode = $fetch_mode;
     }
 
     /**
