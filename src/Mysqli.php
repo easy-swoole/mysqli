@@ -7,14 +7,15 @@
  */
 
 namespace EasySwoole\Mysqli;
+
 use EasySwoole\Mysqli\Exceptions\ConnectFail;
 use EasySwoole\Mysqli\Exceptions\JoinFail;
 use EasySwoole\Mysqli\Exceptions\Option;
 use EasySwoole\Mysqli\Exceptions\OrderByFail;
 use EasySwoole\Mysqli\Exceptions\PrepareQueryFail;
+use EasySwoole\Mysqli\Exceptions\WhereParserFail;
 use \Swoole\Coroutine\MySQL as CoroutineMySQL;
 use \Swoole\Coroutine\MySQL\Statement;
-
 
 class Mysqli
 {
@@ -37,9 +38,10 @@ class Mysqli
     private $tableName;
     private $forUpdate = false;
     private $lockInShareMode = false;
-    private $queryAllowOptions = ['ALL','DISTINCT','DISTINCTROW','HIGH_PRIORITY','STRAIGHT_JOIN','SQL_SMALL_RESULT',
-        'SQL_BIG_RESULT','SQL_BUFFER_RESULT','SQL_CACHE','SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
-        'LOW_PRIORITY','IGNORE','QUICK'];
+    private $isFetchSql = false;
+    private $queryAllowOptions = [ 'ALL', 'DISTINCT', 'DISTINCTROW', 'HIGH_PRIORITY', 'STRAIGHT_JOIN', 'SQL_SMALL_RESULT',
+        'SQL_BIG_RESULT', 'SQL_BUFFER_RESULT', 'SQL_CACHE', 'SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
+        'LOW_PRIORITY', 'IGNORE', 'QUICK' ];
 
     /*
      * 子查询配置
@@ -71,44 +73,48 @@ class Mysqli
     function __construct(Config $config)
     {
         $this->config = $config;
-        if(!$this->config->isSubQuery()){
+        if (!$this->config->isSubQuery()) {
             $this->coroutineMysqlClient = new CoroutineMySQL();
         }
     }
 
-    /*
-     * 链接数据库，记住，链接失败的时候，请外部捕获异常
+    /**
+     * 链接数据库
+     * @return true 链接成功返回 true
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      */
     public function connect()
     {
-        if($this->coroutineMysqlClient->connected){
+        if ($this->coroutineMysqlClient->connected) {
             return true;
-        }else{
-            try{
+        } else {
+            try {
                 $ret = $this->coroutineMysqlClient->connect($this->config->toArray());
-                if($ret){
+                if ($ret) {
                     return true;
-                }else{
+                } else {
                     $errno = $this->coroutineMysqlClient->connect_errno;
                     $error = $this->coroutineMysqlClient->connect_error;
                     throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail: {$errno} {$error}");
                 }
-            }catch (\Throwable $throwable){
+            } catch (\Throwable $throwable) {
                 throw new ConnectFail($throwable->getMessage());
             }
         }
     }
-    /*
+
+    /**
      * 断开数据库链接
      */
-    function disConnect()
+    function disconnect()
     {
         $this->coroutineMysqlClient->close();
     }
+
     /*
      * 获取协程客户端
      */
-    function getMysqlClient():CoroutineMySQL
+    function getMysqlClient(): CoroutineMySQL
     {
         $this->connect();
         return $this->coroutineMysqlClient;
@@ -120,7 +126,7 @@ class Mysqli
     public function resetDbStatus()
     {
         if ($this->traceEnabled)
-            $this->trace[] = array ($this->lastQuery, (microtime(true) - $this->traceQueryStartTime) , $this->traceGetCaller());
+            $this->trace[] = array( $this->lastQuery, (microtime(true) - $this->traceQueryStartTime), $this->traceGetCaller() );
 
         $this->where = [];
         $this->join = [];
@@ -131,19 +137,27 @@ class Mysqli
         $this->queryOptions = [];
         $this->having = [];
         $this->updateColumns = [];
-//        $this->affectRows = 0;此字段不需要重置
-//        $this->totalCount = 0;
         $this->tableName;
         $this->forUpdate = false;
         $this->lockInShareMode = false;
+        $this->isFetchSql = false;
+        // $this->affectRows = 0;  // 此字段不需要重置
+        // $this->totalCount = 0;  // 此字段不需要重置
     }
 
+    /**
+     * 开启查询跟踪
+     */
     function startTrace()
     {
         $this->traceEnabled = true;
         $this->trace = [];
     }
 
+    /**
+     * 结束查询跟踪并返回结果
+     * @return array
+     */
     function endTrace()
     {
         $this->traceEnabled = true;
@@ -151,72 +165,106 @@ class Mysqli
         $this->trace = [];
         return $res;
     }
+
     /**
-     * @throws \Exception,
+     * 执行原始查询语句
+     * @param string $query 需要执行的语句
+     * @param array $bindParams 如使用参数绑定语法 请传入本参数
+     * @return mixed 被执行语句的查询结果
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail 如判断传入语句不合法请捕获此错误
      */
     public function rawQuery($query, array $bindParams = [])
     {
         $this->bindParams = $bindParams;
         $this->query = $query;
-        $stmt = $this->prepareQuery();
-        $res = $this->exec($stmt);
-        $this->affectRows = $stmt->affected_rows;
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
-        $this->resetDbStatus();
+        if ($this->isFetchSql) {
+            $res = $this->replacePlaceHolders($this->query, $bindParams);
+            $this->resetDbStatus();
+        } else {
+            $stmt = $this->prepareQuery();
+            $res = $this->exec($stmt);
+            $this->affectRows = $stmt->affected_rows;
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
+            $this->resetDbStatus();
+        }
         return $res;
     }
 
-
-    public function startTransaction():bool
+    /**
+     * 开启事务
+     * @return bool 是否成功开启事务
+     * @throws ConnectFail
+     */
+    public function startTransaction(): bool
     {
-        if($this->startTransaction){
+        if ($this->startTransaction) {
             return true;
-        }else{
+        } else {
             $this->connect();
-            $res =  $this->coroutineMysqlClient->query('start transaction');
-            if($res){
+            $res = $this->coroutineMysqlClient->query('start transaction');
+            if ($res) {
                 $this->startTransaction = true;
             }
             return $res;
         }
     }
 
-    public function commit():bool
+    /**
+     * 提交事务
+     * @return bool 是否成功提交事务
+     * @throws ConnectFail
+     */
+    public function commit(): bool
     {
-        if($this->startTransaction){
+        if ($this->startTransaction) {
             $this->connect();
-            $res =  $this->coroutineMysqlClient->query('commit');
-            if($res){
+            $res = $this->coroutineMysqlClient->query('commit');
+            if ($res) {
                 $this->startTransaction = false;
             }
             return $res;
-        }else{
+        } else {
             return true;
         }
     }
 
+    /**
+     * 回滚事务
+     * @param bool $commit
+     * @return array|bool
+     * @throws ConnectFail
+     */
     public function rollback($commit = true)
     {
-        if($this->startTransaction){
+        if ($this->startTransaction) {
             $this->connect();
-            $res =  $this->coroutineMysqlClient->query('rollback');
-            if($res && $commit){
+            $res = $this->coroutineMysqlClient->query('rollback');
+            if ($res && $commit) {
                 $res = $this->commit();
-                if($res){
+                if ($res) {
                     $this->startTransaction = false;
                 }
                 return $res;
-            }else{
+            } else {
                 return $res;
             }
-        }else{
+        } else {
             return true;
         }
     }
 
-    public function where($whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND'):Mysqli
+    /**
+     * 添加一个WHERE条件
+     * @param string $whereProp 字段名
+     * @param string $whereValue 字段值
+     * @param string $operator 字段操作
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    public function where($whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND'): Mysqli
     {
         if (is_array($whereValue) && ($key = key($whereValue)) != "0") {
             $operator = $key;
@@ -225,17 +273,167 @@ class Mysqli
         if (count($this->where) == 0) {
             $cond = '';
         }
-        $this->where[] = array($cond, $whereProp, $operator, $whereValue);
+        $this->where[] = array( $cond, $whereProp, $operator, $whereValue );
         return $this;
     }
 
-    public function orWhere($whereProp, $whereValue = 'DBNULL', $operator = '='):Mysqli
+    /**
+     * 添加一个WHERE OR条件
+     * @param string $whereProp 字段名
+     * @param string $whereValue 字段值
+     * @param string $operator 字段操作
+     * @return Mysqli
+     */
+    public function whereOr($whereProp, $whereValue = 'DBNULL', $operator = '='): Mysqli
     {
         return $this->where($whereProp, $whereValue, $operator, 'OR');
     }
 
+
     /**
-     * @throws \Exception,
+     * 字段是Null值
+     * @param string $whereProp 字段名
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereNull($whereProp, $cond = 'AND')
+    {
+        return $this->where($whereProp, NULL, 'IS', $cond);
+    }
+
+    /**
+     * 字段是非NULL值
+     * @param string $whereProp 字段名
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereNotNull($whereProp, $cond = 'AND')
+    {
+        return $this->where($whereProp, NULL, 'IS NOT', $cond);
+    }
+
+    /**
+     * 字段是空字符串
+     * @param string $whereProp 字段名
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereEmpty($whereProp, $cond = 'AND')
+    {
+        return $this->where($whereProp, '', '=', $cond);
+    }
+
+    /**
+     * 字段是非空字符串
+     * @param string $whereProp 字段名
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereNotEmpty($whereProp, $cond = 'AND')
+    {
+        return $this->where($whereProp, '', '!=', $cond);
+    }
+
+    /**
+     * 字段值在列表中
+     * @param string $whereProp 字段名
+     * @param string|array $whereValue 列表 可传数组或逗号分隔
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereIn($whereProp, $whereValue, $cond = 'AND')
+    {
+        if (is_string($whereValue)) {
+            $whereValue = explode(',', $whereValue);
+        }
+        return $this->where($whereProp, $whereValue, 'IN', $cond);
+    }
+
+    /**
+     * 字段值不在列表中
+     * @param string $whereProp 字段名
+     * @param string|array $whereValue 列表 可传数组或逗号分隔
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereNotIn($whereProp, $whereValue, $cond = 'AND')
+    {
+        if (is_string($whereValue)) {
+            $whereValue = explode(',', $whereValue);
+        }
+        return $this->where($whereProp, $whereValue, 'NOT IN', $cond);
+    }
+
+    /**
+     * 在两者之间
+     * @param string $whereProp 字段名
+     * @param string|array $whereValue 可传数组或逗号分隔 [ 1 , 2 ] OR '1,2'
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     * @throws WhereParserFail
+     */
+    function whereBetween($whereProp, $whereValue, $cond = 'AND')
+    {
+        if (is_string($whereValue)) {
+            $whereValue = explode(',', $whereValue);
+        }
+        if (!is_array($whereValue) || count($whereValue) !== 2) {
+            throw new WhereParserFail('where conditional parser failure');
+        }
+        return $this->where($whereProp, $whereValue, 'BETWEEN', $cond);
+    }
+
+    /**
+     * 不在两者之间
+     * @param string $whereProp 字段名
+     * @param string|array $whereValue 可传数组或逗号分隔 [ 1 , 2 ] OR '1,2'
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     * @throws WhereParserFail
+     */
+    function whereNotBetween($whereProp, $whereValue, $cond = 'AND')
+    {
+        if (is_string($whereValue)) {
+            $whereValue = explode(',', $whereValue);
+        }
+        if (!is_array($whereValue) || count($whereValue) !== 2) {
+            throw new WhereParserFail('where conditional parser failure');
+        }
+        return $this->where($whereProp, $whereValue, 'NOT BETWEEN', $cond);
+    }
+
+    /**
+     * WHERE LIKE
+     * @param string $whereProp 字段名
+     * @param string $whereValue 字段值
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereLike($whereProp, $whereValue, $cond = 'AND')
+    {
+        return $this->where($whereProp, $whereValue, 'LIKE', $cond);
+    }
+
+    /**
+     * WHERE NOT LIKE
+     * @param string $whereProp 字段名
+     * @param string $whereValue 字段值
+     * @param string $cond 多个where的逻辑关系
+     * @return Mysqli
+     */
+    function whereNotLike($whereProp, $whereValue, $cond = 'AND')
+    {
+        return $this->where($whereProp, $whereValue, 'NOT LIKE', $cond);
+    }
+
+    /**
+     * SELECT 查询数据
+     * @param string $tableName 需要查询的表名称
+     * @param null|integer $numRows 需要返回的行数
+     * @param string $columns 需要返回的字段
+     * @return $this|mixed
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function get($tableName, $numRows = null, $columns = '*')
     {
@@ -251,6 +449,9 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return $this;
         }
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $res = $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
@@ -260,11 +461,20 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * SELECT LIMIT 1 查询单条数据
+     * @param string $tableName 需要查询的表名称
+     * @param string $columns 需要返回的字段
+     * @return Mysqli|mixed|null
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function getOne($tableName, $columns = '*')
     {
+        $isFetch = $this->isFetchSql;
         $res = $this->get($tableName, 1, $columns);
+        if ($isFetch) {
+            return $res;
+        }
         if ($res instanceof Mysqli) {
             return $res;
         } elseif (is_array($res) && isset($res[0])) {
@@ -276,11 +486,21 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * 获取某一个字段的值
+     * @param string $tableName 需要查询的表名称
+     * @param string $column 需要返回的字段
+     * @param int $limit 限制返回的行数
+     * @return array|null
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function getValue($tableName, $column, $limit = 1)
     {
+        $isFetch = $this->isFetchSql;
         $res = $this->get($tableName, $limit, "{$column} AS retval");
+        if ($isFetch) {
+            return $res;
+        }
         if (!$res) {
             return null;
         }
@@ -298,7 +518,34 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * 获取某一列的数据
+     * @param string $tableName 需要查询的表名称
+     * @param string $columnName 需要获取的列名称
+     * @param null $limit 最多返回几条数据
+     * @return array
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
+     */
+    function getColumn($tableName, $columnName, $limit = null)
+    {
+        $isFetch = $this->isFetchSql;
+        $res = $this->get($tableName, $limit, "{$columnName} AS retval");
+        if ($isFetch) {
+            return $res;
+        }
+        if (!$res) {
+            return [];
+        }
+        return array_column($res, 'retval');
+    }
+
+    /**
+     * 插入一行数据
+     * @param string $tableName
+     * @param array $insertData
+     * @return bool|int
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
      */
     public function insert($tableName, $insertData)
     {
@@ -306,18 +553,25 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * 插入多行数据
+     * @param string $tableName 插入的表名称
+     * @param array $multiInsertData 需要插入的数据
+     * @param array|null $dataKeys 插入数据对应的字段名
+     * @return array|bool
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     * TODO 多行插入应优化为INSERT INTO ... VALUES (...) , (...)
      */
     public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
     {
         $ids = array();
         foreach ($multiInsertData as $insertData) {
-            if($dataKeys !== null) {
+            if ($dataKeys !== null) {
                 // apply column-names if given, else assume they're already given in the data
                 $insertData = array_combine($dataKeys, $insertData);
             }
             $id = $this->insert($tableName, $insertData);
-            if(!$id) {
+            if (!$id) {
                 return false;
             }
             $ids[] = $id;
@@ -326,7 +580,11 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * 该查询条件下是否存在数据
+     * @param string $tableName 查询的表名称
+     * @return bool
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function has($tableName)
     {
@@ -335,39 +593,165 @@ class Mysqli
     }
 
     /**
-     * @throws \Exception,
+     * 聚合-计算总数
+     * @param string $tableName 表名称
+     * @param string|null $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function count($tableName, $filedName = null)
+    {
+        if (is_null($filedName)) {
+            $filedName = '*';
+        }
+        $isFetch = $this->isFetchSql;
+        $retval = $this->get($tableName, null, "COUNT({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求最大值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function max($tableName, $filedName)
+    {
+        $isFetch = $this->isFetchSql;
+        $retval = $this->get($tableName, null, "MAX({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求最小值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function min($tableName, $filedName)
+    {
+        $isFetch = $this->isFetchSql;
+        $retval = $this->get($tableName, null, "MIN({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-计算和值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function sum($tableName, $filedName)
+    {
+        $isFetch = $this->isFetchSql;
+        $retval = $this->get($tableName, null, "SUM({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 聚合-求平均值
+     * @param string $tableName 表名称
+     * @param string $filedName 字段名称
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function avg($tableName, $filedName)
+    {
+        $isFetch = $this->isFetchSql;
+        $retval = $this->get($tableName, null, "AVG({$filedName}) as retval");
+        if ($isFetch || $retval instanceof Mysqli) {
+            return $retval;
+        }
+        return $retval ? $retval[0]['retval'] : false;
+    }
+
+    /**
+     * 删除数据
+     * @param string $tableName 表名称
+     * @param null|integer $numRows 限制删除的行数
+     * @return bool|null
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function delete($tableName, $numRows = null)
     {
         if ($this->config->isSubQuery()) {
-            return;
+            return null;
         }
-        $table =  $tableName;
+        $table = $tableName;
         if (count($this->join)) {
             $this->query = 'DELETE ' . preg_replace('/.* (.*)/', '$1', $table) . " FROM " . $table;
         } else {
             $this->query = 'DELETE FROM ' . $table;
         }
         $stmt = $this->buildQuery($numRows);
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $this->exec($stmt);
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
         $this->resetDbStatus();
 
-        return ($stmt->affected_rows > -1);	//	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
+        return ($stmt->affected_rows > -1);    //	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
     }
 
     /**
-     * @throws \Exception,
+     * 设置单个字段的值 (属于Update的快捷方法 )
+     * 可用于快速更改某个字段的状态
+     * @example $db->whereIn('userId','1,2,3,4')->setValue('user_account','isUse',1)
+     * @param $tableName
+     * @param $filedName
+     * @param $value
+     * @return mixed
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    function setValue($tableName, $filedName, $value)
+    {
+        return $this->update($tableName, [ $filedName => $value ]);
+    }
+
+    /**
+     * 更新数据
+     * @param string $tableName 表名称
+     * @param array $tableData 需要更新的数据
+     * @param null|integer $numRows 限制更新的行数
+     * @return mixed
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
      */
     public function update($tableName, $tableData, $numRows = null)
     {
         if ($this->config->isSubQuery()) {
-            return;
+            return null;
         }
         $this->query = "UPDATE " . $tableName;
 
         $stmt = $this->buildQuery($numRows, $tableData);
+        if ($this->isFetchSql) {
+            return $this->replacePlaceHolders($this->query, $this->bindParams);
+        }
         $status = $this->exec($stmt);
         $this->resetDbStatus();
         $this->stmtError = $stmt->error;
@@ -377,37 +761,108 @@ class Mysqli
         return $status;
     }
 
+    /**
+     * 表是否存在
+     * @param string $tables 表名称
+     * @return bool
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
+     */
     public function tableExists($tables)
     {
-        $tables = !is_array($tables) ? Array($tables) : $tables;
+        $tables = !is_array($tables) ? Array( $tables ) : $tables;
         $count = count($tables);
         if ($count == 0) {
             return false;
         }
         foreach ($tables as $i => $value)
-            $tables[$i] =  $value;
+            $tables[$i] = $value;
         $this->where('table_schema', $this->config->getDatabase());
         $this->where('table_name', $tables, 'in');
         $ret = $this->get('information_schema.tables', $count);
-        if(is_array($ret) && $count == count($ret)){
+        if (is_array($ret) && $count == count($ret)) {
             return true;
-        }else{
+        } else {
             return false;
         }
     }
 
+    /**
+     * 执行字段自增操作
+     * @param int $num
+     * @return array
+     */
     public function inc(int $num = 1)
     {
-        return array("[I]" => "+" . $num);
+        return array( "[I]" => "+" . $num );
     }
 
-    public function withTotalCount()
+    /**
+     * 执行字段自减操作
+     * @param int $num
+     * @return array
+     * @author: eValor < master@evalor.cn >
+     */
+    public function dec(int $num = 1)
     {
-        $this->setQueryOption ('SQL_CALC_FOUND_ROWS');
+        return array( "[I]" => "-" . $num );
+    }
+
+    /**
+     * 自增某个字段
+     * @param string $tableName 表名称
+     * @param string $filedName 操作的字段名称
+     * @param int $num 操作数量
+     * @return mixed
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
+     * @TODO set inc after lock some line
+     */
+    public function setInc($tableName, $filedName, $num = 1)
+    {
+        return $this->update($tableName, [ $filedName => $this->inc($num) ]);
+    }
+
+    /**
+     * 自减某个字段
+     * @param string $tableName 表名称
+     * @param string $filedName 操作的字段名称
+     * @param int $num 操作数量
+     * @return mixed
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws PrepareQueryFail
+     * @TODO set dec after lock some line
+     */
+    public function setDec($tableName, $filedName, $num = 1)
+    {
+        return $this->update($tableName, [ $filedName => $this->dec($num) ]);
+    }
+
+    /**
+     * 获取即将执行的SQL语句
+     * @param bool $fetch
+     * @author: eValor < master@evalor.cn >
+     * @return Mysqli
+     */
+    function fetchSql(bool $fetch = true)
+    {
+        $this->isFetchSql = $fetch;
         return $this;
     }
 
     /**
+     * 查询结果总数
+     * @return $this
+     * @throws Option
+     */
+    public function withTotalCount()
+    {
+        $this->setQueryOption('SQL_CALC_FOUND_ROWS');
+        return $this;
+    }
+
+    /**
+     * 返回结果总数
      * @return int
      */
     public function getTotalCount(): int
@@ -416,6 +871,7 @@ class Mysqli
     }
 
     /**
+     * 本次查询影响的行数
      * @return int
      */
     public function getAffectRows(): int
@@ -423,35 +879,42 @@ class Mysqli
         return $this->affectRows;
     }
 
-
-    public function dec(int $num = 1)
-    {
-        return array("[I]" => "-" . $num);
-    }
-
+    /**
+     * 表连接查询
+     * @param string $joinTable 被连接的表
+     * @param string $joinCondition 连接条件
+     * @param string $joinType 连接类型
+     * @return $this
+     * @throws JoinFail
+     */
     public function join($joinTable, $joinCondition, $joinType = '')
     {
-        $allowedTypes = array('LEFT', 'RIGHT', 'OUTER', 'INNER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL');
+        $allowedTypes = array( 'LEFT', 'RIGHT', 'OUTER', 'INNER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL' );
         $joinType = strtoupper(trim($joinType));
         if ($joinType && !in_array($joinType, $allowedTypes)) {
             throw new JoinFail('Wrong JOIN type: ' . $joinType);
         }
-        $this->join[] = Array($joinType, $joinTable, $joinCondition);
+        $this->join[] = Array( $joinType, $joinTable, $joinCondition );
         return $this;
     }
 
-
-    public function setQueryOption ($options)
+    /**
+     * 设置额外查询参数
+     * @param mixed $options 查询参数 可传入数组设置多个
+     * @return $this
+     * @throws Option
+     */
+    public function setQueryOption($options)
     {
-        if (!is_array ($options)){
-            $options = Array ($options);
+        if (!is_array($options)) {
+            $options = Array( $options );
         }
         foreach ($options as $option) {
-            $option = strtoupper ($option);
-            if (!in_array ($option, $this->queryAllowOptions)){
-                throw new Option('Wrong query option: '.$option);
-            }else{
-                if(!in_array($option,$this->queryOptions)){
+            $option = strtoupper($option);
+            if (!in_array($option, $this->queryAllowOptions)) {
+                throw new Option('Wrong query option: ' . $option);
+            } else {
+                if (!in_array($option, $this->queryOptions)) {
                     $this->queryOptions[] = $option;
                 }
             }
@@ -459,11 +922,19 @@ class Mysqli
         return $this;
     }
 
-    public function getLastStatement():?Statement
+    public function getLastStatement(): ?Statement
     {
         return $this->lastStatement;
     }
 
+    /**
+     * 将全部的查询条件构建成语句并预处理
+     * @param null|integer $numRows
+     * @param mixed $tableData
+     * @return null|Statement
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
     private function buildQuery($numRows = null, $tableData = null)
     {
         $this->buildJoin();
@@ -485,75 +956,99 @@ class Mysqli
         $this->lastQuery = $this->replacePlaceHolders($this->query, $this->bindParams);
 
         if ($this->config->isSubQuery()) {
-            return;
+            return null;
         }
         // Prepare query
         $stmt = $this->prepareQuery();
         return $stmt;
     }
 
+    /**
+     * 执行预处理语句并返回结果
+     * @param Statement $stmt
+     * @return mixed
+     * @author: eValor < master@evalor.cn >
+     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     */
     private function exec($stmt)
     {
-        if(!$this->coroutineMysqlClient->connected){
+        if (!$this->coroutineMysqlClient->connected) {
             $this->connect();
         }
         $this->lastStatement = $stmt;
         if (!empty($this->bindParams)) {
             $data = $this->bindParams;
-        }else{
+        } else {
             $data = [];
         }
-        $ret =  $stmt->execute($data);
-        if (in_array ('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
+        $ret = $stmt->execute($data);
+        if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];
         }
         return $ret;
     }
 
-    private function buildJoin ()
+    /**
+     * 组装JOIN条件
+     */
+    private function buildJoin()
     {
         if (empty ($this->join))
             return;
         foreach ($this->join as $data) {
-            list ($joinType,  $joinTable, $joinCondition) = $data;
+            list ($joinType, $joinTable, $joinCondition) = $data;
 
-            if (is_object ($joinTable))
-                $joinStr = $this->buildPair ("", $joinTable);
+            if (is_object($joinTable))
+                $joinStr = $this->buildPair("", $joinTable);
             else
                 $joinStr = $joinTable;
 
-            $this->query .= " " . $joinType. " JOIN " . $joinStr .
+            $this->query .= " " . $joinType . " JOIN " . $joinStr .
                 (false !== stripos($joinCondition, 'using') ? " " : " on ")
                 . $joinCondition;
             // Add join and query
             if (!empty($this->joinAnd) && isset($this->joinAnd[$joinStr])) {
-                foreach($this->joinAnd[$joinStr] as $join_and_cond) {
+                foreach ($this->joinAnd[$joinStr] as $join_and_cond) {
                     list ($concat, $varName, $operator, $val) = $join_and_cond;
-                    $this->query .= " " . $concat ." " . $varName;
+                    $this->query .= " " . $concat . " " . $varName;
                     $this->conditionToSql($operator, $val);
                 }
             }
         }
     }
 
+    /**
+     * 建立条件之间的关系
+     * @param $operator
+     * @param $value
+     * @return string
+     */
     private function buildPair($operator, $value)
     {
-        if($value instanceof Mysqli){
+        if ($value instanceof Mysqli) {
             $subQuery = $value->getSubQuery();
             $this->bindParams($subQuery['params']);
             return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
-        }else{
+        } else {
             $this->bindParam($value);
             return ' ' . $operator . ' ? ';
         }
     }
 
+    /**
+     * 将值加入待绑定的参数数组
+     * @param mixed $value
+     */
     private function bindParam($value)
     {
         array_push($this->bindParams, $value);
     }
 
+    /**
+     * 将多个值加入待绑定的参数数组
+     * @param mixed $values
+     */
     private function bindParams($values)
     {
         foreach ($values as $value) {
@@ -561,78 +1056,71 @@ class Mysqli
         }
     }
 
-    private function determineType($item)
+    /**
+     * 条件转为SQL语句
+     * @param $operator
+     * @param $val
+     */
+    private function conditionToSql($operator, $val)
     {
-        switch (gettype($item)) {
-            case 'NULL':
-            case 'string':
-                return 's';
-                break;
-
-            case 'boolean':
-            case 'integer':
-                return 'i';
-                break;
-
-            case 'blob':
-                return 'b';
-                break;
-
-            case 'double':
-                return 'd';
-                break;
-        }
-        return '';
-    }
-
-    private function conditionToSql($operator, $val) {
-        switch (strtolower ($operator)) {
+        switch (strtolower($operator)) {
             case 'not in':
             case 'in':
-                $comparison = ' ' . $operator. ' (';
-                if (is_object ($val)) {
-                    $comparison .= $this->buildPair ("", $val);
+                $comparison = ' ' . $operator . ' (';
+                if (is_object($val)) {
+                    $comparison .= $this->buildPair("", $val);
                 } else {
                     foreach ($val as $v) {
                         $comparison .= ' ?,';
-                        $this->bindParam ($v);
+                        $this->bindParam($v);
                     }
                 }
-                $this->query .= rtrim($comparison, ',').' ) ';
+                $this->query .= rtrim($comparison, ',') . ' ) ';
                 break;
             case 'not between':
             case 'between':
                 $this->query .= " $operator ? AND ? ";
-                $this->bindParams ($val);
+                $this->bindParams($val);
                 break;
             case 'not exists':
             case 'exists':
-                $this->query.= $operator . $this->buildPair ("", $val);
+                $this->query .= $operator . $this->buildPair("", $val);
                 break;
             default:
-                if (is_array ($val))
-                    $this->bindParams ($val);
+                if (is_array($val))
+                    $this->bindParams($val);
                 else if ($val === null)
                     $this->query .= $operator . " NULL";
                 else if ($val != 'DBNULL' || $val == '0')
-                    $this->query .= $this->buildPair ($operator, $val);
+                    $this->query .= $this->buildPair($operator, $val);
         }
     }
 
+    /**
+     * 获取子查询
+     * @return array|null
+     * @author: eValor < master@evalor.cn >
+     */
     public function getSubQuery()
     {
         if (!$this->config->isSubQuery()) {
             return null;
         }
-        $val = Array('query' => $this->query,
+        $val = Array(
+            'query'  => $this->query,
             'params' => $this->bindParams,
-            'alias' => $this->alias
+            'alias'  => $this->alias
         );
         $this->resetDbStatus();
         return $val;
     }
 
-    public function subQuery($subQueryAlias = ""):Mysqli
+    /**
+     * 创建子查询
+     * @param string $subQueryAlias
+     * @return Mysqli
+     */
+    public function subQuery($subQueryAlias = ""): Mysqli
     {
         $conf = new Config();
         $conf->setIsSubQuery(true);
@@ -640,6 +1128,11 @@ class Mysqli
         return new self($conf);
     }
 
+    /**
+     * 构建插入语句
+     * @param array $tableData 需要插入的数据
+     * @throws \Exception
+     */
     private function buildInsertQuery($tableData)
     {
         if (!is_array($tableData)) {
@@ -663,16 +1156,23 @@ class Mysqli
         }
     }
 
+    /**
+     * 构建插入语句的数据部分
+     * @param array $tableData 插入的数据
+     * @param array $tableColumns 插入的列名称
+     * @param bool $isInsert Insert || OnDuplicate
+     * @throws \Exception
+     */
     private function buildDataPairs($tableData, $tableColumns, $isInsert)
     {
         foreach ($tableColumns as $column) {
             $value = $tableData[$column];
 
             if (!$isInsert) {
-                if(strpos($column,'.') === false) {
+                if (strpos($column, '.') === false) {
                     $this->query .= "`" . $column . "` = ";
                 } else {
-                    $this->query .= str_replace('.','.`',$column) . "` = ";
+                    $this->query .= str_replace('.', '.`', $column) . "` = ";
                 }
             }
             // SubQuery value
@@ -692,16 +1192,16 @@ class Mysqli
             $key = key($value);
             $val = $value[$key];
             switch ($key) {
-                case '[I]':
+                case '[I]':  // INC DEC
                     $this->query .= $column . $val . ", ";
                     break;
-                case '[F]':
+                case '[F]':  // IS FUNCTION
                     $this->query .= $val[0] . ", ";
                     if (!empty($val[1])) {
                         $this->bindParams($val[1]);
                     }
                     break;
-                case '[N]':
+                case '[N]':  // NOT
                     if ($val == null) {
                         $this->query .= "!" . $column . ", ";
                     } else {
@@ -715,6 +1215,11 @@ class Mysqli
         $this->query = rtrim($this->query, ', ');
     }
 
+    /**
+     * WHERE/HAVING组装成语句
+     * @param $operator
+     * @param $conditions
+     */
     private function buildCondition($operator, &$conditions)
     {
         if (empty($conditions)) {
@@ -748,7 +1253,7 @@ class Mysqli
                     break;
                 case 'not exists':
                 case 'exists':
-                    $this->query.= $operator . $this->buildPair("", $val);
+                    $this->query .= $operator . $this->buildPair("", $val);
                     break;
                 default:
                     if (is_array($val)) {
@@ -762,6 +1267,9 @@ class Mysqli
         }
     }
 
+    /**
+     * 构建分组查询
+     */
     private function buildGroupBy()
     {
         if (empty($this->groupBy)) {
@@ -777,6 +1285,9 @@ class Mysqli
         $this->query = rtrim($this->query, ', ') . " ";
     }
 
+    /**
+     * 构建字段排序
+     */
     private function buildOrderBy()
     {
         if (empty($this->orderBy)) {
@@ -795,6 +1306,10 @@ class Mysqli
         $this->query = rtrim($this->query, ', ') . " ";
     }
 
+    /**
+     * 构建LIMIT限制
+     * @param integer $numRows LIMIT 行数
+     */
     private function buildLimit($numRows)
     {
         if (!isset($numRows)) {
@@ -802,12 +1317,17 @@ class Mysqli
         }
 
         if (is_array($numRows)) {
-            $this->query .= ' LIMIT ' . (int) $numRows[0] . ', ' . (int) $numRows[1];
+            $this->query .= ' LIMIT ' . (int)$numRows[0] . ', ' . (int)$numRows[1];
         } else {
-            $this->query .= ' LIMIT ' . (int) $numRows;
+            $this->query .= ' LIMIT ' . (int)$numRows;
         }
     }
 
+    /**
+     * BUILD INSERT INTO .. ON DUPLICATE
+     * @param $tableData
+     * @throws \Exception
+     */
     private function buildOnDuplicate($tableData)
     {
         if (is_array($this->updateColumns) && !empty($this->updateColumns)) {
@@ -829,17 +1349,23 @@ class Mysqli
         }
     }
 
-    private function replacePlaceHolders($str, $vals)
+    /**
+     * 替换参数绑定占位符
+     * @param string $str
+     * @param array $values
+     * @return bool|string
+     */
+    private function replacePlaceHolders($str, $values)
     {
         $i = 0;
         $newStr = "";
 
-        if (empty($vals)) {
+        if (empty($values)) {
             return $str;
         }
 
         while ($pos = strpos($str, "?")) {
-            $val = $vals[$i++];
+            $val = $values[$i++];
             if (is_object($val)) {
                 $val = '[object]';
             }
@@ -853,16 +1379,22 @@ class Mysqli
         return $newStr;
     }
 
+    /**
+     * 生成预查询对象Statement
+     * @return Statement
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
     private function prepareQuery()
     {
 
-        if(!$this->coroutineMysqlClient->connected){
-           $this->connect();
+        if (!$this->coroutineMysqlClient->connected) {
+            $this->connect();
         }
         if ($this->traceEnabled)
-            $this->traceQueryStartTime = microtime (true);
+            $this->traceQueryStartTime = microtime(true);
         $res = $this->coroutineMysqlClient->prepare($this->query);
-        if($res instanceof Statement){
+        if ($res instanceof Statement) {
             return $res;
         }
         $error = $this->coroutineMysqlClient->error;
@@ -872,26 +1404,26 @@ class Mysqli
         throw new PrepareQueryFail(sprintf('%s query: %s', $error, $query), $errno);
     }
 
-    private function refValues(array &$arr)
-    {
-        if (strnatcmp(phpversion(), '5.3') >= 0) {
-            $refs = array();
-            foreach ($arr as $key => $value) {
-                $refs[$key] = & $arr[$key];
-            }
-            return $refs;
-        }
-        return $arr;
-    }
-
+    /**
+     * 构建插入语句
+     * @param $tableName
+     * @param $insertData
+     * @param $operation
+     * @return bool|int|null
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
     private function buildInsert($tableName, $insertData, $operation)
     {
         if ($this->config->isSubQuery()) {
-            return;
+            return null;
         }
         $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $tableName;
         $stmt = $this->buildQuery(null, $insertData);
         $status = $this->exec($stmt);
+        if ($this->isFetchSql) {
+            return $this->lastQuery;
+        }
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
         $haveOnDuplicate = !empty ($this->updateColumns);
@@ -910,19 +1442,26 @@ class Mysqli
         return true;
     }
 
+    /**
+     * 获取最后插入的数据ID
+     * @return int
+     */
     public function getInsertId()
     {
         return $this->coroutineMysqlClient->insert_id;
     }
 
+    /**
+     * 获取最后一次查询的语句
+     * @return mixed
+     */
     public function getLastQuery()
     {
         return $this->lastQuery;
     }
 
     /**
-     * Method returns mysql error
-     *
+     * 获取最后一次查询错误的内容
      * @return string
      */
     public function getLastError()
@@ -930,20 +1469,33 @@ class Mysqli
         return trim($this->stmtError . " " . $this->coroutineMysqlClient->error);
     }
 
-    public function getLastErrno () {
+    /**
+     * 获取最后一次查询错误的编号
+     * @return mixed
+     */
+    public function getLastErrno()
+    {
         return $this->stmtErrno;
     }
 
-    public function orderBy($orderByField, $orderbyDirection = "DESC", $customFieldsOrRegExp = null)
+    /**
+     * 字段排序
+     * @param $orderByField
+     * @param string $orderByDirection
+     * @param null $customFieldsOrRegExp
+     * @return $this
+     * @throws OrderByFail
+     */
+    public function orderBy($orderByField, $orderByDirection = "DESC", $customFieldsOrRegExp = null)
     {
-        $allowedDirection = Array("ASC", "DESC");
-        $orderbyDirection = strtoupper(trim($orderbyDirection));
+        $allowedDirection = Array( "ASC", "DESC" );
+        $orderByDirection = strtoupper(trim($orderByDirection));
         $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"]+/i", '', $orderByField);
 
         $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_]*\.)/', '\1' . '\2', $orderByField);
 
-        if (empty($orderbyDirection) || !in_array($orderbyDirection, $allowedDirection)) {
-            throw new OrderByFail('Wrong order direction: ' . $orderbyDirection);
+        if (empty($orderByDirection) || !in_array($orderByDirection, $allowedDirection)) {
+            throw new OrderByFail('Wrong order direction: ' . $orderByDirection);
         }
 
         if (is_array($customFieldsOrRegExp)) {
@@ -951,16 +1503,22 @@ class Mysqli
                 $customFieldsOrRegExp[$key] = preg_replace("/[^-a-z0-9\.\(\),_` ]+/i", '', $value);
             }
             $orderByField = 'FIELD (' . $orderByField . ', "' . implode('","', $customFieldsOrRegExp) . '")';
-        }elseif(is_string($customFieldsOrRegExp)){
+        } elseif (is_string($customFieldsOrRegExp)) {
             $orderByField = $orderByField . " REGEXP '" . $customFieldsOrRegExp . "'";
-        }elseif($customFieldsOrRegExp !== null){
+        } elseif ($customFieldsOrRegExp !== null) {
             throw new OrderByFail('Wrong custom field or Regular Expression: ' . $customFieldsOrRegExp);
         }
 
-        $this->orderBy[$orderByField] = $orderbyDirection;
+        $this->orderBy[$orderByField] = $orderByDirection;
         return $this;
     }
 
+    /**
+     * 字段分组
+     * @param $groupByField
+     * @return $this
+     * @author: eValor < master@evalor.cn >
+     */
     public function groupBy($groupByField)
     {
         $groupByField = preg_replace("/[^-a-z0-9\.\(\),_\* <>=!]+/i", '', $groupByField);
@@ -969,22 +1527,24 @@ class Mysqli
         return $this;
     }
 
-    /*
+    /**
      * 获取追踪调用
+     * @return string
      */
-    private function traceGetCaller () {
-        $dd = debug_backtrace ();
-        $caller = next ($dd);
-        while (isset ($caller) &&  $caller["file"] == __FILE__ )
+    private function traceGetCaller()
+    {
+        $dd = debug_backtrace();
+        $caller = next($dd);
+        while (isset ($caller) && $caller["file"] == __FILE__)
             $caller = next($dd);
         return __CLASS__ . "->" . $caller["function"] . "() >>  file \"" .
-            $caller["file"]  . "\" line #" . $caller["line"] . " " ;
+            $caller["file"] . "\" line #" . $caller["line"] . " ";
     }
 
+    /** 析构被调用时关闭当前链接并释放客户端对象 */
     function __destruct()
     {
-        // TODO: Implement __destruct() method.
-        if($this->coroutineMysqlClient->connected){
+        if (isset($this->coroutineMysqlClient) && $this->coroutineMysqlClient->connected) {
             $this->coroutineMysqlClient->close();
         }
         unset($this->coroutineMysqlClient);
