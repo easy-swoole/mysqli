@@ -553,6 +553,19 @@ class Mysqli
     }
 
     /**
+     * REPLACE INSERT
+     * @param string $tableName
+     * @param array $insertData
+     * @return bool|int|null
+     * @throws ConnectFail
+     * @throws PrepareQueryFail
+     */
+    public function replace($tableName, $insertData)
+    {
+        return $this->buildInsert($tableName, $insertData, 'REPLACE');
+    }
+
+    /**
      * 插入多行数据
      * @param string $tableName 插入的表名称
      * @param array $multiInsertData 需要插入的数据
