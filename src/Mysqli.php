@@ -1526,6 +1526,20 @@ class Mysqli
         return $this;
     }
 
+    public function having($havingProp, $havingValue = 'DBNULL', $operator = '=', $cond = 'AND')
+    {
+        // forkaround for an old operation api
+        if (is_array($havingValue) && ($key = key($havingValue)) != "0") {
+            $operator = $key;
+            $havingValue = $havingValue[$key];
+        }
+        if (count($this->having) == 0) {
+            $cond = '';
+        }
+        $this->having[] = array($cond, $havingProp, $operator, $havingValue);
+        return $this;
+    }
+
     /**
      * 字段分组
      * @param $groupByField
