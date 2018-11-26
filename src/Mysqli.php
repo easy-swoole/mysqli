@@ -597,12 +597,14 @@ class Mysqli
      * @param string $tableName 查询的表名称
      * @return bool
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws Option
      * @throws PrepareQueryFail
      */
     public function has($tableName)
     {
-        $this->getOne($tableName, '1');
-        return $this->affectRows >= 1;
+        $this->withTotalCount()->get($tableName);
+        $count = $this->getTotalCount();
+        return $count >= 1;
     }
 
     /**
