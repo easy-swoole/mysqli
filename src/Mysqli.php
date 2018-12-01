@@ -14,8 +14,8 @@ use EasySwoole\Mysqli\Exceptions\Option;
 use EasySwoole\Mysqli\Exceptions\OrderByFail;
 use EasySwoole\Mysqli\Exceptions\PrepareQueryFail;
 use EasySwoole\Mysqli\Exceptions\WhereParserFail;
-use \Swoole\Coroutine\MySQL as CoroutineMySQL;
-use \Swoole\Coroutine\MySQL\Statement;
+use Swoole\Coroutine\MySQL as CoroutineMySQL;
+use Swoole\Coroutine\MySQL\Statement;
 
 class Mysqli
 {
@@ -804,30 +804,30 @@ class Mysqli
 
     /**
      * 执行字段自增操作
-     * @param int $num
+     * @param int|float $num
      * @return array
      */
-    public function inc(int $num = 1)
+    public function inc($num = 1)
     {
-        return array( "[I]" => "+" . $num );
+        return array("[I]" => "+" . $num);
     }
 
     /**
      * 执行字段自减操作
-     * @param int $num
+     * @param int|float $num
      * @return array
      * @author: eValor < master@evalor.cn >
      */
-    public function dec(int $num = 1)
+    public function dec($num = 1)
     {
-        return array( "[I]" => "-" . $num );
+        return array("[I]" => "-" . $num);
     }
 
     /**
      * 自增某个字段
      * @param string $tableName 表名称
      * @param string $filedName 操作的字段名称
-     * @param int $num 操作数量
+     * @param int|float $num 操作数量
      * @return mixed
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
@@ -842,7 +842,7 @@ class Mysqli
      * 自减某个字段
      * @param string $tableName 表名称
      * @param string $filedName 操作的字段名称
-     * @param int $num 操作数量
+     * @param int|float $num 操作数量
      * @return mixed
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
