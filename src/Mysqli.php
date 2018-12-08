@@ -85,7 +85,7 @@ class Mysqli
      */
     public function connect()
     {
-        if ($this->coroutineMysqlClient->connected) {
+        if ($this->coroutineMysqlClient->isConnected()) {
             return true;
         } else {
             try {
@@ -987,7 +987,7 @@ class Mysqli
      */
     private function exec($stmt)
     {
-        if (!$this->coroutineMysqlClient->connected) {
+        if (!$this->coroutineMysqlClient->isConnected()) {
             $this->connect();
         }
         $this->lastStatement = $stmt;
@@ -1403,7 +1403,7 @@ class Mysqli
     private function prepareQuery()
     {
 
-        if (!$this->coroutineMysqlClient->connected) {
+        if (!$this->coroutineMysqlClient->isConnected()) {
             $this->connect();
         }
         if ($this->traceEnabled)
@@ -1573,7 +1573,7 @@ class Mysqli
     /** 析构被调用时关闭当前链接并释放客户端对象 */
     function __destruct()
     {
-        if (isset($this->coroutineMysqlClient) && $this->coroutineMysqlClient->connected) {
+        if (isset($this->coroutineMysqlClient) && $this->coroutineMysqlClient->isConnected()) {
             $this->coroutineMysqlClient->close();
         }
         unset($this->coroutineMysqlClient);
