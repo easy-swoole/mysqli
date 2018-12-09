@@ -78,6 +78,18 @@ class Mysqli
         }
     }
 
+    function selectForUpdate(bool $bool):Mysqli
+    {
+        $this->forUpdate = $bool;
+        return $this;
+    }
+
+    function lockInShare(bool $bool):Mysqli
+    {
+        $this->lockInShareMode = $bool;
+        return $this;
+    }
+
     /**
      * 链接数据库
      * @return true 链接成功返回 true
