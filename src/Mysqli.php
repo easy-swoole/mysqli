@@ -446,6 +446,7 @@ class Mysqli
      * @return $this|mixed
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function get($tableName, $numRows = null, $columns = '*')
     {
@@ -464,12 +465,17 @@ class Mysqli
         if ($this->isFetchSql) {
             return $this->replacePlaceHolders($this->query, $this->bindParams);
         }
-        $res = $this->exec($stmt);
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $this->affectRows = $stmt->affected_rows;
-        $this->resetDbStatus();
-        return $res;
+        try {
+            $res = $this->exec($stmt);
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->affectRows = $stmt->affected_rows;
+            return $res;
+        } catch (\Throwable $throwable) {
+            throw $throwable;
+        } finally {
+            $this->resetDbStatus();
+        }
     }
 
     /**
@@ -479,6 +485,7 @@ class Mysqli
      * @return Mysqli|mixed|null
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function getOne($tableName, $columns = '*')
     {
@@ -505,6 +512,7 @@ class Mysqli
      * @return array|null
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function getValue($tableName, $column, $limit = 1)
     {
@@ -537,6 +545,7 @@ class Mysqli
      * @return array
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     function getColumn($tableName, $columnName, $limit = null)
     {
@@ -578,6 +587,22 @@ class Mysqli
     }
 
     /**
+     * This function store update column's name and column name of the
+     * autoincrement column
+     *
+     * @param array  $updateColumns Variable with values
+     * @param string $lastInsertId  Variable value
+     *
+     * @return $this
+     */
+    public function onDuplicate($updateColumns, $lastInsertId = null)
+    {
+        $this->lastInsertId = $lastInsertId;
+        $this->updateColumns = $updateColumns;
+        return $this;
+    }
+
+    /**
      * 插入多行数据
      * @param string $tableName 插入的表名称
      * @param array $multiInsertData 需要插入的数据
@@ -611,6 +636,7 @@ class Mysqli
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws Option
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function has($tableName)
     {
@@ -626,6 +652,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function count($tableName, $filedName = null)
     {
@@ -647,6 +674,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function max($tableName, $filedName)
     {
@@ -665,6 +693,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function min($tableName, $filedName)
     {
@@ -683,6 +712,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function sum($tableName, $filedName)
     {
@@ -701,6 +731,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function avg($tableName, $filedName)
     {
@@ -719,6 +750,7 @@ class Mysqli
      * @return bool|null
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function delete($tableName, $numRows = null)
     {
@@ -735,12 +767,17 @@ class Mysqli
         if ($this->isFetchSql) {
             return $this->replacePlaceHolders($this->query, $this->bindParams);
         }
-        $this->exec($stmt);
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $this->resetDbStatus();
-
-        return ($stmt->affected_rows > -1);    //	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
+        try {
+            $this->exec($stmt);
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->affectRows = $stmt->affected_rows;
+            return ($stmt->affected_rows > -1);    //	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
+        } catch (\Throwable $throwable) {
+            throw $throwable;
+        } finally {
+            $this->resetDbStatus();
+        }
     }
 
     /**
@@ -753,6 +790,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     function setValue($tableName, $filedName, $value)
     {
@@ -767,6 +805,7 @@ class Mysqli
      * @return mixed
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function update($tableName, $tableData, $numRows = null)
     {
@@ -779,13 +818,17 @@ class Mysqli
         if ($this->isFetchSql) {
             return $this->replacePlaceHolders($this->query, $this->bindParams);
         }
-        $status = $this->exec($stmt);
-        $this->resetDbStatus();
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $this->affectRows = $stmt->affected_rows;
-
-        return $status;
+        try{
+            $status = $this->exec($stmt);
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->affectRows = $stmt->affected_rows;
+            return $status;
+        } catch (\Throwable $throwable) {
+            throw $throwable;
+        } finally {
+            $this->resetDbStatus();
+        }
     }
 
     /**
@@ -794,6 +837,7 @@ class Mysqli
      * @return bool
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function tableExists($tables)
     {
@@ -986,8 +1030,12 @@ class Mysqli
             return null;
         }
         // Prepare query
-        $stmt = $this->prepareQuery();
-        return $stmt;
+        if ($this->isFetchSql){
+            return null;
+        }else{
+            $stmt = $this->prepareQuery();
+            return $stmt;
+        }
     }
 
     /**
@@ -1439,6 +1487,7 @@ class Mysqli
      * @return bool|int|null
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     private function buildInsert($tableName, $insertData, $operation)
     {
@@ -1447,26 +1496,34 @@ class Mysqli
         }
         $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $tableName;
         $stmt = $this->buildQuery(null, $insertData);
-        $status = $this->exec($stmt);
-        if ($this->isFetchSql) {
-            return $this->lastQuery;
-        }
-        $this->stmtError = $stmt->error;
-        $this->stmtErrno = $stmt->errno;
-        $haveOnDuplicate = !empty ($this->updateColumns);
-        $this->resetDbStatus();
-        $this->affectRows = $stmt->affected_rows;
-        if ($stmt->affected_rows < 1) {
-            // in case of onDuplicate() usage, if no rows were inserted
-            if ($status && $haveOnDuplicate) {
-                return true;
+        try {
+            if ($this->isFetchSql){
+                return $this->lastQuery;
             }
-            return false;
+            $status = $this->exec($stmt);
+            if ($this->isFetchSql) {
+                return $this->lastQuery;
+            }
+            $this->stmtError = $stmt->error;
+            $this->stmtErrno = $stmt->errno;
+            $this->affectRows = $stmt->affected_rows;
+            $haveOnDuplicate = !empty ($this->updateColumns);
+            if ($stmt->affected_rows < 1) {
+                // in case of onDuplicate() usage, if no rows were inserted
+                if ($status && $haveOnDuplicate) {
+                    return true;
+                }
+                return false;
+            }
+            if ($stmt->insert_id > 0) {
+                return $stmt->insert_id;
+            }
+            return true;
+        } catch (\Throwable $throwable) {
+            throw $throwable;
+        } finally {
+            $this->resetDbStatus();
         }
-        if ($stmt->insert_id > 0) {
-            return $stmt->insert_id;
-        }
-        return true;
     }
 
     /**
