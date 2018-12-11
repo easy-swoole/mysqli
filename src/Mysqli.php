@@ -357,6 +357,8 @@ class Mysqli
     {
         if (is_string($whereValue)) {
             $whereValue = explode(',', $whereValue);
+        } else if (is_array($whereValue)) {
+            $whereValue = array_values($whereValue);
         }
         return $this->where($whereProp, $whereValue, 'IN', $cond);
     }
