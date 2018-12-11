@@ -567,6 +567,7 @@ class Mysqli
      * @return bool|int
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function insert($tableName, $insertData)
     {
@@ -580,6 +581,7 @@ class Mysqli
      * @return bool|int|null
      * @throws ConnectFail
      * @throws PrepareQueryFail
+     * @throws \Throwable
      */
     public function replace($tableName, $insertData)
     {
@@ -610,11 +612,15 @@ class Mysqli
      * @return array|bool
      * @throws ConnectFail
      * @throws PrepareQueryFail
-     * TODO 多行插入应优化为INSERT INTO ... VALUES (...) , (...)
+     * @throws \Throwable
      */
     public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
     {
+        $autoCommit = (isset($this->startTransaction) ? !$this->startTransaction : true);
         $ids = array();
+        if ($autoCommit) {
+            $this->startTransaction();
+        }
         foreach ($multiInsertData as $insertData) {
             if ($dataKeys !== null) {
                 // apply column-names if given, else assume they're already given in the data
@@ -622,9 +628,15 @@ class Mysqli
             }
             $id = $this->insert($tableName, $insertData);
             if (!$id) {
+                if ($autoCommit) {
+                    $this->rollback();
+                }
                 return false;
             }
             $ids[] = $id;
+        }
+        if ($autoCommit) {
+            $this->commit();
         }
         return $ids;
     }
