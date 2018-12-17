@@ -278,7 +278,7 @@ class Mysqli
      */
     public function where($whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND'): Mysqli
     {
-        if (is_array($whereValue) && ($key = key($whereValue)) != "0") {
+        if (is_array($whereValue) && is_string($key = key($whereValue))) {
             $operator = $key;
             $whereValue = $whereValue[$key];
         }
