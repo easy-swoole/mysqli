@@ -128,7 +128,17 @@ class Mysqli
      */
     function getMysqlClient(): CoroutineMySQL
     {
+        /*
+         * 确保已经连接
+         */
         $this->connect();
+        /*
+         * 单独使用的时候，重置下列成员变量
+         */
+        $this->stmtError = '';
+        $this->stmtErrno = 0;
+        $this->affectRows = 0;
+        $this->totalCount = 0;
         return $this->coroutineMysqlClient;
     }
 
@@ -1071,7 +1081,7 @@ class Mysqli
         $this->affectRows = 0;
         $this->totalCount = 0;
         if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
-            $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
+            $hitCount = $this->coroutineMysqlClient->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];
         }
         return $ret;
