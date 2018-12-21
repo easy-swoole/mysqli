@@ -1063,8 +1063,13 @@ class Mysqli
             $data = [];
         }
         $ret = $stmt->execute($data);
+        /*
+         * 重置下列成员变量
+         */
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
+        $this->affectRows = 0;
+        $this->totalCount = 0;
         if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];
