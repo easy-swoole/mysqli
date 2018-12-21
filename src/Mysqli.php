@@ -197,8 +197,6 @@ class Mysqli
             $stmt = $this->prepareQuery();
             $res = $this->exec($stmt);
             $this->affectRows = $stmt->affected_rows;
-            $this->stmtError = $stmt->error;
-            $this->stmtErrno = $stmt->errno;
             $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
             $this->resetDbStatus();
         }
@@ -469,8 +467,6 @@ class Mysqli
         }
         try {
             $res = $this->exec($stmt);
-            $this->stmtError = $stmt->error;
-            $this->stmtErrno = $stmt->errno;
             $this->affectRows = $stmt->affected_rows;
             return $res;
         } catch (\Throwable $throwable) {
@@ -783,8 +779,6 @@ class Mysqli
         }
         try {
             $this->exec($stmt);
-            $this->stmtError = $stmt->error;
-            $this->stmtErrno = $stmt->errno;
             $this->affectRows = $stmt->affected_rows;
             return ($stmt->affected_rows > -1);    //	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
         } catch (\Throwable $throwable) {
@@ -834,8 +828,6 @@ class Mysqli
         }
         try{
             $status = $this->exec($stmt);
-            $this->stmtError = $stmt->error;
-            $this->stmtErrno = $stmt->errno;
             $this->affectRows = $stmt->affected_rows;
             return $status;
         } catch (\Throwable $throwable) {
@@ -1071,6 +1063,8 @@ class Mysqli
             $data = [];
         }
         $ret = $stmt->execute($data);
+        $this->stmtError = $stmt->error;
+        $this->stmtErrno = $stmt->errno;
         if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->getMysqlClient()->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];
@@ -1518,8 +1512,6 @@ class Mysqli
             if ($this->isFetchSql) {
                 return $this->lastQuery;
             }
-            $this->stmtError = $stmt->error;
-            $this->stmtErrno = $stmt->errno;
             $this->affectRows = $stmt->affected_rows;
             $haveOnDuplicate = !empty ($this->updateColumns);
             if ($stmt->affected_rows < 1) {
@@ -1564,7 +1556,7 @@ class Mysqli
      */
     public function getLastError()
     {
-        return trim($this->stmtError . " " . $this->coroutineMysqlClient->error);
+        return trim($this->stmtError);
     }
 
     /**
