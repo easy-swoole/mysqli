@@ -93,7 +93,7 @@ class Mysqli
     /**
      * 链接数据库
      * @return true 链接成功返回 true
-     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
+     * @throws \Throwable|ConnectFail 链接失败时请外部捕获该异常进行处理
      */
     public function connect()
     {
@@ -107,7 +107,7 @@ class Mysqli
                 } else {
                     $errno = $this->coroutineMysqlClient->connect_errno;
                     $error = $this->coroutineMysqlClient->connect_error;
-                    throw new ConnectFail("connect to {$this->config->getHost()}@{$this->config->getUser()} at port {$this->config->getPort()} fail: {$errno} {$error}");
+                    throw new ConnectFail("connect to {$this->config->getUser()}@{$this->config->getHost()} at port {$this->config->getPort()} fail: {$errno} {$error}");
                 }
             } catch (\Throwable $throwable) {
                 throw $throwable;
@@ -1524,9 +1524,6 @@ class Mysqli
                 return $this->lastQuery;
             }
             $status = $this->exec($stmt);
-            if ($this->isFetchSql) {
-                return $this->lastQuery;
-            }
             $this->affectRows = $stmt->affected_rows;
             $haveOnDuplicate = !empty ($this->updateColumns);
             if ($stmt->affected_rows < 1) {
