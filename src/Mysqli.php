@@ -123,6 +123,11 @@ class Mysqli
         $this->coroutineMysqlClient->close();
     }
 
+    function selectDb(string $dbName,float $timeout = 1.0)
+    {
+        return $this->getMysqlClient()->query('use '.$dbName,$timeout);
+    }
+
     /*
      * 获取协程客户端
      */
