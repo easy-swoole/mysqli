@@ -303,6 +303,25 @@ class Mysqli
     }
 
     /**
+     * 不定条件数组形式查询
+     * @param array $whereArray 查询条件结果
+     * @return Mysqli
+     */
+    public function whereMulti($whereArray = []): Mysqli
+    {
+        if(is_array($whereArray)){
+            if(!empty($whereArray)){
+                foreach ($whereArray as $where){
+                    if(isset($where[0])){
+                        $this->where($where[0],isset($where[1])?$where[1]:'DBNULL',isset($where[2])?$where[2]:'=',isset($where[3])?$where[3]:'AND');
+                    }
+                }
+            }
+        }
+        return $this;
+    }
+
+    /**
      * 添加一个WHERE OR条件
      * @param string $whereProp 字段名
      * @param string $whereValue 字段值
