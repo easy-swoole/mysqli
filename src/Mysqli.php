@@ -152,9 +152,9 @@ class Mysqli
      */
     public function resetDbStatus()
     {
-        if ($this->traceEnabled)
+        if ($this->traceEnabled){
             $this->trace[] = array( $this->lastQuery, (microtime(true) - $this->traceQueryStartTime), $this->traceGetCaller() );
-
+        }
         $this->where = [];
         $this->join = [];
         $this->orderBy = [];
@@ -187,7 +187,7 @@ class Mysqli
      */
     function endTrace()
     {
-        $this->traceEnabled = true;
+        $this->traceEnabled = false;
         $res = $this->trace;
         $this->trace = [];
         return $res;
@@ -1494,8 +1494,10 @@ class Mysqli
         if (!$this->coroutineMysqlClient->connected) {
             $this->connect();
         }
-        if ($this->traceEnabled)
+        if ($this->traceEnabled){
+            //记录当前语句执行开始时间，然后在resetDbStatus中计算
             $this->traceQueryStartTime = microtime(true);
+        }
         $res = $this->coroutineMysqlClient->prepare($this->query);
         if ($res instanceof Statement) {
             return $res;
