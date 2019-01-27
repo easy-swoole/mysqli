@@ -7,8 +7,6 @@ namespace App\Model;
 
 use EasySwoole\Mysqli\DbObject;
 use EasySwoole\Spl\SplString;
-use 你的MysqlPool;
-use 你的MysqlObject;
 
 class Model extends DbObject
 {
@@ -16,19 +14,7 @@ class Model extends DbObject
 	protected $modelPath = '\\App\\Model';
 	protected $fields = [];
 	protected $limit;
-
-	public function initialize() : void
-	{
-		try{
-			$db = MysqlPool::invoke( function( MysqlObject $mysqlObject ){
-				return $mysqlObject;
-			} );
-			$this->setDb($db);
-		}catch(\Exception $e){
-			var_dump($e->getMessage());
-		}
-
-	}
+	protected $db;
 
 	public function __construct( $data = null )
 	{
@@ -40,6 +26,9 @@ class Model extends DbObject
 			$this->dbTable = $this->prefix.$name." AS {$name}";
 		}
 		parent::__construct( $data );
+		//这里的db请从pool中拿出,直接PoolManager::getInstance()->getPool(pool::class)->getObject();
+		$this->db = $db = null;
+		$this->setDb($db);
 	}
 
 	protected function joins( array $joins ) : Model
@@ -88,6 +77,10 @@ class Model extends DbObject
 		}
 		return $this;
 	}
+	
+	public function __destruct(){
+	    //这里吧$this->db 回收到连接池中
+    }
 
 }
 ```

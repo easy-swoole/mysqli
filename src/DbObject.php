@@ -56,7 +56,7 @@ use EasySwoole\Spl\SplString;
  * @method DbObject having($havingProp, $havingValue = 'DBNULL', $operator = '=', $cond = 'AND')
  * @method DbObject groupBy($groupByField)
  **/
-abstract class DbObject
+class DbObject
 {
 	/**
 	 * 先创建Mysqli的实例
@@ -142,8 +142,6 @@ abstract class DbObject
 	 */
 	public function __construct( $data = null )
 	{
-		// 用于初始设置db等
-		$this->initialize();
 		if( empty ( $this->dbTable ) ){
 			$this->dbTable = end( explode( "\\", strtolower( get_class( $this ) ) ) );
 		}
@@ -153,11 +151,10 @@ abstract class DbObject
 		}
 	}
 
-	abstract function initialize() : void;
-
-	public function setDb( Mysqli $db ) : void
+	public function setDb( Mysqli $db ) : DbObject
 	{
 		$this->db = $db;
+		return $this;
 	}
 
 	/**
@@ -170,7 +167,9 @@ abstract class DbObject
 	{
 		$tableName = preg_replace( "/[^-a-z0-9_]+/i", '', $tableName );
 		if( !class_exists( $tableName ) ){
-			eval ( "class $tableName extends DbObject {}" );
+		    return new class extends DbObject{
+
+            };
 		}
 		return new $tableName();
 	}
