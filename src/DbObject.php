@@ -513,7 +513,7 @@ class DbObject
 	 * @param $arg
 	 * @return DbObject|mixed
 	 */
-	public static function __callStatic( $method, $arg ) : DbObject
+	public static function __callStatic( $method, $arg )
 	{
 		$obj    = new static;
 		$result = call_user_func_array( [$obj, $method], $arg );
