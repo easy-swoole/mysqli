@@ -206,10 +206,20 @@ class DbObject
 		}
 	}
 
-	public function setDb( Mysqli $db ) : DbObject
+	/**
+	 * Mysqli | null
+	 * null用于回收并清理db
+	 * @param Mysqli $db
+	 * @return DbObject | null
+	 */
+	public function setDb( $db )
 	{
-		$this->db = $db;
-		return $this;
+		if( $db instanceof Mysqli ){
+			$this->db = $db;
+			return $this;
+		} else{
+			return null;
+		}
 	}
 
 	/**
