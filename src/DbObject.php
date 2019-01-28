@@ -486,7 +486,7 @@ class DbObject
 	 *
 	 * @return mixed
 	 */
-	public function __call( $method, $arg ) : DbObject
+	public function __call( $method, $arg )
 	{
 		if( method_exists( $this, $method ) ){
 			return call_user_func_array( [$this, $method], $arg );

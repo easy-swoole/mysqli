@@ -14,17 +14,17 @@ class TpORM extends DbObject
 {
 	/**
 	 * 数据库前缀
-	 * @var string 
+	 * @var string
 	 */
 	protected $prefix ='';
 	/**
 	 * 自动加载的TpORM默认命名空间
-	 * @var string 
+	 * @var string
 	 */
-	protected $modelPath = '\\App\\TpORM';
+	protected $modelPath = '\\App\\Model';
 	/**
 	 * 输出的字段
-	 * @var array 
+	 * @var array
 	 */
 	protected $fields = [];
 	/**
@@ -54,14 +54,14 @@ class TpORM extends DbObject
 	 * @return TpORM
 	 * @throws \EasySwoole\Mysqli\Exceptions\JoinFail
 	 */
-	protected function join( $objectNames, string $joinStr, string $joinType = 'LEFT' ) : TpORM
+	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' ) : TpORM
 	{
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
-				$this->getDb()->join( ...$join );
+				parent::join( ...$join );
 			}
 		} else{
-			$this->getDb()->join( ...$objectNames );
+			parent::join( $objectNames, $joinStr , $joinType );
 		}
 
 		return $this;
@@ -116,10 +116,10 @@ class TpORM extends DbObject
 	{
 		if( is_array( $whereProps ) ){
 			foreach( $whereProps as $whereProp ){
-				$this->getDb()->where( ...$whereProp );
+				parent::where( ...$whereProp );
 			}
 		} else{
-			$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
+			parent::where( $whereProps, $whereValue, $operator, $cond );
 		}
 		return $this;
 	}
