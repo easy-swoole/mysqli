@@ -390,12 +390,12 @@ class DbObject
 		$this->data = $results;
 		$this->processAllWith( $results );
 		// 方便用于查询过某条再添加或保存
-		if( $this->returnType == 'Object' ){
-			return $results;
-		} else{
+		if( $this->returnType === 'Object' ){
 			$item        = new static ( $results );
 			$item->isNew = false;
 			return $item;
+		} else{
+			return $results;
 		}
 	}
 
