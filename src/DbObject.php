@@ -471,7 +471,6 @@ class DbObject
 	}
 
 	/**
-	 * todo for test
 	 * @return array|int|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\PrepareQueryFail
@@ -480,11 +479,7 @@ class DbObject
 	protected function count()
 	{
 		$res = $this->db->getValue( $this->dbTable, "count(*)" );
-		if( !$res ){
-			return 0;
-		} else{
-			return $res;
-		}
+		return $res ?? 0;
 	}
 
 	/**
