@@ -92,12 +92,11 @@ class TpORM extends DbObject
 		return $this;
 	}
 
-	protected function page( string $page ) : TpORM
+	protected function page( array $pageInfo ) : TpORM
 	{
-		$split = explode( ",", $page );
-		$page  = $split[0] - 1;
-		$rows  = $split[1];
-		return $this->limit( "{$page},{$rows}" );
+		$page  = $pageInfo[0] - 1;
+		$rows  = $pageInfo[1];
+		return $this->limit( [$page,$rows] );
 	}
 
 	/**
