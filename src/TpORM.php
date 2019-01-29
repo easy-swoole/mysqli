@@ -68,13 +68,13 @@ class TpORM extends DbObject
 	}
 
 	/**
-	 * @return array
+	 * @return array|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function find() : array
+	protected function find() :? array
 	{
 		$list = parent::get( 1, $this->fields );
 		return isset( $list[0] ) ? $list[0] : [];
@@ -101,13 +101,13 @@ class TpORM extends DbObject
 	}
 
 	/**
-	 * @return array
+	 * @return array|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function select() : array
+	protected function select() :? array
 	{
 		return parent::get( $this->limit, $this->fields );
 	}
