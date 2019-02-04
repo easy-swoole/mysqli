@@ -228,7 +228,7 @@ class DbObject
 	 * @param string tableName Table name
 	 * @return DbObject
 	 */
-	public static function table( $tableName ):DbObject
+	public static function table( $tableName ) : DbObject
 	{
 		$tableName = preg_replace( "/[^-a-z0-9_]+/i", '', $tableName );
 		if( !class_exists( $tableName ) ){
@@ -403,13 +403,13 @@ class DbObject
 	 * 获取所有对象
 	 * @param null $limit  数组以格式数组($count， $offset)定义SQL限制，或者是条数
 	 * @param null $fields 要获取的字段的数组或昏迷分隔列表
-	 * @return array|null
+	 * @return array|false|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function get( $limit = null, $fields = null ) : ?array
+	protected function get( $limit = null, $fields = null )
 	{
 		$this->processHasOneWith();
 		$results = $this->db->get( $this->dbTable, $limit, $fields );
