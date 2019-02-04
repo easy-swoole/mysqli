@@ -16,7 +16,7 @@ class TpORM extends DbObject
 	 * 数据库前缀
 	 * @var string
 	 */
-	protected $prefix ='';
+	protected $prefix = '';
 	/**
 	 * 自动加载的TpORM默认命名空间
 	 * @var string
@@ -29,18 +29,18 @@ class TpORM extends DbObject
 	protected $fields = [];
 	/**
 	 * 条数或者开始和结束
-	 * @var array | string
+	 * @var array | int
 	 */
 	protected $limit;
 
 	public function __construct( $data = null )
 	{
 		if( empty( $this->dbTable ) ){
-			$split         = explode( "\\", get_class( $this ) );
-			$end           = end( $split );
-			$splString     = new SplString( $end );
+			$split     = explode( "\\", get_class( $this ) );
+			$end       = end( $split );
+			$splString = new SplString( $end );
 			// 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
-			$name          = $splString->snake( '_' )->__toString();
+			$name = $splString->snake( '_' )->__toString();
 			// 给表加别名，解决json场景下不需要手动给字段加前缀
 			$this->dbTable = $this->prefix.$name." AS {$name}";
 		}
@@ -61,20 +61,20 @@ class TpORM extends DbObject
 				parent::join( ...$join );
 			}
 		} else{
-			parent::join( $objectNames, $joinStr , $joinType );
+			parent::join( $objectNames, $joinStr, $joinType );
 		}
 
 		return $this;
 	}
 
 	/**
-	 * @return array|null
+	 * @return array | null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function find() :? array
+	protected function find() : ?array
 	{
 		$list = parent::get( 1, $this->fields );
 		return isset( $list[0] ) ? $list[0] : [];
@@ -94,19 +94,19 @@ class TpORM extends DbObject
 
 	protected function page( array $pageInfo ) : TpORM
 	{
-		$page  = $pageInfo[0] - 1;
-		$rows  = $pageInfo[1];
-		return $this->limit( [$page,$rows] );
+		$page = $pageInfo[0] - 1;
+		$rows = $pageInfo[1];
+		return $this->limit( [$page, $rows] );
 	}
 
 	/**
-	 * @return array|null
+	 * @return array |false| null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function select() :? array
+	protected function select()
 	{
 		return parent::get( $this->limit, $this->fields );
 	}
@@ -114,11 +114,17 @@ class TpORM extends DbObject
 	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' ) : TpORM
 	{
 		if( is_array( $whereProps ) ){
-			foreach( $whereProps as $whereProp ){
-				parent::where( ...$whereProp );
+			foreach( $whereProps as $field => $value ){
+				if( key( $value ) === 0 ){
+					// 用于支持['in',[123,232,32,3,4]]格式
+					$this->getDb()->where( $field, [$value[0] => $value[1]] );
+				} else{
+					// 用于支持['in'=>[12,23,23]]格式
+					$this->getDb()->where( $field, $value );
+				}
 			}
 		} else{
-			parent::where( $whereProps, $whereValue, $operator, $cond );
+			$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 		}
 		return $this;
 	}
