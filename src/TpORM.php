@@ -18,10 +18,10 @@ class TpORM extends DbObject
 	 */
 	protected $prefix = '';
 	/**
-	 * 自动加载的TpORM默认命名空间
+	 * 不带前缀的表名
 	 * @var string
 	 */
-	protected $modelPath = '\\App\\Model';
+	protected $name = '';
 	/**
 	 * 输出的字段
 	 * @var array
@@ -41,14 +41,15 @@ class TpORM extends DbObject
 			$splString = new SplString( $end );
 			// 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
 			$name = $splString->snake( '_' )->__toString();
-			// 给表加别名，解决json场景下不需要手动给字段加前缀
-			$this->dbTable = $this->prefix.$name." AS {$name}";
+			$this->name = $name;
+			// 给表加前缀
+			$this->dbTable = $this->prefix.$name;
 		}
 		parent::__construct( $data );
 	}
 
 	/**
-	 * @param string $objectNames
+	 * @param string | array $objectNames
 	 * @param string $joinStr
 	 * @param string $joinType
 	 * @return TpORM
@@ -56,6 +57,8 @@ class TpORM extends DbObject
 	 */
 	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' ) : TpORM
 	{
+		// 给表加别名，解决join场景下不需要手动给字段加前缀
+		$this->dbTable = $this->dbTable." AS {$this->name}";
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
 				parent::join( ...$join );
