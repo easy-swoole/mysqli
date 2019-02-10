@@ -456,7 +456,7 @@ class Mysqli
     /**
      * SELECT 查询数据
      * @param string $tableName 需要查询的表名称
-     * @param null|integer|string $numRows 需要返回的行数
+     * @param null|integer $numRows 需要返回的行数
      * @param string $columns 需要返回的字段
      * @return $this|mixed
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理

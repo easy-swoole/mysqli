@@ -137,6 +137,61 @@ class DbObject
 	protected $toSkip = [];
 
 	/**
+	 * 需要自动转为json的字段
+	 * 如：Array('options');
+	 * @var array
+	 */
+	protected $jsonFields = [];
+
+	/**
+	 * 需要自动转成时间戳的字段
+	 * 如：Array ('createdAt', 'updatedAt');
+	 * @var array
+	 */
+	protected $timestamps = [];
+	/**
+	 * 需要自动转成数组的字段
+	 * 如：Array('sections');
+	 * @var array
+	 */
+	protected $arrayFields = [];
+	/**
+	 *  要验证的字段，如果约束了字段，不在该约束下的字段将会过滤掉，示例：
+	 *  protected $dbFields = Array(
+	 *      'login' => Array('text', 'required'),
+	 *      'password' => Array('text'),
+	 *      'createdAt' => Array('datetime'),
+	 *      'updatedAt' => Array('datetime'),
+	 *      'custom' => Array('/^test/'),
+	 * );
+	 * @var array
+	 */
+	protected $dbFields = [];
+
+	/**
+	 * 关联模型，如：
+	 * hasOne
+	 * Array(
+	 *      'person' => Array("hasOne", "person", 'id');
+	 * );
+	 * hasMany
+	 * Array(
+	 *      'products' => Array("hasMany", "product", 'userid')
+	 * );
+	 * @var array
+	 */
+	protected $relations = [];
+
+	/**
+	 * 需要隐藏的字段，如：
+	 * array(
+	 *  'password', 'token'
+	 * );
+	 * @var array
+	 */
+	protected $hidden = [];
+
+	/**
 	 * DbObject constructor.
 	 * @param null $data
 	 */
@@ -151,10 +206,20 @@ class DbObject
 		}
 	}
 
-	public function setDb( Mysqli $db ) : DbObject
+	/**
+	 * Mysqli | null
+	 * null用于回收并清理db
+	 * @param Mysqli $db
+	 * @return DbObject | null
+	 */
+	public function setDb( $db )
 	{
-		$this->db = $db;
-		return $this;
+		if( $db instanceof Mysqli ){
+			$this->db = $db;
+			return $this;
+		} else{
+			return null;
+		}
 	}
 
 	/**
@@ -163,13 +228,14 @@ class DbObject
 	 * @param string tableName Table name
 	 * @return DbObject
 	 */
-	public static function table( $tableName )
+	public static function table( $tableName ) : DbObject
 	{
 		$tableName = preg_replace( "/[^-a-z0-9_]+/i", '', $tableName );
 		if( !class_exists( $tableName ) ){
-		    return new class extends DbObject{
+			return new class extends DbObject
+			{
 
-            };
+			};
 		}
 		return new $tableName();
 	}
@@ -182,9 +248,6 @@ class DbObject
 	 */
 	public function insert()
 	{
-		if( !empty ( $this->timestamps ) && in_array( "createdAt", $this->timestamps ) ){
-			$this->createdAt = date( "Y-m-d H:i:s" );
-		}
 		$sqlData = $this->prepareData();
 		if( !$this->validate( $sqlData ) ){
 			return false;
@@ -226,10 +289,6 @@ class DbObject
 			}
 		}
 
-		if( !empty ( $this->timestamps ) && in_array( "updatedAt", $this->timestamps ) ){
-			$this->updatedAt = date( "Y-m-d H:i:s" );
-		}
-
 		$sqlData = $this->prepareData();
 		if( !$this->validate( $sqlData ) ){
 			return false;
@@ -240,6 +299,7 @@ class DbObject
 		$this->toSkip = [];
 		return $res;
 	}
+
 	/**
 	 * 保存或更新对象
 	 * @param null $data
@@ -296,7 +356,7 @@ class DbObject
 
 	/**
 	 * 通过主键获取对象
-	 * @param string $id   主键
+	 * @param string $id     主键
 	 * @param null   $fields 要获取的字段的数组或昏迷分隔列表
 	 * @return DbObject|\EasySwoole\Mysqli\Mysqli|mixed|null
 	 * @throws Exceptions\ConnectFail
@@ -330,28 +390,30 @@ class DbObject
 		$this->data = $results;
 		$this->processAllWith( $results );
 		// 方便用于查询过某条再添加或保存
-		if( $this->returnType == 'Object' ){
-			return $results;
-		} else{
+		if( $this->returnType === 'Object' ){
 			$item        = new static ( $results );
 			$item->isNew = false;
 			return $item;
+		} else{
+			return $results;
 		}
 	}
 
 	/**
 	 * 获取所有对象
-	 * @access public
-	 * @param integer|array $limit  数组以格式数组($count， $offset)定义SQL限制，或者是条数
-	 * @param array|string  $fields 要获取的字段的数组或昏迷分隔列表
-	 *
-	 * @return array Array of DbObjects
+	 * @param null $limit  数组以格式数组($count， $offset)定义SQL限制，或者是条数
+	 * @param null $fields 要获取的字段的数组或昏迷分隔列表
+	 * @return array|false|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\Option
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
 	 */
 	protected function get( $limit = null, $fields = null )
 	{
 		$this->processHasOneWith();
 		$results = $this->db->get( $this->dbTable, $limit, $fields );
-		if( count( $results ) == 0 ){
+		if( count( $results ) === 0 ){
 			return null;
 		}
 
@@ -382,13 +444,12 @@ class DbObject
 	}
 
 	/**
-	 * 将对象连接到另一个对象。
-	 *
+	 * 将对象连接到另一个对象
 	 * @param string $objectName 对象名称
 	 * @param string $joinStr    关联天条件字符串
 	 * @param string $joinType   SQL join type: LEFT, RIGHT,  INNER, OUTER
-	 *
-	 * @return DbObject
+	 * @return $this
+	 * @throws Exceptions\JoinFail
 	 */
 	protected function join( string $objectName, string $joinStr, string $joinType = 'LEFT' )
 	{
@@ -404,25 +465,21 @@ class DbObject
 		return $this;
 	}
 
-	public function getDb()
+	public function getDb() : Mysqli
 	{
 		return $this->db;
 	}
 
 	/**
-	 * todo for test
-	 * Function to get a total records count
-	 *
-	 * @return int
+	 * @return array|int|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
 	 */
 	protected function count()
 	{
 		$res = $this->db->getValue( $this->dbTable, "count(*)" );
-		if( !$res ){
-			return 0;
-		} else{
-			return $res;
-		}
+		return $res ?? 0;
 	}
 
 	/**
@@ -580,8 +637,9 @@ class DbObject
 	/**
 	 * 验证字段
 	 * @param array $data
+	 * @return bool
 	 */
-	private function validate( $data )
+	private function validate( array $data ) : bool
 	{
 		if( !$this->dbFields ){
 			return true;
@@ -657,7 +715,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	private function prepareData()
+	private function prepareData() : ?array
 	{
 		$this->errors = [];
 		$sqlData      = [];
@@ -709,7 +767,7 @@ class DbObject
 
 	public function __set( string $name, $value )
 	{
-		if( property_exists( $this, 'hidden' ) && array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hidden ) !== false ){
 			return;
 		}
 		$this->data[$name] = $value;
@@ -717,7 +775,7 @@ class DbObject
 
 	public function __get( string $name )
 	{
-		if( property_exists( $this, 'hidden' ) && array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hidden ) !== false ){
 			return null;
 		}
 
