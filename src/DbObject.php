@@ -246,8 +246,14 @@ class DbObject
 		return $this;
 	}
 
-	public function getData(){
+	public function getData()
+	{
 		return $this->data;
+	}
+
+	public function getPrimaryKey() : string
+	{
+		return $this->primaryKey;
 	}
 
 	/**
