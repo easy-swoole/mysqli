@@ -46,7 +46,9 @@ class TpDb
 	 */
 	protected $isWhere = false;
 
-
+	/**
+	 * @param string $name
+	 */
 	protected function name( string $name )
 	{
 		$splString     = new SplString( $name );

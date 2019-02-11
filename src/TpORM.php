@@ -10,6 +10,10 @@ namespace EasySwoole\Mysqli;
 
 use EasySwoole\Spl\SplString;
 
+/**
+ * Class TpORM
+ * @package EasySwoole\Mysqli
+ */
 class TpORM extends DbObject
 {
 	/**
@@ -40,7 +44,7 @@ class TpORM extends DbObject
 			$end       = end( $split );
 			$splString = new SplString( $end );
 			// 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
-			$name = $splString->snake( '_' )->__toString();
+			$name       = $splString->snake( '_' )->__toString();
 			$this->name = $name;
 			// 给表加前缀
 			$this->dbTable = $this->prefix.$name;
@@ -50,12 +54,11 @@ class TpORM extends DbObject
 
 	/**
 	 * @param string | array $objectNames
-	 * @param string $joinStr
-	 * @param string $joinType
-	 * @return TpORM
+	 * @param string         $joinStr
+	 * @param string         $joinType
 	 * @throws \EasySwoole\Mysqli\Exceptions\JoinFail
 	 */
-	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' ) : TpORM
+	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' )
 	{
 		// 给表加别名，解决join场景下不需要手动给字段加前缀
 		$this->dbTable = $this->dbTable." AS {$this->name}";
@@ -71,31 +74,31 @@ class TpORM extends DbObject
 	}
 
 	/**
-	 * @return array | null
+	 * @return array
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\Option
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function find() : ?array
+	protected function find()
 	{
 		$list = parent::get( 1, $this->fields );
 		return isset( $list[0] ) ? $list[0] : [];
 	}
 
-	protected function field( $field ) : TpORM
+	protected function field( $field )
 	{
 		$this->fields = $field;
 		return $this;
 	}
 
-	protected function limit( $limit ) : TpORM
+	protected function limit( $limit )
 	{
 		$this->limit = $limit;
 		return $this;
 	}
 
-	protected function page( array $pageInfo ) : TpORM
+	protected function page( array $pageInfo )
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
@@ -114,7 +117,14 @@ class TpORM extends DbObject
 		return parent::get( $this->limit, $this->fields );
 	}
 
-	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' ) : TpORM
+	/**
+	 * @param        $whereProps
+	 * @param string $whereValue
+	 * @param string $operator
+	 * @param string $cond
+	 * @return $this|DbObject
+	 */
+	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' )
 	{
 		if( is_array( $whereProps ) ){
 			foreach( $whereProps as $field => $value ){
@@ -130,5 +140,67 @@ class TpORM extends DbObject
 			$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 		}
 		return $this;
+	}
+
+	/**
+	 * 可选的更新数据应用于对象
+	 * 如果不存在
+	 * @param null $data
+	 * @return bool|mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function update( $data = null )
+	{
+		// 对象方式的修改
+		if( isset( $this->data[$this->primaryKey] ) ){
+			return parent::update( $data );
+		} else{
+			// 过滤约束的fields个是
+			foreach( $data as $key => &$value ){
+				if( in_array( $key, $this->toSkip ) ){
+					continue;
+				}
+
+				if( !in_array( $key, array_keys( $this->dbFields ) ) ){
+					continue;
+				}
+
+				if( !is_array( $value ) ){
+					$sqlData[$key] = $value;
+					continue;
+				}
+
+				if( isset ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
+					$sqlData[$key] = json_encode( $value );
+				} else if( isset ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
+					$sqlData[$key] = implode( "|", $value );
+				} else{
+					$sqlData[$key] = $value;
+				}
+			}
+			$res = $this->getDb()->update( $this->dbTable, $sqlData );
+			return $res;
+		}
+	}
+
+	/**
+	 * 删除的方法。只在定义了对象primaryKey时才有效
+	 * @return bool|null 表示成功。0或1。
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function delete()
+	{
+		// 对象方式的修改
+		if( isset( $this->data[$this->primaryKey] ) ){
+			return parent::delete( $data );
+		} else{
+			$res          = $this->getDb()->delete( $this->dbTable );
+			$this->toSkip = [];
+			return $res;
+		}
 	}
 }

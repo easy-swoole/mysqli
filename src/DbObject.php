@@ -129,7 +129,7 @@ class DbObject
 	 * 要返回的类型
 	 * @var string
 	 */
-	protected $returnType = 'Array';
+	protected $returnType = 'Object';
 	/**
 	 * 在验证、准备和保存期间将跳过的字段的名称
 	 * @var array
@@ -240,14 +240,27 @@ class DbObject
 		return new $tableName();
 	}
 
+	public function setData( $data = null )
+	{
+		$this->data = $data;
+		return $this;
+	}
+
+	public function getData(){
+		return $this->data;
+	}
+
 	/**
 	 * @return bool|int
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function insert()
+	public function insert( $data = null )
 	{
+		if( !empty( $data ) ){
+			$this->setData( $data );
+		}
 		$sqlData = $this->prepareData();
 		if( !$this->validate( $sqlData ) ){
 			return false;
@@ -326,8 +339,9 @@ class DbObject
 	 */
 	public function delete()
 	{
-		if( empty ( $this->data[$this->primaryKey] ) )
+		if( empty ( $this->data[$this->primaryKey] ) ){
 			return false;
+		}
 
 		$this->db->where( $this->primaryKey, $this->data[$this->primaryKey] );
 		$res          = $this->db->delete( $this->dbTable );
@@ -358,7 +372,7 @@ class DbObject
 	 * 通过主键获取对象
 	 * @param string $id     主键
 	 * @param null   $fields 要获取的字段的数组或昏迷分隔列表
-	 * @return DbObject|\EasySwoole\Mysqli\Mysqli|mixed|null
+	 * @return DbObject|\EasySwoole\Mysqli\Mysqli|mixed|null|static
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
@@ -409,6 +423,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
+
 	protected function get( $limit = null, $fields = null )
 	{
 		$this->processHasOneWith();
@@ -480,6 +495,30 @@ class DbObject
 	{
 		$res = $this->db->getValue( $this->dbTable, "count(*)" );
 		return $res ?? 0;
+	}
+
+	/**
+	 * @param string $name
+	 * @return array
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function column( string $name )
+	{
+		return $this->db->getColumn( $this->dbTable, $name );
+	}
+
+	/**
+	 * @param string $name
+	 * @return array|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function value( string $name )
+	{
+		return $this->db->getValue( $this->dbTable, $name );
 	}
 
 	/**
