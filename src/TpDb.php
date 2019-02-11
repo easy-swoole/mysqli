@@ -47,6 +47,19 @@ class TpDb
 	protected $isWhere = false;
 
 	/**
+	 * 保存对象数据的数组
+	 *
+	 * @var array
+	 */
+	public $data;
+	/**
+	 * 对象的主键。'id'是默认值。
+	 *
+	 * @var string
+	 */
+	protected $primaryKey = 'id';
+
+	/**
 	 * @param string $name
 	 */
 	protected function name( string $name )
