@@ -169,6 +169,16 @@ class TpORM extends DbObject
 	}
 
 	/**
+	 * @param string $groupByField
+	 * @return $this
+	 */
+	protected function group( string $groupByField )
+	{
+		$this->getDb()->groupBy( $groupByField );
+		return $this;
+	}
+
+	/**
 	 * 可选的更新数据应用于对象
 	 * 如果不存在
 	 * @param null $data

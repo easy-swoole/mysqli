@@ -325,6 +325,16 @@ class TpDb
 	}
 
 	/**
+	 * @param string $groupByField
+	 * @return $this
+	 */
+	protected function group( string $groupByField )
+	{
+		$this->getDb()->groupBy( $groupByField );
+		return $this;
+	}
+
+	/**
 	 * 捕获对未定义方法的调用。
 	 * 提供对类的私有函数和本机公共mysqlidb函数的神奇访问
 	 *
