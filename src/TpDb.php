@@ -125,24 +125,36 @@ class TpDb
 		return $this;
 	}
 
-
+	/**
+	 * @param array | string $field
+	 * @return $this
+	 */
 	protected function field( $field )
 	{
 		$this->fields = $field;
 		return $this;
 	}
 
+	/**
+	 * @param array | int eg : $limit [0,10] ， 1
+	 * @return $this
+	 */
 	protected function limit( $limit )
 	{
 		$this->limit = $limit;
 		return $this;
 	}
 
+	/**
+	 * @param array $pageInfo eg : [1,10]
+	 * @return $this
+	 */
 	protected function page( array $pageInfo )
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
-		return $this->limit( [$page, $rows] );
+		$this->limit( [$page, $rows] );
+		return $this;
 	}
 
 	/**
@@ -274,6 +286,7 @@ class TpDb
 		$this->isWhere = false;
 		return $this->getDb()->delete( $this->dbTable );
 	}
+
 	/**
 	 * @param string $orderByField
 	 * @param string $orderByDirection
@@ -286,6 +299,31 @@ class TpDb
 		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 		return $this;
 	}
+
+	/**
+	 * @param string $name
+	 * @return array
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function column( string $name )
+	{
+		return $this->getDb()->getColumn( $this->dbTable, $name );
+	}
+
+	/**
+	 * @param string $name
+	 * @return array|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function value( string $name )
+	{
+		return $this->getDb()->getValue( $this->dbTable, $name );
+	}
+
 	/**
 	 * 捕获对未定义方法的调用。
 	 * 提供对类的私有函数和本机公共mysqlidb函数的神奇访问

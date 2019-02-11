@@ -108,7 +108,7 @@ class TpORM extends DbObject
 
 	/**
 	 * @param array $pageInfo eg : [1,10]
-	 * @return TpORM
+	 * @return $this
 	 */
 	protected function page( array $pageInfo )
 	{
