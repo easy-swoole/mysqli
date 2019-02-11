@@ -30,6 +30,11 @@ class TpDb
 	 */
 	protected $prefix = '';
 	/**
+	 * 不带前缀的表名
+	 * @var string
+	 */
+	protected $tableName = '';
+	/**
 	 * 输出的字段
 	 * @var array
 	 */
@@ -65,9 +70,26 @@ class TpDb
 	protected function name( string $name )
 	{
 		$splString     = new SplString( $name );
-		$name          = $splString->snake( '_' )->__toString();
-		$this->dbTable = $this->prefix.$name;
+		$tableName          = $splString->snake( '_' )->__toString();
+		$this->tableName = $tableName;
+		$this->dbTable = $this->prefix.$tableName;
 		return $this;
+	}
+
+	/**
+	 * 带前缀
+	 * @return string
+	 */
+	public function getDbTable():string {
+		return $this->dbTable;
+	}
+
+	/**
+	 * 不带前缀
+	 * @return string
+	 */
+	public function getTableName():string {
+		return $this->tableName;
 	}
 
 	/**

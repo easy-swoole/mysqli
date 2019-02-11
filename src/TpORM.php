@@ -22,10 +22,16 @@ class TpORM extends DbObject
 	 */
 	protected $prefix = '';
 	/**
+	 * 对象的表名。默认情况下将使用类名
+	 *
+	 * @var string
+	 */
+	protected $dbTable;
+	/**
 	 * 不带前缀的表名
 	 * @var string
 	 */
-	protected $name = '';
+	protected $tableName = '';
 	/**
 	 * 输出的字段
 	 * @var array | string
@@ -44,14 +50,29 @@ class TpORM extends DbObject
 			$end       = end( $split );
 			$splString = new SplString( $end );
 			// 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
-			$name       = $splString->snake( '_' )->__toString();
-			$this->name = $name;
+			$tableName       = $splString->snake( '_' )->__toString();
+			$this->tableName = $tableName;
 			// 给表加前缀
-			$this->dbTable = $this->prefix.$name;
+			$this->dbTable = $this->prefix.$tableName;
 		}
 		parent::__construct( $data );
 	}
 
+	/**
+	 * 带前缀
+	 * @return string
+	 */
+	public function getDbTable():string {
+		return $this->dbTable;
+	}
+
+	/**
+	 * 不带前缀
+	 * @return string
+	 */
+	public function getTableName():string {
+		return $this->tableName;
+	}
 	/**
 	 * @param string | array $objectNames
 	 * @param string         $joinStr
@@ -61,7 +82,7 @@ class TpORM extends DbObject
 	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' )
 	{
 		// 给表加别名，解决join场景下不需要手动给字段加前缀
-		$this->dbTable = $this->dbTable." AS {$this->name}";
+		$this->dbTable = $this->dbTable." AS {$this->tableName}";
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
 				parent::join( ...$join );
