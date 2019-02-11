@@ -28,9 +28,9 @@ class TpORM extends DbObject
 	protected $name = '';
 	/**
 	 * 输出的字段
-	 * @var array
+	 * @var array | string
 	 */
-	protected $fields = [];
+	protected $fields = '*';
 	/**
 	 * 条数或者开始和结束
 	 * @var array | int
@@ -86,6 +86,10 @@ class TpORM extends DbObject
 		return isset( $list[0] ) ? $list[0] : [];
 	}
 
+	/**
+	 * @param array | string $field
+	 * @return $this
+	 */
 	protected function field( $field )
 	{
 		$this->fields = $field;
@@ -196,7 +200,7 @@ class TpORM extends DbObject
 	{
 		// 对象方式的修改
 		if( isset( $this->data[$this->primaryKey] ) ){
-			return parent::delete( $data );
+			return parent::delete();
 		} else{
 			$res          = $this->getDb()->delete( $this->dbTable );
 			$this->toSkip = [];
