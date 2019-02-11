@@ -96,17 +96,39 @@ class TpORM extends DbObject
 		return $this;
 	}
 
+	/**
+	 * @param array | int eg : $limit [0,10] ， 1
+	 * @return $this
+	 */
 	protected function limit( $limit )
 	{
 		$this->limit = $limit;
 		return $this;
 	}
 
+	/**
+	 * @param array $pageInfo eg : [1,10]
+	 * @return TpORM
+	 */
 	protected function page( array $pageInfo )
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
-		return $this->limit( [$page, $rows] );
+		$this->limit( [$page, $rows] );
+		return $this;
+	}
+
+	/**
+	 * @param string $orderByField
+	 * @param string $orderByDirection
+	 * @param null   $customFieldsOrRegExp
+	 * @return $this
+	 * @throws Exceptions\OrderByFail
+	 */
+	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
+	{
+		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		return $this;
 	}
 
 	/**
