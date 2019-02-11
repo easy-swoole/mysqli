@@ -187,6 +187,13 @@ class TpDb
 		return $this->get( $this->limit, $this->fields );
 	}
 
+	/**
+	 * @param   array | string $whereProps
+	 * @param string           $whereValue
+	 * @param string           $operator
+	 * @param string           $cond
+	 * @return $this
+	 */
 	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' )
 	{
 		$this->isWhere = true;
@@ -250,6 +257,35 @@ class TpDb
 		return $this->getDb()->update( $this->dbTable, $data );
 	}
 
+	/**
+	 * @return bool|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function delete()
+	{
+		if( $this->isWhere === true ){
+		} else if( empty ( $this->data[$this->primaryKey] ) ){
+			return false;
+		} else{
+			$this->getDb()->where( $this->primaryKey, $this->data[$this->primaryKey] );
+		}
+		$this->isWhere = false;
+		return $this->getDb()->delete( $this->dbTable );
+	}
+	/**
+	 * @param string $orderByField
+	 * @param string $orderByDirection
+	 * @param null   $customFieldsOrRegExp
+	 * @return $this
+	 * @throws Exceptions\OrderByFail
+	 */
+	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
+	{
+		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		return $this;
+	}
 	/**
 	 * 捕获对未定义方法的调用。
 	 * 提供对类的私有函数和本机公共mysqlidb函数的神奇访问
