@@ -668,7 +668,7 @@ class DbObject
 	{
 		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
-				$data[$key] = json_decode( $data[$key] );
+				$data[$key] = json_decode( $data[$key],true );
 			}
 		}
 
