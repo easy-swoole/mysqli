@@ -62,7 +62,8 @@ class TpORM extends DbObject
 	 * 带前缀
 	 * @return string
 	 */
-	public function getDbTable():string {
+	public function getDbTable() : string
+	{
 		return $this->dbTable;
 	}
 
@@ -70,9 +71,11 @@ class TpORM extends DbObject
 	 * 不带前缀
 	 * @return string
 	 */
-	public function getTableName():string {
+	public function getTableName() : string
+	{
 		return $this->tableName;
 	}
+
 	/**
 	 * @param string | array $objectNames
 	 * @param string         $joinStr
@@ -135,20 +138,28 @@ class TpORM extends DbObject
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
+
+		var_dump( $pageInfo );
 		$this->limit( [$page, $rows] );
 		return $this;
 	}
 
 	/**
-	 * @param string $orderByField
-	 * @param string $orderByDirection
-	 * @param null   $customFieldsOrRegExp
+	 * @param array|string $orderByField
+	 * @param string         $orderByDirection
+	 * @param null           $customFieldsOrRegExp
 	 * @return $this
 	 * @throws Exceptions\OrderByFail
 	 */
-	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
+	protected function order( $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
-		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		if( is_array( $orderByField ) ){
+			foreach( $orderByField as $order ){
+				$this->getDb()->orderBy( ...$order );
+			}
+		} else{
+			$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		}
 		return $this;
 	}
 

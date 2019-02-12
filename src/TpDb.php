@@ -310,15 +310,21 @@ class TpDb
 	}
 
 	/**
-	 * @param string $orderByField
-	 * @param string $orderByDirection
-	 * @param null   $customFieldsOrRegExp
+	 * @param array|string $orderByField
+	 * @param string         $orderByDirection
+	 * @param null           $customFieldsOrRegExp
 	 * @return $this
 	 * @throws Exceptions\OrderByFail
 	 */
-	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
+	protected function order( $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
-		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		if( is_array( $orderByField ) ){
+			foreach( $orderByField as $order ){
+				$this->getDb()->orderBy( ...$order );
+			}
+		} else{
+			$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		}
 		return $this;
 	}
 
