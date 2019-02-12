@@ -138,8 +138,6 @@ class TpORM extends DbObject
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
-
-		var_dump( $pageInfo );
 		$this->limit( [$page, $rows] );
 		return $this;
 	}
