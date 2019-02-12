@@ -168,8 +168,9 @@ class TpORM extends DbObject
 					$this->getDb()->orderBy( $order, $orderByDirection, $customFieldsOrRegExp );
 				}
 			}
+		}else{
+			$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 		}
-		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 		return $this;
 	}
 
