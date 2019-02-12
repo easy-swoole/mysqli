@@ -310,21 +310,31 @@ class TpDb
 	}
 
 	/**
-	 * @param array|string $orderByField
-	 * @param string         $orderByDirection
-	 * @param null           $customFieldsOrRegExp
+	 * @param string $orderByField
+	 * @param string $orderByDirection
+	 * @param null   $customFieldsOrRegExp
 	 * @return $this
 	 * @throws Exceptions\OrderByFail
 	 */
-	protected function order( $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
+	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
-		if( is_array( $orderByField ) ){
-			foreach( $orderByField as $order ){
-				$this->getDb()->orderBy( ...$order );
+		// 替换多个空格为单个空格
+		$orderByField = preg_replace( '#\s+#', ' ', $orderByField );
+		// 如果是 "create_time desc,time asc"
+		if( strstr( $orderByField, ',' ) ){
+			$orders = explode( ',', $orderByField );
+			foreach( $orders as $order ){
+				// 如果是存在空格，执行orderBy("create_time","DESC")
+				if( strstr( $order, ' ' ) ){
+					$im = implode( ' ', $order );
+					$this->getDb()->orderBy( $im[0], $im[1] );
+				} else{
+					// 可以执行，如：RAND()
+					$this->getDb()->orderBy( $order, $orderByDirection, $customFieldsOrRegExp );
+				}
 			}
-		} else{
-			$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 		}
+		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 		return $this;
 	}
 
