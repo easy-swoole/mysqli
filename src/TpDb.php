@@ -233,7 +233,7 @@ class TpDb
 		$this->isWhere = true;
 		if( is_array( $whereProps ) ){
 			foreach( $whereProps as $field => $value ){
-				if( key( $value ) === 0 ){
+				if( is_array($value) && key( $value ) === 0 ){
 					// 用于支持['in',[123,232,32,3,4]]格式
 					$this->getDb()->where( $field, [$value[0] => $value[1]] );
 				} else{
@@ -326,7 +326,7 @@ class TpDb
 			foreach( $orders as $order ){
 				// 如果是存在空格，执行orderBy("create_time","DESC")
 				if( strstr( $order, ' ' ) ){
-					$split = implode( ' ', $order );
+					$split = explode( ' ', $order );
 					$this->getDb()->orderBy( $split[0], $split[1] );
 				} else{
 					// 可以执行，如：RAND()
