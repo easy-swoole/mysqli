@@ -319,7 +319,8 @@ class TpDb
 	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
 		// 替换多个空格为单个空格
-		$orderByField = preg_replace( '#\s+#', ' ', $orderByField );
+		$orderByField = preg_replace( '#\s+#', ' ', trim($orderByField) );
+		var_dump($orderByField);
 		// 如果是 "create_time desc,time asc"
 		if( strstr( $orderByField, ',' ) ){
 			$orders = explode( ',', $orderByField );
@@ -334,7 +335,14 @@ class TpDb
 				}
 			}
 		}else{
-			$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+			// 如果是存在空格，执行orderBy("create_time","DESC")
+			if( strstr( $orderByField, ' ' ) ){
+				$split = explode( ' ', $orderByField );
+				$this->getDb()->orderBy( $split[0], $split[1] );
+			} else{
+				// 可以执行，如：RAND()
+				$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+			}
 		}
 		return $this;
 	}
