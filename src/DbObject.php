@@ -189,7 +189,7 @@ class DbObject
 	 * );
 	 * @var array
 	 */
-	protected $hidden = [];
+	protected $hiddenFields = [];
 
 	/**
 	 * DbObject constructor.
@@ -677,6 +677,12 @@ class DbObject
 				$data[$key] = explode( "|", $data[$key] );
 			}
 		}
+
+		if(  is_array( $this->hiddenFields ) && !empty($this->hiddenFields) ){
+			foreach( $this->hiddenFields as $key ){
+				unset($data[$key]);
+			}
+		}
 	}
 
 	/**
@@ -812,7 +818,7 @@ class DbObject
 
 	public function __set( string $name, $value )
 	{
-		if( array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hiddenFields ) !== false ){
 			return;
 		}
 		$this->data[$name] = $value;
@@ -820,7 +826,7 @@ class DbObject
 
 	public function __get( string $name )
 	{
-		if( array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hiddenFields ) !== false ){
 			return null;
 		}
 
