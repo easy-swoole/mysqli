@@ -644,7 +644,9 @@ class DbObject
 	 */
 	protected function group( $groupByField )
 	{
-		$this->db->groupBy( $groupByField );
+		if($groupByField){
+			$this->db->groupBy( $groupByField );
+		}
 		return $this;
 	}
 
