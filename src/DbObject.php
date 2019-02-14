@@ -41,7 +41,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject onDuplicate($updateColumns, $lastInsertId = null)
  * @method DbObject tableExists($tables)
  * @method mixed|static fetchSql(bool $fetch = true)
- * @method DbObject getTotalCount(): int
  * @method DbObject getAffectRows(): int
  * @method DbObject setQueryOption($options)
  * @method DbObject getLastStatement(): ?Statement
@@ -484,7 +483,7 @@ class DbObject
 			/**
 			 * @var $joinObj static
 			 */
-			$joinObj    = new $class_name;
+			$joinObj = new $class_name;
 			// join时自动加别名
 			$joinObj->setDbTable( $joinObj->dbTable." AS `{$objectName}`" );
 		}
@@ -643,7 +642,7 @@ class DbObject
 	 */
 	protected function group( $groupByField )
 	{
-		if($groupByField){
+		if( $groupByField ){
 			$this->db->groupBy( $groupByField );
 		}
 		return $this;
@@ -826,7 +825,7 @@ class DbObject
 	{
 		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
-				if(isset($data[$key])){
+				if( isset( $data[$key] ) ){
 					$data[$key] = json_decode( $data[$key], true );
 				}
 			}
@@ -834,7 +833,7 @@ class DbObject
 
 		if( isset ( $this->arrayFields ) && is_array( $this->arrayFields ) ){
 			foreach( $this->arrayFields as $key ){
-				if(isset($data[$key])){
+				if( isset( $data[$key] ) ){
 					$data[$key] = explode( "|", $data[$key] );
 				}
 			}
@@ -842,7 +841,7 @@ class DbObject
 
 		if( is_array( $this->hiddenFields ) && !empty( $this->hiddenFields ) ){
 			foreach( $this->hiddenFields as $key ){
-				if(isset($data[$key])){
+				if( isset( $data[$key] ) ){
 					unset( $data[$key] );
 				}
 			}
@@ -858,6 +857,15 @@ class DbObject
 		$this->db->withTotalCount();
 		return $this;
 	}
+
+	/**
+	 * @return int
+	 */
+	public function getTotalCount() : int
+	{
+		return $this->db->getTotalCount();
+	}
+
 	/**
 	 * 验证字段
 	 * @param array $data
