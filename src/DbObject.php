@@ -528,6 +528,119 @@ class DbObject
 	}
 
 	/**
+	 * @param $filedName
+	 * @return array|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function sum( $filedName )
+	{
+		return $this->db->sum( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function max( $filedName )
+	{
+		return $this->db->max( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function min( $filedName )
+	{
+		return $this->db->min( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function avg( $filedName )
+	{
+		return $this->db->avg( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $num
+	 * @return array
+	 */
+	protected function inc( $num )
+	{
+		return $this->db->inc( $this->dbTable, $num );
+	}
+
+	/**
+	 * @param $num
+	 * @return array
+	 */
+	protected function dec( $num )
+	{
+		return $this->db->dec( $this->dbTable, $num );
+	}
+
+	/**
+	 * @param     $filedName
+	 * @param int $num
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function setInc( $filedName, $num = 1 )
+	{
+		return $this->db->update( $this->dbTable, [$filedName => $this->inc( $num )] );
+	}
+
+	/**
+	 * @param     $filedName
+	 * @param int $num
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function setDec( $filedName, $num = 1 )
+	{
+		return $this->db->update( $this->dbTable, [$filedName => $this->dec( $num )] );
+	}
+
+	/**
+	 * @param array $insertData
+	 * @return bool|int|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function replace( array $insertData )
+	{
+		return $this->db->replace( $this->dbTable, $insertData );
+	}
+
+	/**
+	 * @param $groupByField
+	 * @return Mysqli
+	 */
+	public function group( $groupByField )
+	{
+		return $this->db->groupBy( $groupByField );
+	}
+
+	/**
 	 * 捕获对未定义方法的调用。
 	 * 提供对类的私有函数和本机公共mysqlidb函数的神奇访问
 	 *
@@ -668,7 +781,7 @@ class DbObject
 	{
 		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
-				$data[$key] = json_decode( $data[$key],true );
+				$data[$key] = json_decode( $data[$key], true );
 			}
 		}
 
@@ -678,9 +791,9 @@ class DbObject
 			}
 		}
 
-		if(  is_array( $this->hiddenFields ) && !empty($this->hiddenFields) ){
+		if( is_array( $this->hiddenFields ) && !empty( $this->hiddenFields ) ){
 			foreach( $this->hiddenFields as $key ){
-				unset($data[$key]);
+				unset( $data[$key] );
 			}
 		}
 	}
