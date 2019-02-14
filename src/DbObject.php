@@ -264,7 +264,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function insert( $data = null )
+	protected function insert( $data = null )
 	{
 		if( !empty( $data ) ){
 			$this->setData( $data );
@@ -291,7 +291,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function update( $data = null )
+	protected function update( $data = null )
 	{
 		if( empty ( $this->dbFields ) ){
 			return false;

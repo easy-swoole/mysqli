@@ -215,6 +215,7 @@ class TpORM extends DbObject
 				$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 			}
 		}
+
 		return $this;
 	}
 
