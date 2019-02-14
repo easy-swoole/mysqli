@@ -874,8 +874,7 @@ class DbObject
 	 */
 	public function rawQuery( $query, array $bindParams = [] )
 	{
-		$this->db->rawQuery( $query, $bindParams );
-		return $this;
+		return $this->db->rawQuery( $query, $bindParams );
 	}
 
 	/**
