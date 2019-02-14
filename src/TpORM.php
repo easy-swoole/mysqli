@@ -85,7 +85,7 @@ class TpORM extends DbObject
 	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' )
 	{
 		// 给表加别名，解决join场景下不需要手动给字段加前缀
-		$this->dbTable = $this->dbTable." AS {$this->tableName}";
+		$this->dbTable = $this->dbTable." AS `{$this->tableName}`";
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
 				parent::join( ...$join );

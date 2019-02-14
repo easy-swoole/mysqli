@@ -142,7 +142,7 @@ class TpDb
 	{
 		$splString = new SplString( $objectName );
 		$name      = $splString->snake()->__toString();
-		$tableName = $this->prefix.$name." AS {$name}";
+		$tableName = $this->prefix.$name." AS `{$name}`";
 		$this->db->join( $tableName, $joinStr, $joinType );
 		return $this;
 	}

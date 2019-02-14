@@ -232,6 +232,12 @@ class DbObject
 		}
 	}
 
+	public function setDbTable( string $name )
+	{
+		$this->dbTable = $name;
+		return $this;
+	}
+
 	/**
 	 * 帮助函数来创建一个虚拟表类
 	 *
@@ -491,6 +497,8 @@ class DbObject
 			$splString  = new SplString( $objectName );
 			$class_name = $this->modelPath."\\".$splString->studly()->__toString();
 			$joinObj    = new $class_name;
+			// join时自动加别名
+			$joinObj->setDbTable($joinObj->dbTable." AS `{$objectName}`") ;
 		}
 		$this->db->join( $joinObj->dbTable, $joinStr, $joinType );
 		return $this;
