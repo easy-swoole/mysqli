@@ -827,19 +827,25 @@ class DbObject
 	{
 		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
-				$data[$key] = json_decode( $data[$key], true );
+				if(isset($data[$key])){
+					$data[$key] = json_decode( $data[$key], true );
+				}
 			}
 		}
 
 		if( isset ( $this->arrayFields ) && is_array( $this->arrayFields ) ){
 			foreach( $this->arrayFields as $key ){
-				$data[$key] = explode( "|", $data[$key] );
+				if(isset($data[$key])){
+					$data[$key] = explode( "|", $data[$key] );
+				}
 			}
 		}
 
 		if( is_array( $this->hiddenFields ) && !empty( $this->hiddenFields ) ){
 			foreach( $this->hiddenFields as $key ){
-				unset( $data[$key] );
+				if(isset($data[$key])){
+					unset( $data[$key] );
+				}
 			}
 		}
 	}
