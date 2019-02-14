@@ -48,10 +48,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject getLastStatement(): ?Statement
  * @method DbObject getSubQuery()
  * @method DbObject subQuery($subQueryAlias = ""): Mysqli
- * @method DbObject getInsertId()
- * @method DbObject getLastQuery()
- * @method DbObject getLastError()
- * @method DbObject getLastErrno()
  * @method DbObject orderBy($orderByField, $orderByDirection = "DESC", $customFieldsOrRegExp = null)
  * @method DbObject having($havingProp, $havingValue = 'DBNULL', $operator = '=', $cond = 'AND')
  * @method DbObject groupBy($groupByField)
@@ -652,6 +648,42 @@ class DbObject
 	protected function group( $groupByField )
 	{
 		return $this->db->groupBy( $groupByField );
+	}
+
+	/**
+	 * 获取最后插入的数据ID
+	 * @return int
+	 */
+	protected function getInsertId()
+	{
+		return $this->db->getInsertId();
+	}
+
+	/**
+	 * 获取最后一次查询的语句
+	 * @return mixed
+	 */
+	protected function getLastQuery()
+	{
+		return $this->db->getLastQuery();
+	}
+
+	/**
+	 * 获取最后一次查询错误的内容
+	 * @return string
+	 */
+	protected function getLastError()
+	{
+		return $this->db->getLastError();
+	}
+
+	/**
+	 * 获取最后一次查询错误的编号
+	 * @return mixed
+	 */
+	protected function getLastErrno()
+	{
+		return $this->db->getLastErrno();
 	}
 
 	/**
