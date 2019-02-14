@@ -200,18 +200,20 @@ class TpORM extends DbObject
 	 */
 	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' )
 	{
-		if( is_array( $whereProps ) ){
-			foreach( $whereProps as $field => $value ){
-				if( is_array($value) && key( $value ) === 0 ){
-					// 用于支持['in',[123,232,32,3,4]]格式
-					$this->getDb()->where( $field, [$value[0] => $value[1]] );
-				} else{
-					// 用于支持['in'=>[12,23,23]]格式
-					$this->getDb()->where( $field, $value );
+		if( !empty($whereProps) ){
+			if( is_array( $whereProps ) ){
+				foreach( $whereProps as $field => $value ){
+					if( is_array($value) && key( $value ) === 0 ){
+						// 用于支持['in',[123,232,32,3,4]]格式
+						$this->getDb()->where( $field, [$value[0] => $value[1]] );
+					} else{
+						// 用于支持['in'=>[12,23,23]]格式
+						$this->getDb()->where( $field, $value );
+					}
 				}
+			} else{
+				$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 			}
-		} else{
-			$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 		}
 		return $this;
 	}
