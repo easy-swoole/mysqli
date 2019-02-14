@@ -601,7 +601,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function setInc( $filedName, $num = 1 )
+	protected function setInc( $filedName, $num = 1 )
 	{
 		return $this->db->update( $this->dbTable, [$filedName => $this->inc( $num )] );
 	}
@@ -614,7 +614,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function setDec( $filedName, $num = 1 )
+	protected function setDec( $filedName, $num = 1 )
 	{
 		return $this->db->update( $this->dbTable, [$filedName => $this->dec( $num )] );
 	}
@@ -626,7 +626,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function replace( array $insertData )
+	protected function replace( array $insertData )
 	{
 		return $this->db->replace( $this->dbTable, $insertData );
 	}
@@ -635,7 +635,7 @@ class DbObject
 	 * @param $groupByField
 	 * @return Mysqli
 	 */
-	public function group( $groupByField )
+	protected function group( $groupByField )
 	{
 		return $this->db->groupBy( $groupByField );
 	}
