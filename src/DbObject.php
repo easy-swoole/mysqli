@@ -22,7 +22,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject resetDbStatus(): void
  * @method DbObject startTrace(): void
  * @method DbObject endTrace(): array
- * @method DbObject rawQuery($query, array $bindParams = [])
  * @method DbObject startTransaction(): bool
  * @method DbObject commit(): bool
  * @method DbObject rollback($commit = true)
@@ -864,6 +863,19 @@ class DbObject
 	public function getTotalCount() : int
 	{
 		return $this->db->getTotalCount();
+	}
+
+	/**
+	 * @param       $query
+	 * @param array $bindParams
+	 * @return $this
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 */
+	public function rawQuery( $query, array $bindParams = [] )
+	{
+		$this->db->rawQuery( $query, $bindParams );
+		return $this;
 	}
 
 	/**
