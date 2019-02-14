@@ -186,20 +186,6 @@ class DbObject
 	 * @var array
 	 */
 	protected $hiddenFields = [];
-	// 日期查询表达式
-	protected $timeRule
-		= [
-			'today'      => ['today', 'tomorrow'],
-			'yesterday'  => ['yesterday', 'today'],
-			'week'       => ['this week 00:00:00', 'next week 00:00:00'],
-			'last week'  => ['last week 00:00:00', 'this week 00:00:00'],
-			'month'      => ['first Day of this month 00:00:00', 'first Day of next month 00:00:00'],
-			'last month' => ['first Day of last month 00:00:00', 'first Day of this month 00:00:00'],
-			'year'       => ['this year 1/1', 'next year 1/1'],
-			'last year'  => ['last year 1/1', 'this year 1/1'],
-		];
-	// 日期查询快捷方式
-	protected $timeExp = ['d' => 'today', 'w' => 'week', 'm' => 'month', 'y' => 'year'];
 
 	/**
 	 * DbObject constructor.
@@ -710,48 +696,6 @@ class DbObject
 		}
 
 		call_user_func_array( [$this->db, $method], $arg );
-		return $this;
-	}
-
-	/**
-	 * 查询日期或者时间
-	 * @access public
-	 * @param string       $name 时间表达式
-	 * @param string|array $rule 时间范围
-	 * @return $this
-	 */
-	protected function timeRule( $name, $rule )
-	{
-		$this->timeRule[$name] = $rule;
-		return $this;
-	}
-
-	/**
-	 * 查询日期或者时间
-	 * @access public
-	 * @param string       $field 日期字段名
-	 * @param string|array $op    比较运算符或者表达式
-	 * @param string|array $range 比较范围
-	 * @return $this
-	 */
-	protected function whereTime( $field, $op, $range = null )
-	{
-		if( is_null( $range ) ){
-			if( is_array( $op ) ){
-				$range = $op;
-			} else{
-				if( isset( $this->timeExp[strtolower( $op )] ) ){
-					$op = $this->timeExp[strtolower( $op )];
-				}
-				if( isset( $this->timeRule[strtolower( $op )] ) ){
-					$range = $this->timeRule[strtolower( $op )];
-				} else{
-					$range = $op;
-				}
-			}
-			$op = is_array( $range ) ? 'between' : '>=';
-		}
-		$this->where( $field, $range, strtolower( $op ).' time' );
 		return $this;
 	}
 
