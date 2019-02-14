@@ -41,7 +41,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject onDuplicate($updateColumns, $lastInsertId = null)
  * @method DbObject tableExists($tables)
  * @method mixed|static fetchSql(bool $fetch = true)
- * @method DbObject withTotalCount()
  * @method DbObject getTotalCount(): int
  * @method DbObject getAffectRows(): int
  * @method DbObject setQueryOption($options)
@@ -850,6 +849,15 @@ class DbObject
 		}
 	}
 
+	/**
+	 * @return $this
+	 * @throws Exceptions\Option
+	 */
+	public function withTotalCount()
+	{
+		$this->db->withTotalCount();
+		return $this;
+	}
 	/**
 	 * 验证字段
 	 * @param array $data
