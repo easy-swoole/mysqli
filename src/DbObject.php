@@ -40,7 +40,7 @@ use EasySwoole\Spl\SplString;
  * @method DbObject whereNotLike($whereProp, $whereValue, $cond = 'AND'): Mysqli
  * @method DbObject onDuplicate($updateColumns, $lastInsertId = null)
  * @method DbObject tableExists($tables)
- * @method DbObject fetchSql(bool $fetch = true)
+ * @method mixed|static fetchSql(bool $fetch = true)
  * @method DbObject withTotalCount()
  * @method DbObject getTotalCount(): int
  * @method DbObject getAffectRows(): int
@@ -482,9 +482,12 @@ class DbObject
 			// 如果不是命名空间索引，走默认的model命名空间的路径，转符号为骆峰式，如:goods_category 就是 GoodsCategory
 			$splString  = new SplString( $objectName );
 			$class_name = $this->modelPath."\\".$splString->studly()->__toString();
+			/**
+			 * @var $joinObj static
+			 */
 			$joinObj    = new $class_name;
 			// join时自动加别名
-			$joinObj->setDbTable($joinObj->dbTable." AS `{$objectName}`") ;
+			$joinObj->setDbTable( $joinObj->dbTable." AS `{$objectName}`" );
 		}
 		$this->db->join( $joinObj->dbTable, $joinStr, $joinType );
 		return $this;
@@ -637,11 +640,12 @@ class DbObject
 
 	/**
 	 * @param $groupByField
-	 * @return Mysqli
+	 * @return $this
 	 */
 	protected function group( $groupByField )
 	{
-		return $this->db->groupBy( $groupByField );
+		$this->db->groupBy( $groupByField );
+		return $this;
 	}
 
 	/**
