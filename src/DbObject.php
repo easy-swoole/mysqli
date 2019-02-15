@@ -824,7 +824,7 @@ class DbObject
 	 */
 	private function processArrays( array &$data ) : void
 	{
-		if( is_array( $this->jsonFields ) && !empty( $this->hiddenFields ) ){
+		if( is_array( $this->jsonFields ) && !empty( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
 				if( isset( $data[$key] ) ){
 					$data[$key] = json_decode( $data[$key], true );
@@ -832,7 +832,7 @@ class DbObject
 			}
 		}
 
-		if( is_array( $this->arrayFields ) && !empty( $this->hiddenFields ) ){
+		if( is_array( $this->arrayFields ) && !empty( $this->arrayFields ) ){
 			foreach( $this->arrayFields as $key ){
 				if( isset( $data[$key] ) ){
 					$data[$key] = explode( "|", $data[$key] );
