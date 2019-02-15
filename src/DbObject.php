@@ -497,17 +497,17 @@ class DbObject
 	}
 
 	/**
+	 * @param string $column
 	 * @return array|int|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function count()
+	protected function count( string $column = '*')
 	{
-		$res = $this->db->getValue( $this->dbTable, "count(*)" );
+		$res = $this->db->getValue( $this->dbTable, "count($column)" );
 		return $res ?? 0;
 	}
-
 	/**
 	 * @param string $name
 	 * @return array
