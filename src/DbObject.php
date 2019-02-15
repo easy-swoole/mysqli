@@ -503,11 +503,12 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function count( string $column = '*')
+	protected function count( string $column = '*' )
 	{
 		$res = $this->db->getValue( $this->dbTable, "count($column)" );
 		return $res ?? 0;
 	}
+
 	/**
 	 * @param string $name
 	 * @return array
@@ -823,7 +824,7 @@ class DbObject
 	 */
 	private function processArrays( array &$data ) : void
 	{
-		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
+		if( is_array( $this->jsonFields ) && !empty( $this->hiddenFields ) ){
 			foreach( $this->jsonFields as $key ){
 				if( isset( $data[$key] ) ){
 					$data[$key] = json_decode( $data[$key], true );
@@ -831,7 +832,7 @@ class DbObject
 			}
 		}
 
-		if( isset ( $this->arrayFields ) && is_array( $this->arrayFields ) ){
+		if( is_array( $this->arrayFields ) && !empty( $this->hiddenFields ) ){
 			foreach( $this->arrayFields as $key ){
 				if( isset( $data[$key] ) ){
 					$data[$key] = explode( "|", $data[$key] );
