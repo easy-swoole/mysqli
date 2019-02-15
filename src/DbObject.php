@@ -432,15 +432,17 @@ class DbObject
 	{
 		$this->processHasOneWith();
 		$results = $this->db->get( $this->dbTable, $limit, $fields );
-		if( count( $results ) === 0 ){
-			return null;
+		if( is_array( $results ) ){
+			if( count( $results ) === 0 ){
+				return null;
+			}
+			foreach( $results as $k => &$r ){
+				$this->processArrays( $r );
+				$this->data = $r;
+				$this->processAllWith( $r, false );
+			}
 		}
 
-		foreach( $results as $k => &$r ){
-			$this->processArrays( $r );
-			$this->data = $r;
-			$this->processAllWith( $r, false );
-		}
 		$this->_with = [];
 
 		return $results;
