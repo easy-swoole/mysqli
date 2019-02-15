@@ -41,7 +41,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject tableExists($tables)
  * @method mixed|static fetchSql(bool $fetch = true)
  * @method DbObject getAffectRows(): int
- * @method DbObject setQueryOption($options)
  * @method DbObject getLastStatement(): ?Statement
  * @method DbObject getSubQuery()
  * @method DbObject subQuery($subQueryAlias = ""): Mysqli
@@ -863,6 +862,17 @@ class DbObject
 	public function getTotalCount() : int
 	{
 		return $this->db->getTotalCount();
+	}
+
+	/** 设置额外查询参数
+	 * @param mixed $options $options 查询参数 可传入数组设置多个
+	 * @return $this
+	 * @throws Exceptions\Option
+	 */
+	public function setQueryOption( $options )
+	{
+		$this->db->setQueryOption( $options );
+		return $this;
 	}
 
 	/**
