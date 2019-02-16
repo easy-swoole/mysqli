@@ -211,7 +211,7 @@ class TpORM extends DbObject
 	public function update( $data = null )
 	{
 		// 对象方式的修改
-		if( isset( $this->data[$this->primaryKey] ) ){
+		if( isset( $data[$this->primaryKey] ) ){
 			return parent::update( $data );
 		} else{
 			// 过滤约束的fields个是
