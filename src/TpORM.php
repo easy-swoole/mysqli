@@ -55,7 +55,7 @@ class TpORM extends DbObject
                         $this->tableName = $tableName;
                     }
 		    // 给表加前缀
-		    $this->dbTable = $this->prefix.$tableName;
+		    $this->dbTable = $this->prefix.$this->tableName;
 		}
 		parent::__construct( $data );
 	}
