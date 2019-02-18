@@ -475,9 +475,11 @@ class DbObject
 	 */
 	protected function join( string $objectName, string $joinStr, string $joinType = 'LEFT' )
 	{
+		// 兼容小写as
+		$objectName = str_replace(' as ',' AS ',$objectName);
 		// 别名默认为$objectName
-		$alias = $objectName;
-		if( strstr( ' AS ', $objectName ) ){
+		$alias = strtolower($objectName);
+		if( strstr(  $objectName,' AS ' ) ){
 			$explode    = explode( ' AS ', $objectName );
 			$objectName = $explode[0];
 			$alias      = $explode[1];
