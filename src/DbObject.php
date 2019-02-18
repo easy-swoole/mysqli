@@ -470,23 +470,27 @@ class DbObject
 	 * @param string $joinStr    关联天条件字符串
 	 * @param string $joinType   SQL join type: LEFT, RIGHT,  INNER, OUTER
 	 * @return $this
+	 * @todo alias
 	 * @throws Exceptions\JoinFail
 	 */
 	protected function join( string $objectName, string $joinStr, string $joinType = 'LEFT' )
 	{
-		if( strstr( '\\', $objectName ) ){
-			$joinObj = new $objectName;
-		} else{
-			// 如果不是命名空间索引，走默认的model命名空间的路径，转符号为骆峰式，如:goods_category 就是 GoodsCategory
-			$splString  = new SplString( $objectName );
-			$class_name = $this->modelPath."\\".$splString->studly()->__toString();
-			/**
-			 * @var $joinObj static
-			 */
-			$joinObj = new $class_name;
-			// join时自动加别名
-			$joinObj->setDbTable( $joinObj->dbTable." AS `{$objectName}`" );
+		// 别名默认为$objectName
+		$alias = $objectName;
+		if( strstr( ' AS ', $objectName ) ){
+			$explode    = explode( ' AS ', $objectName );
+			$objectName = $explode[0];
+			$alias      = $explode[1];
 		}
+		// 如果不是命名空间索引，走默认的model命名空间的路径，转符号为骆峰式，如:goods_category 就是 GoodsCategory
+		$splString  = new SplString( $objectName );
+		$class_name = $this->modelPath."\\".$splString->studly()->__toString();
+		/**
+		 * @var $joinObj static
+		 */
+		$joinObj = new $class_name;
+		// join时自动加别名
+		$joinObj->setDbTable( $joinObj->dbTable." AS `{$alias}`" );
 		$this->db->join( $joinObj->dbTable, $joinStr, $joinType );
 		return $this;
 	}

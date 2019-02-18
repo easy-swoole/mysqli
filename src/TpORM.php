@@ -80,12 +80,14 @@ class TpORM extends DbObject
 	 * @param string | array $objectNames
 	 * @param string         $joinStr
 	 * @param string         $joinType
+	 * @todo alias
 	 * @throws \EasySwoole\Mysqli\Exceptions\JoinFail
 	 */
 	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' )
 	{
-		// 给表加别名，解决join场景下不需要手动给字段加前缀
+		// 给当前model加别名，解决join场景下不需要手动给字段加前缀
 		$this->dbTable = $this->dbTable." AS `{$this->tableName}`";
+
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
 				parent::join( ...$join );
@@ -152,7 +154,7 @@ class TpORM extends DbObject
 	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
 		// 替换多个空格为单个空格
-		$orderByField = preg_replace( '#\s+#', ' ', trim($orderByField) );
+		$orderByField = preg_replace( '#\s+#', ' ', trim( $orderByField ) );
 		// 如果是 "create_time desc,time asc"
 		if( strstr( $orderByField, ',' ) ){
 			$orders = explode( ',', $orderByField );
@@ -166,7 +168,7 @@ class TpORM extends DbObject
 					$this->getDb()->orderBy( $order, $orderByDirection, $customFieldsOrRegExp );
 				}
 			}
-		}else{
+		} else{
 			// 如果是存在空格，执行orderBy("create_time","DESC")
 			if( strstr( $orderByField, ' ' ) ){
 				$split = explode( ' ', $orderByField );
@@ -200,10 +202,10 @@ class TpORM extends DbObject
 	 */
 	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' )
 	{
-		if( !empty($whereProps) ){
+		if( !empty( $whereProps ) ){
 			if( is_array( $whereProps ) ){
 				foreach( $whereProps as $field => $value ){
-					if( is_array($value) && key( $value ) === 0 ){
+					if( is_array( $value ) && key( $value ) === 0 ){
 						// 用于支持['in',[123,232,32,3,4]]格式
 						$this->getDb()->where( $field, [$value[0] => $value[1]] );
 					} else{
