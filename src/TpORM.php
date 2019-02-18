@@ -232,8 +232,8 @@ class TpORM extends DbObject
 	 */
 	public function update( $data = null )
 	{
-		// 对象方式的修改
-		if( isset( $this->data[$this->primaryKey] ) ){
+		// 对象方式的修改，当data里存在主键的时候走Update会验证dbField的所有字段设置
+		if( isset( $this->data[$this->primaryKey] ) && isset($data[$this->primaryKey])){
 			return parent::update( $data );
 		} else{
 			if( !empty( $data ) && is_array( $data ) ){
