@@ -236,31 +236,35 @@ class TpORM extends DbObject
 		if( isset( $this->data[$this->primaryKey] ) ){
 			return parent::update( $data );
 		} else{
-			// 过滤约束的fields个是
-			foreach( $data as $key => &$value ){
-				if( in_array( $key, $this->toSkip ) ){
-					continue;
-				}
+			if( !empty( $data ) && is_array( $data ) ){
+				// 过滤约束的fields
+				foreach( $data as $key => &$value ){
+					if( in_array( $key, $this->toSkip ) ){
+						continue;
+					}
 
-				if( !in_array( $key, array_keys( $this->dbFields ) ) ){
-					continue;
-				}
+					if( !empty( $this->dbFields ) && !in_array( $key, array_keys( $this->dbFields ) ) ){
+						continue;
+					}
 
-				if( !is_array( $value ) ){
-					$sqlData[$key] = $value;
-					continue;
-				}
+					if( !is_array( $value ) ){
+						$sqlData[$key] = $value;
+						continue;
+					}
 
-				if( isset ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
-					$sqlData[$key] = json_encode( $value );
-				} else if( isset ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
-					$sqlData[$key] = implode( "|", $value );
-				} else{
-					$sqlData[$key] = $value;
+					if( !empty ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
+						$sqlData[$key] = json_encode( $value );
+					} else if( !empty ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
+						$sqlData[$key] = implode( "|", $value );
+					} else{
+						$sqlData[$key] = $value;
+					}
 				}
+				$res = $this->getDb()->update( $this->dbTable, $sqlData );
+				return $res;
+			} else{
+				return false;
 			}
-			$res = $this->getDb()->update( $this->dbTable, $sqlData );
-			return $res;
 		}
 	}
 
