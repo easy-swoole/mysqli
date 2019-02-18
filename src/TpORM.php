@@ -222,6 +222,30 @@ class TpORM extends DbObject
 	}
 
 	/**
+	 * @param null $data
+	 * @todo 过滤的方法加到DbObject里
+	 * @return bool|int|mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	public function insert( $data = null )
+	{
+		// 对象方式的修改，当data里存在主键的时候走Update会验证dbField的所有字段设置
+		if( !empty ( $this->dbFields ) ){
+			return parent::insert( $data );
+		} else{
+			if( !empty( $data ) && is_array( $data ) ){
+				$sqlData = $this->convertData($data);
+				$res = $this->getDb()->insert( $this->dbTable, $sqlData );
+				return $res;
+			} else{
+				return false;
+			}
+		}
+	}
+
+	/**
 	 * 可选的更新数据应用于对象
 	 * 如果不存在
 	 * @param null $data
@@ -237,29 +261,7 @@ class TpORM extends DbObject
 			return parent::update( $data );
 		} else{
 			if( !empty( $data ) && is_array( $data ) ){
-				// 过滤约束的fields
-				foreach( $data as $key => &$value ){
-					if( in_array( $key, $this->toSkip ) ){
-						continue;
-					}
-
-					if( !empty( $this->dbFields ) && !in_array( $key, array_keys( $this->dbFields ) ) ){
-						continue;
-					}
-
-					if( !is_array( $value ) ){
-						$sqlData[$key] = $value;
-						continue;
-					}
-
-					if( !empty ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
-						$sqlData[$key] = json_encode( $value );
-					} else if( !empty ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
-						$sqlData[$key] = implode( "|", $value );
-					} else{
-						$sqlData[$key] = $value;
-					}
-				}
+				$sqlData = $this->convertData($data);
 				$res = $this->getDb()->update( $this->dbTable, $sqlData );
 				return $res;
 			} else{
@@ -268,6 +270,34 @@ class TpORM extends DbObject
 		}
 	}
 
+	/**
+	 * 转换数据对应类型
+	 * @param array $data
+	 * @return array
+	 */
+	protected function convertData( array $data) : array {
+		$sqlData = [];
+		// 过滤约束的fields
+		foreach( $data as $key => &$value ){
+			if( in_array( $key, $this->toSkip ) ){
+				continue;
+			}
+
+			if( !is_array( $value ) ){
+				$sqlData[$key] = $value;
+				continue;
+			}
+
+			if( !empty ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
+				$sqlData[$key] = json_encode( $value );
+			} else if( !empty ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
+				$sqlData[$key] = implode( "|", $value );
+			} else{
+				$sqlData[$key] = $value;
+			}
+		}
+		return $sqlData;
+	}
 	/**
 	 * 删除的方法。只在定义了对象primaryKey时才有效
 	 * @return bool|null 表示成功。0或1。
