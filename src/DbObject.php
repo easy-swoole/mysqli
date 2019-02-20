@@ -22,7 +22,6 @@ use EasySwoole\Spl\SplString;
  * @method DbObject resetDbStatus(): void
  * @method DbObject startTrace(): void
  * @method DbObject endTrace(): array
- * @method DbObject rawQuery($query, array $bindParams = [])
  * @method DbObject startTransaction(): bool
  * @method DbObject commit(): bool
  * @method DbObject rollback($commit = true)
@@ -40,18 +39,11 @@ use EasySwoole\Spl\SplString;
  * @method DbObject whereNotLike($whereProp, $whereValue, $cond = 'AND'): Mysqli
  * @method DbObject onDuplicate($updateColumns, $lastInsertId = null)
  * @method DbObject tableExists($tables)
- * @method DbObject fetchSql(bool $fetch = true)
- * @method DbObject withTotalCount()
- * @method DbObject getTotalCount(): int
+ * @method mixed|static fetchSql(bool $fetch = true)
  * @method DbObject getAffectRows(): int
- * @method DbObject setQueryOption($options)
  * @method DbObject getLastStatement(): ?Statement
  * @method DbObject getSubQuery()
  * @method DbObject subQuery($subQueryAlias = ""): Mysqli
- * @method DbObject getInsertId()
- * @method DbObject getLastQuery()
- * @method DbObject getLastError()
- * @method DbObject getLastErrno()
  * @method DbObject orderBy($orderByField, $orderByDirection = "DESC", $customFieldsOrRegExp = null)
  * @method DbObject having($havingProp, $havingValue = 'DBNULL', $operator = '=', $cond = 'AND')
  * @method DbObject groupBy($groupByField)
@@ -189,7 +181,7 @@ class DbObject
 	 * );
 	 * @var array
 	 */
-	protected $hidden = [];
+	protected $hiddenFields = [];
 
 	/**
 	 * DbObject constructor.
@@ -220,6 +212,12 @@ class DbObject
 		} else{
 			return null;
 		}
+	}
+
+	public function setDbTable( string $name )
+	{
+		$this->dbTable = $name;
+		return $this;
 	}
 
 	/**
@@ -262,7 +260,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function insert( $data = null )
+	protected function insert( $data = null )
 	{
 		if( !empty( $data ) ){
 			$this->setData( $data );
@@ -289,7 +287,7 @@ class DbObject
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	public function update( $data = null )
+	protected function update( $data = null )
 	{
 		if( empty ( $this->dbFields ) ){
 			return false;
@@ -434,15 +432,17 @@ class DbObject
 	{
 		$this->processHasOneWith();
 		$results = $this->db->get( $this->dbTable, $limit, $fields );
-		if( count( $results ) === 0 ){
-			return null;
+		if( is_array( $results ) ){
+			if( count( $results ) === 0 ){
+				return null;
+			}
+			foreach( $results as $k => &$r ){
+				$this->processArrays( $r );
+				$this->data = $r;
+				$this->processAllWith( $r, false );
+			}
 		}
 
-		foreach( $results as $k => &$r ){
-			$this->processArrays( $r );
-			$this->data = $r;
-			$this->processAllWith( $r, false );
-		}
 		$this->_with = [];
 
 		return $results;
@@ -470,18 +470,29 @@ class DbObject
 	 * @param string $joinStr    关联天条件字符串
 	 * @param string $joinType   SQL join type: LEFT, RIGHT,  INNER, OUTER
 	 * @return $this
+	 * @todo alias
 	 * @throws Exceptions\JoinFail
 	 */
 	protected function join( string $objectName, string $joinStr, string $joinType = 'LEFT' )
 	{
-		if( strstr( '\\', $objectName ) ){
-			$joinObj = new $objectName;
-		} else{
-			// 如果不是命名空间索引，走默认的model命名空间的路径，转符号为骆峰式，如:goods_category 就是 GoodsCategory
-			$splString  = new SplString( $objectName );
-			$class_name = $this->modelPath."\\".$splString->studly()->__toString();
-			$joinObj    = new $class_name;
+		// 兼容小写as
+		$objectName = str_replace(' as ',' AS ',$objectName);
+		// 别名默认为$objectName
+		$alias = strtolower($objectName);
+		if( strstr(  $objectName,' AS ' ) ){
+			$explode    = explode( ' AS ', $objectName );
+			$objectName = $explode[0];
+			$alias      = $explode[1];
 		}
+		// 如果不是命名空间索引，走默认的model命名空间的路径，转符号为骆峰式，如:goods_category 就是 GoodsCategory
+		$splString  = new SplString( $objectName );
+		$class_name = $this->modelPath."\\".$splString->studly()->__toString();
+		/**
+		 * @var $joinObj static
+		 */
+		$joinObj = new $class_name;
+		// join时自动加别名
+		$joinObj->setDbTable( $joinObj->dbTable." AS `{$alias}`" );
 		$this->db->join( $joinObj->dbTable, $joinStr, $joinType );
 		return $this;
 	}
@@ -492,14 +503,15 @@ class DbObject
 	}
 
 	/**
+	 * @param string $column
 	 * @return array|int|null
 	 * @throws Exceptions\ConnectFail
 	 * @throws Exceptions\PrepareQueryFail
 	 * @throws \Throwable
 	 */
-	protected function count()
+	protected function count( string $column = '*' )
 	{
-		$res = $this->db->getValue( $this->dbTable, "count(*)" );
+		$res = $this->db->getValue( $this->dbTable, "count($column)" );
 		return $res ?? 0;
 	}
 
@@ -525,6 +537,158 @@ class DbObject
 	protected function value( string $name )
 	{
 		return $this->db->getValue( $this->dbTable, $name );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return array|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function sum( $filedName )
+	{
+		return $this->db->sum( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function max( $filedName )
+	{
+		return $this->db->max( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function min( $filedName )
+	{
+		return $this->db->min( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $filedName
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function avg( $filedName )
+	{
+		return $this->db->avg( $this->dbTable, $filedName );
+	}
+
+	/**
+	 * @param $num
+	 * @return array
+	 */
+	protected function inc( $num )
+	{
+		return $this->db->inc( $num );
+	}
+
+	/**
+	 * @param $num
+	 * @return array
+	 */
+	protected function dec( $num )
+	{
+		return $this->db->dec( $num );
+	}
+
+	/**
+	 * @param     $filedName
+	 * @param int $num
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function setInc( $filedName, $num = 1 )
+	{
+		return $this->db->update( $this->dbTable, [$filedName => $this->inc( $num )] );
+	}
+
+	/**
+	 * @param     $filedName
+	 * @param int $num
+	 * @return mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function setDec( $filedName, $num = 1 )
+	{
+		return $this->db->update( $this->dbTable, [$filedName => $this->dec( $num )] );
+	}
+
+	/**
+	 * @param array $insertData
+	 * @return bool|int|null
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
+	 */
+	protected function replace( array $insertData )
+	{
+		return $this->db->replace( $this->dbTable, $insertData );
+	}
+
+	/**
+	 * @param $groupByField
+	 * @return $this
+	 */
+	protected function group( $groupByField )
+	{
+		if( $groupByField ){
+			$this->db->groupBy( $groupByField );
+		}
+		return $this;
+	}
+
+	/**
+	 * 获取最后插入的数据ID
+	 * @return int
+	 */
+	protected function getInsertId()
+	{
+		return $this->db->getInsertId();
+	}
+
+	/**
+	 * 获取最后一次查询的语句
+	 * @return mixed
+	 */
+	protected function getLastQuery()
+	{
+		return $this->db->getLastQuery();
+	}
+
+	/**
+	 * 获取最后一次查询错误的内容
+	 * @return string
+	 */
+	protected function getLastError()
+	{
+		return $this->db->getLastError();
+	}
+
+	/**
+	 * 获取最后一次查询错误的编号
+	 * @return mixed
+	 */
+	protected function getLastErrno()
+	{
+		return $this->db->getLastErrno();
 	}
 
 	/**
@@ -666,17 +830,70 @@ class DbObject
 	 */
 	private function processArrays( array &$data ) : void
 	{
-		if( isset ( $this->jsonFields ) && is_array( $this->jsonFields ) ){
+		if( is_array( $this->jsonFields ) && !empty( $this->jsonFields ) ){
 			foreach( $this->jsonFields as $key ){
-				$data[$key] = json_decode( $data[$key] );
+				if( isset( $data[$key] ) ){
+					$data[$key] = json_decode( $data[$key], true );
+				}
 			}
 		}
 
-		if( isset ( $this->arrayFields ) && is_array( $this->arrayFields ) ){
+		if( is_array( $this->arrayFields ) && !empty( $this->arrayFields ) ){
 			foreach( $this->arrayFields as $key ){
-				$data[$key] = explode( "|", $data[$key] );
+				if( isset( $data[$key] ) ){
+					$data[$key] = explode( "|", $data[$key] );
+				}
 			}
 		}
+
+		if( is_array( $this->hiddenFields ) && !empty( $this->hiddenFields ) ){
+			foreach( $this->hiddenFields as $key ){
+				if( isset( $data[$key] ) ){
+					unset( $data[$key] );
+				}
+			}
+		}
+	}
+
+	/**
+	 * @return $this
+	 * @throws Exceptions\Option
+	 */
+	public function withTotalCount()
+	{
+		$this->db->withTotalCount();
+		return $this;
+	}
+
+	/**
+	 * @return int
+	 */
+	public function getTotalCount() : int
+	{
+		return $this->db->getTotalCount();
+	}
+
+	/** 设置额外查询参数
+	 * @param mixed $options $options 查询参数 可传入数组设置多个
+	 * @return $this
+	 * @throws Exceptions\Option
+	 */
+	public function setQueryOption( $options )
+	{
+		$this->db->setQueryOption( $options );
+		return $this;
+	}
+
+	/**
+	 * @param       $query
+	 * @param array $bindParams
+	 * @return $this
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 */
+	public function rawQuery( $query, array $bindParams = [] )
+	{
+		return $this->db->rawQuery( $query, $bindParams );
 	}
 
 	/**
@@ -812,7 +1029,7 @@ class DbObject
 
 	public function __set( string $name, $value )
 	{
-		if( array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hiddenFields ) !== false ){
 			return;
 		}
 		$this->data[$name] = $value;
@@ -820,7 +1037,7 @@ class DbObject
 
 	public function __get( string $name )
 	{
-		if( array_search( $name, $this->hidden ) !== false ){
+		if( array_search( $name, $this->hiddenFields ) !== false ){
 			return null;
 		}
 

@@ -142,7 +142,7 @@ class TpDb
 	{
 		$splString = new SplString( $objectName );
 		$name      = $splString->snake()->__toString();
-		$tableName = $this->prefix.$name." AS {$name}";
+		$tableName = $this->prefix.$name." AS `{$name}`";
 		$this->db->join( $tableName, $joinStr, $joinType );
 		return $this;
 	}
@@ -233,7 +233,7 @@ class TpDb
 		$this->isWhere = true;
 		if( is_array( $whereProps ) ){
 			foreach( $whereProps as $field => $value ){
-				if( key( $value ) === 0 ){
+				if( is_array($value) && key( $value ) === 0 ){
 					// 用于支持['in',[123,232,32,3,4]]格式
 					$this->getDb()->where( $field, [$value[0] => $value[1]] );
 				} else{
@@ -318,10 +318,33 @@ class TpDb
 	 */
 	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
-		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		// 替换多个空格为单个空格
+		$orderByField = preg_replace( '#\s+#', ' ', trim($orderByField) );
+		// 如果是 "create_time desc,time asc"
+		if( strstr( $orderByField, ',' ) ){
+			$orders = explode( ',', $orderByField );
+			foreach( $orders as $order ){
+				// 如果是存在空格，执行orderBy("create_time","DESC")
+				if( strstr( $order, ' ' ) ){
+					$split = explode( ' ', $order );
+					$this->getDb()->orderBy( $split[0], $split[1] );
+				} else{
+					// 可以执行，如：RAND()
+					$this->getDb()->orderBy( $order, $orderByDirection, $customFieldsOrRegExp );
+				}
+			}
+		}else{
+			// 如果是存在空格，执行orderBy("create_time","DESC")
+			if( strstr( $orderByField, ' ' ) ){
+				$split = explode( ' ', $orderByField );
+				$this->getDb()->orderBy( $split[0], $split[1] );
+			} else{
+				// 可以执行，如：RAND()
+				$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+			}
+		}
 		return $this;
 	}
-
 	/**
 	 * @param string $name
 	 * @return array

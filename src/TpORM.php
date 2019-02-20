@@ -62,7 +62,8 @@ class TpORM extends DbObject
 	 * 带前缀
 	 * @return string
 	 */
-	public function getDbTable():string {
+	public function getDbTable() : string
+	{
 		return $this->dbTable;
 	}
 
@@ -70,19 +71,23 @@ class TpORM extends DbObject
 	 * 不带前缀
 	 * @return string
 	 */
-	public function getTableName():string {
+	public function getTableName() : string
+	{
 		return $this->tableName;
 	}
+
 	/**
 	 * @param string | array $objectNames
 	 * @param string         $joinStr
 	 * @param string         $joinType
+	 * @todo alias
 	 * @throws \EasySwoole\Mysqli\Exceptions\JoinFail
 	 */
 	protected function join( $objectNames, string $joinStr = null, string $joinType = 'LEFT' )
 	{
-		// 给表加别名，解决join场景下不需要手动给字段加前缀
-		$this->dbTable = $this->dbTable." AS {$this->tableName}";
+		// 给当前model加别名，解决join场景下不需要手动给字段加前缀
+		$this->dbTable = $this->prefix.$this->tableName." AS `{$this->tableName}`";
+
 		if( is_array( $objectNames ) ){
 			foreach( $objectNames as $join ){
 				parent::join( ...$join );
@@ -148,7 +153,31 @@ class TpORM extends DbObject
 	 */
 	protected function order( string $orderByField, string $orderByDirection = "DESC", $customFieldsOrRegExp = null )
 	{
-		$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+		// 替换多个空格为单个空格
+		$orderByField = preg_replace( '#\s+#', ' ', trim( $orderByField ) );
+		// 如果是 "create_time desc,time asc"
+		if( strstr( $orderByField, ',' ) ){
+			$orders = explode( ',', $orderByField );
+			foreach( $orders as $order ){
+				// 如果是存在空格，执行orderBy("create_time","DESC")
+				if( strstr( $order, ' ' ) ){
+					$split = explode( ' ', $order );
+					$this->getDb()->orderBy( $split[0], $split[1] );
+				} else{
+					// 可以执行，如：RAND()
+					$this->getDb()->orderBy( $order, $orderByDirection, $customFieldsOrRegExp );
+				}
+			}
+		} else{
+			// 如果是存在空格，执行orderBy("create_time","DESC")
+			if( strstr( $orderByField, ' ' ) ){
+				$split = explode( ' ', $orderByField );
+				$this->getDb()->orderBy( $split[0], $split[1] );
+			} else{
+				// 可以执行，如：RAND()
+				$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
+			}
+		}
 		return $this;
 	}
 
@@ -173,30 +202,47 @@ class TpORM extends DbObject
 	 */
 	protected function where( $whereProps, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND' )
 	{
-		if( is_array( $whereProps ) ){
-			foreach( $whereProps as $field => $value ){
-				if( key( $value ) === 0 ){
-					// 用于支持['in',[123,232,32,3,4]]格式
-					$this->getDb()->where( $field, [$value[0] => $value[1]] );
-				} else{
-					// 用于支持['in'=>[12,23,23]]格式
-					$this->getDb()->where( $field, $value );
+		if( !empty( $whereProps ) ){
+			if( is_array( $whereProps ) ){
+				foreach( $whereProps as $field => $value ){
+					if( is_array( $value ) && key( $value ) === 0 ){
+						// 用于支持['in',[123,232,32,3,4]]格式
+						$this->getDb()->where( $field, [$value[0] => $value[1]] );
+					} else{
+						// 用于支持['in'=>[12,23,23]]格式
+						$this->getDb()->where( $field, $value );
+					}
 				}
+			} else{
+				$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 			}
-		} else{
-			$this->getDb()->where( $whereProps, $whereValue, $operator, $cond );
 		}
+
 		return $this;
 	}
 
 	/**
-	 * @param string $groupByField
-	 * @return $this
+	 * @param null $data
+	 * @todo 过滤的方法加到DbObject里
+	 * @return bool|int|mixed
+	 * @throws Exceptions\ConnectFail
+	 * @throws Exceptions\PrepareQueryFail
+	 * @throws \Throwable
 	 */
-	protected function group( string $groupByField )
+	public function insert( $data = null )
 	{
-		$this->getDb()->groupBy( $groupByField );
-		return $this;
+		// 对象方式的修改，当data里存在主键的时候走Update会验证dbField的所有字段设置
+		if( !empty ( $this->dbFields ) ){
+			return parent::insert( $data );
+		} else{
+			if( !empty( $data ) && is_array( $data ) ){
+				$sqlData = $this->convertData($data);
+				$res = $this->getDb()->insert( $this->dbTable, $sqlData );
+				return $res;
+			} else{
+				return false;
+			}
+		}
 	}
 
 	/**
@@ -210,38 +256,48 @@ class TpORM extends DbObject
 	 */
 	public function update( $data = null )
 	{
-		// 对象方式的修改
-		if( isset( $this->data[$this->primaryKey] ) ){
+		// 对象方式的修改，当data里存在主键的时候走Update会验证dbField的所有字段设置
+		if( isset( $this->data[$this->primaryKey] ) && isset($data[$this->primaryKey])){
 			return parent::update( $data );
 		} else{
-			// 过滤约束的fields个是
-			foreach( $data as $key => &$value ){
-				if( in_array( $key, $this->toSkip ) ){
-					continue;
-				}
-
-				if( !in_array( $key, array_keys( $this->dbFields ) ) ){
-					continue;
-				}
-
-				if( !is_array( $value ) ){
-					$sqlData[$key] = $value;
-					continue;
-				}
-
-				if( isset ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
-					$sqlData[$key] = json_encode( $value );
-				} else if( isset ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
-					$sqlData[$key] = implode( "|", $value );
-				} else{
-					$sqlData[$key] = $value;
-				}
+			if( !empty( $data ) && is_array( $data ) ){
+				$sqlData = $this->convertData($data);
+				$res = $this->getDb()->update( $this->dbTable, $sqlData );
+				return $res;
+			} else{
+				return false;
 			}
-			$res = $this->getDb()->update( $this->dbTable, $sqlData );
-			return $res;
 		}
 	}
 
+	/**
+	 * 转换数据对应类型
+	 * @param array $data
+	 * @return array
+	 */
+	protected function convertData( array $data) : array {
+		$sqlData = [];
+		// 过滤约束的fields
+		foreach( $data as $key => &$value ){
+			if( in_array( $key, $this->toSkip ) ){
+				continue;
+			}
+
+			if( !is_array( $value ) ){
+				$sqlData[$key] = $value;
+				continue;
+			}
+
+			if( !empty ( $this->jsonFields ) && in_array( $key, $this->jsonFields ) ){
+				$sqlData[$key] = json_encode( $value );
+			} else if( !empty ( $this->arrayFields ) && in_array( $key, $this->arrayFields ) ){
+				$sqlData[$key] = implode( "|", $value );
+			} else{
+				$sqlData[$key] = $value;
+			}
+		}
+		return $sqlData;
+	}
 	/**
 	 * 删除的方法。只在定义了对象primaryKey时才有效
 	 * @return bool|null 表示成功。0或1。
