@@ -1466,16 +1466,20 @@ class Mysqli
         if (empty($values)) {
             return $str;
         }
-
         while ($pos = strpos($str, "?")) {
             $val = $values[$i++];
+            $echoValue = $val;
             if (is_object($val)) {
-                $val = '[object]';
+                $echoValue = '[object]';
+            } else if ($val === null) {
+                $echoValue = 'NULL';
             }
-            if ($val === null) {
-                $val = 'NULL';
+            // 当值是字符串时 需要引号包裹
+            if (is_string($val)) {
+                $newStr .= substr($str, 0, $pos) . "'" . $echoValue . "'";
+            } else {
+                $newStr .= substr($str, 0, $pos) . $echoValue;
             }
-            $newStr .= substr($str, 0, $pos) . "'" . $val . "'";
             $str = substr($str, $pos + 1);
         }
         $newStr .= $str;
