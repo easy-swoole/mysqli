@@ -1077,7 +1077,7 @@ class Mysqli
         } else {
             $data = [];
         }
-        $ret = $stmt->execute($data);
+        $ret = $stmt->execute($data,$this->config->getTimeout());
         /*
          * 重置下列成员变量
          */
@@ -1502,7 +1502,8 @@ class Mysqli
             //记录当前语句执行开始时间，然后在resetDbStatus中计算
             $this->traceQueryStartTime = microtime(true);
         }
-        $res = $this->coroutineMysqlClient->prepare($this->query);
+        //prepare超时时间用链接时间
+        $res = $this->coroutineMysqlClient->prepare($this->query,$this->config->getConnectTimeout());
         if ($res instanceof Statement) {
             return $res;
         }
@@ -1652,6 +1653,14 @@ class Mysqli
 
         $this->groupBy[] = $groupByField;
         return $this;
+    }
+
+    /*
+     * 可以在此临时修改timeout
+     */
+    public function getConfig():Config
+    {
+        return $this->config;
     }
 
     /**
