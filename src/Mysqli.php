@@ -70,6 +70,8 @@ class Mysqli
 
     private $lastStatement;
 
+    private $currentReconnectTimes = 0;
+
     function __construct(Config $config)
     {
         $this->config = $config;
@@ -103,10 +105,15 @@ class Mysqli
             try {
                 $ret = $this->coroutineMysqlClient->connect($this->config->toArray());
                 if ($ret) {
+                    $this->currentReconnectTimes = 0;
                     return true;
                 } else {
                     $errno = $this->coroutineMysqlClient->connect_errno;
                     $error = $this->coroutineMysqlClient->connect_error;
+                    if($this->config->getMaxReconnectTimes() > $this->currentReconnectTimes){
+                        $this->currentReconnectTimes++;
+                        return $this->connect();
+                    }
                     throw new ConnectFail("connect to {$this->config->getUser()}@{$this->config->getHost()} at port {$this->config->getPort()} fail: {$errno} {$error}");
                 }
             } catch (\Throwable $throwable) {

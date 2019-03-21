@@ -25,6 +25,7 @@ class Config extends SplBean
     protected $fetch_mode = false;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行或获取全部结果集(4.0版本以上)
     protected $alias = '';
     protected $isSubQuery = false;
+    protected $max_reconnect_times = 3;
 
     /**
      * @return mixed
@@ -217,4 +218,21 @@ class Config extends SplBean
     {
         $this->connect_timeout = $connect_timeout;
     }
+
+    /**
+     * @return int
+     */
+    public function getMaxReconnectTimes(): int
+    {
+        return $this->max_reconnect_times;
+    }
+
+    /**
+     * @param int $max_reconnect_times
+     */
+    public function setMaxReconnectTimes(int $max_reconnect_times): void
+    {
+        $this->max_reconnect_times = $max_reconnect_times;
+    }
+
 }
