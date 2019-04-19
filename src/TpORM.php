@@ -46,14 +46,16 @@ class TpORM extends DbObject
 	public function __construct( $data = null )
 	{
 		if( empty( $this->dbTable ) ){
-			$split     = explode( "\\", get_class( $this ) );
-			$end       = end( $split );
-			$splString = new SplString( $end );
-			// 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
-			$tableName       = $splString->snake( '_' )->__toString();
-			$this->tableName = $tableName;
-			// 给表加前缀
-			$this->dbTable = $this->prefix.$tableName;
+		    if ( empty($this->tableName) ) {
+                        $split     = explode( "\\", get_class( $this ) );
+                        $end       = end( $split );
+                        $splString = new SplString( $end );
+                        // 大写骆峰式命名的文件转为下划线区分表 todo 未来需要增加配置开关是否需要
+                        $tableName       = $splString->snake( '_' )->__toString();
+                        $this->tableName = $tableName;
+                    }
+		    // 给表加前缀
+		    $this->dbTable = $this->prefix.$this->tableName;
 		}
 		parent::__construct( $data );
 	}
