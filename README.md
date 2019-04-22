@@ -11,6 +11,7 @@ composer require easyswoole/mysqli
 ## Base Usage
 ```
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\Mysqli;
 $conf = new Config([
     'host'=>'',
     'user'=>'',
