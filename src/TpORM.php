@@ -142,7 +142,7 @@ class TpORM extends DbObject
 	{
 		$page = $pageInfo[0] - 1;
 		$rows = $pageInfo[1];
-		$this->limit( [$page, $rows] );
+		$this->limit( [$page*$rows, $rows] );
 		return $this;
 	}
 
@@ -207,7 +207,10 @@ class TpORM extends DbObject
 		if( !empty( $whereProps ) ){
 			if( is_array( $whereProps ) ){
 				foreach( $whereProps as $field => $value ){
-					if( is_array( $value ) && key( $value ) === 0 ){
+					// 用于支持原生语句
+					if(is_int($field)){
+						$this->getDb()->where( $value);
+					}else if( is_array( $value ) && key( $value ) === 0 ){
 						// 用于支持['in',[123,232,32,3,4]]格式
 						$this->getDb()->where( $field, [$value[0] => $value[1]] );
 					} else{

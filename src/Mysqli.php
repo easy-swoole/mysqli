@@ -1408,6 +1408,8 @@ class Mysqli
         foreach ($this->orderBy as $prop => $value) {
             if (strtolower(str_replace(" ", "", $prop)) == 'rand()') {
                 $this->query .= "rand(), ";
+            }elseif(strstr($prop,"RAW(")){
+	            $this->query .= str_replace("RAW(", "(", $prop);
             } else {
                 $this->query .= $prop . " " . $value . ", ";
             }
