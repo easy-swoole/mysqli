@@ -172,10 +172,12 @@ class TpORM extends DbObject
 			}
 		} else{
 			// 如果是存在空格，执行orderBy("create_time","DESC")
-			if( strstr( $orderByField, ' ' ) ){
+			if( strstr( $orderByField, ' ' ) && !strstr( $orderByField, 'RAW(' ) ){
 				$split = explode( ' ', $orderByField );
 				$this->getDb()->orderBy( $split[0], $split[1] );
 			} else{
+				var_dump($orderByField);
+
 				// 可以执行，如：RAND()
 				$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 			}
