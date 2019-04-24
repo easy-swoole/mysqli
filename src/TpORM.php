@@ -176,8 +176,6 @@ class TpORM extends DbObject
 				$split = explode( ' ', $orderByField );
 				$this->getDb()->orderBy( $split[0], $split[1] );
 			} else{
-				var_dump($orderByField);
-
 				// 可以执行，如：RAND()
 				$this->getDb()->orderBy( $orderByField, $orderByDirection, $customFieldsOrRegExp );
 			}
