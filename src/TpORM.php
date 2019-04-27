@@ -158,7 +158,7 @@ class TpORM extends DbObject
 		// 替换多个空格为单个空格
 		$orderByField = preg_replace( '#\s+#', ' ', trim( $orderByField ) );
 		// 如果是 "create_time desc,time asc"
-		if( strstr( $orderByField, ',' ) ){
+		if( strstr( $orderByField, ',' ) && !strstr( $orderByField, 'RAW(' ) ){
 			$orders = explode( ',', $orderByField );
 			foreach( $orders as $order ){
 				// 如果是存在空格，执行orderBy("create_time","DESC")
@@ -172,7 +172,7 @@ class TpORM extends DbObject
 			}
 		} else{
 			// 如果是存在空格，执行orderBy("create_time","DESC")
-			if( strstr( $orderByField, ' ' ) ){
+			if( strstr( $orderByField, ' ' ) && !strstr( $orderByField, 'RAW(' ) ){
 				$split = explode( ' ', $orderByField );
 				$this->getDb()->orderBy( $split[0], $split[1] );
 			} else{
