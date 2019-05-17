@@ -175,8 +175,6 @@ class Mysqli
         $this->forUpdate = false;
         $this->lockInShareMode = false;
         $this->isFetchSql = false;
-        // $this->affectRows = 0;  // 此字段不需要重置
-        // $this->totalCount = 0;  // 此字段不需要重置
     }
 
     /**
@@ -218,7 +216,6 @@ class Mysqli
         } else {
             $stmt = $this->prepareQuery();
             $res = $this->exec($stmt);
-            $this->affectRows = $stmt->affected_rows;
             $this->lastQuery = $this->replacePlaceHolders($this->query, $bindParams);
             $this->resetDbStatus();
         }
@@ -489,7 +486,6 @@ class Mysqli
         }
         try {
             $res = $this->exec($stmt);
-            $this->affectRows = $stmt->affected_rows;
             return $res;
         } catch (\Throwable $throwable) {
             throw $throwable;
@@ -801,7 +797,6 @@ class Mysqli
         }
         try {
             $this->exec($stmt);
-            $this->affectRows = $stmt->affected_rows;
             return ($stmt->affected_rows > -1);    //	affected_rows returns 0 if nothing matched where statement, or required updating, -1 if error
         } catch (\Throwable $throwable) {
             throw $throwable;
@@ -850,7 +845,6 @@ class Mysqli
         }
         try{
             $status = $this->exec($stmt);
-            $this->affectRows = $stmt->affected_rows;
             return $status;
         } catch (\Throwable $throwable) {
             throw $throwable;
@@ -1066,13 +1060,6 @@ class Mysqli
         }
     }
 
-    /**
-     * 执行预处理语句并返回结果
-     * @param Statement $stmt
-     * @return mixed
-     * @author: eValor < master@evalor.cn >
-     * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
-     */
     private function exec($stmt)
     {
         if (!$this->coroutineMysqlClient->connected) {
@@ -1084,13 +1071,14 @@ class Mysqli
         } else {
             $data = [];
         }
+
         $ret = $stmt->execute($data,$this->config->getTimeout());
         /*
          * 重置下列成员变量
          */
         $this->stmtError = $stmt->error;
         $this->stmtErrno = $stmt->errno;
-        $this->affectRows = 0;
+        $this->affectRows = $stmt->affected_rows;
         $this->totalCount = 0;
         if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->coroutineMysqlClient->query('SELECT FOUND_ROWS() as count');
@@ -1545,7 +1533,6 @@ class Mysqli
                 return $this->lastQuery;
             }
             $status = $this->exec($stmt);
-            $this->affectRows = $stmt->affected_rows;
             $haveOnDuplicate = !empty ($this->updateColumns);
             if ($stmt->affected_rows < 1) {
                 // in case of onDuplicate() usage, if no rows were inserted
