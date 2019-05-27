@@ -469,7 +469,7 @@ class Mysqli
      */
     public function get($tableName, $numRows = null, $columns = '*')
     {
-        $this->tableName = $tableName;
+        $this->tableName = $this->config->getPrefix().$tableName;
         if (empty($columns)) {
             $columns = '*';
         }
@@ -556,24 +556,34 @@ class Mysqli
     /**
      * 获取某一列的数据
      * @param string $tableName 需要查询的表名称
-     * @param string $columnName 需要获取的列名称
+     * @param string $column 需要获取的列名称
      * @param null $limit 最多返回几条数据
      * @return array
      * @throws ConnectFail 链接失败时请外部捕获该异常进行处理
      * @throws PrepareQueryFail
      * @throws \Throwable
      */
-    function getColumn($tableName, $columnName, $limit = null)
+    function getColumn($tableName, $column, $limit = null)
     {
         $isFetch = $this->isFetchSql;
-        $res = $this->get($tableName, $limit, "{$columnName} AS retval");
+        $columns = explode(',',$column);
+        $count = count($columns);
+        if ($count > 1) {
+            $res = $this->get($tableName, $limit, "{$columns[0]} AS retval,{$columns[1]} as retval_keys");
+        } else {
+            $res = $this->get($tableName, $limit, "{$column} AS retval");
+        }
         if ($isFetch) {
             return $res;
         }
         if (!$res) {
             return [];
         }
-        return array_column($res, 'retval');
+        if ($count > 1) {
+            return array_column($res,'retval','retval_keys');
+        } else {
+            return array_column($res,'retval');
+        }
     }
 
     /**
@@ -785,7 +795,7 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return null;
         }
-        $table = $tableName;
+        $table = $this->config->getPrefix().$tableName;
         if (count($this->join)) {
             $this->query = 'DELETE ' . preg_replace('/.* (.*)/', '$1', $table) . " FROM " . $table;
         } else {
@@ -837,7 +847,7 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return null;
         }
-        $this->query = "UPDATE " . $tableName;
+        $this->query = "UPDATE " . $this->config->getPrefix().$tableName;
 
         $stmt = $this->buildQuery($numRows, $tableData);
         if ($this->isFetchSql) {
@@ -1526,7 +1536,7 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return null;
         }
-        $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $tableName;
+        $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $this->config->getPrefix().$tableName;
         $stmt = $this->buildQuery(null, $insertData);
         try {
             if ($this->isFetchSql){

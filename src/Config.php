@@ -24,6 +24,7 @@ class Config extends SplBean
     protected $strict_type =  false; //开启严格模式，返回的字段将自动转为数字类型
     protected $fetch_mode = false;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行或获取全部结果集(4.0版本以上)
     protected $alias = '';
+    protected $prefix = '';
     protected $isSubQuery = false;
     protected $max_reconnect_times = 3;
 
@@ -185,6 +186,22 @@ class Config extends SplBean
     public function setAlias(string $alias): void
     {
         $this->alias = $alias;
+    }
+
+    /**
+     * @return string
+     */
+    public function getPrefix(): string
+    {
+        return $this->prefix;
+    }
+
+    /**
+     * @param string $prefix
+     */
+    public function setPrefix(string $prefix): void
+    {
+        $this->prefix = $prefix;
     }
 
     /**
