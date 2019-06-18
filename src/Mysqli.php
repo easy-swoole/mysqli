@@ -958,7 +958,7 @@ class Mysqli
      * 返回结果总数
      * @return int
      */
-    public function getTotalCount(): int
+    public function getTotalCount():? int
     {
         return $this->totalCount;
     }
@@ -967,7 +967,7 @@ class Mysqli
      * 本次查询影响的行数
      * @return int
      */
-    public function getAffectRows(): int
+    public function getAffectRows():? int
     {
         return $this->affectRows;
     }
