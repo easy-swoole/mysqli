@@ -9,6 +9,7 @@
 namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exceptions\ConnectFail;
+use EasySwoole\Mysqli\Exceptions\Exception;
 use EasySwoole\Mysqli\Exceptions\JoinFail;
 use EasySwoole\Mysqli\Exceptions\Option;
 use EasySwoole\Mysqli\Exceptions\OrderByFail;
@@ -1080,6 +1081,9 @@ class Mysqli
         $this->stmtErrno = $stmt->errno;
         $this->affectRows = $stmt->affected_rows;
         $this->totalCount = 0;
+        if($this->stmtErrno && $this->config->isErrorToException()){
+            throw new Exception("{$this->stmtError}");
+        }
         if (in_array('SQL_CALC_FOUND_ROWS', $this->queryOptions)) {
             $hitCount = $this->coroutineMysqlClient->query('SELECT FOUND_ROWS() as count');
             $this->totalCount = $hitCount[0]['count'];

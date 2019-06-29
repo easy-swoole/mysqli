@@ -26,6 +26,17 @@ class Config extends SplBean
     protected $alias = '';
     protected $isSubQuery = false;
     protected $max_reconnect_times = 3;
+    protected $errorToException = false;
+
+    public function isErrorToException(): bool
+    {
+        return $this->errorToException;
+    }
+
+    public function setErrorToException(bool $errorToException): void
+    {
+        $this->errorToException = $errorToException;
+    }
 
     /**
      * @return mixed
