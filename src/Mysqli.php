@@ -64,7 +64,7 @@ class Mysqli
      * 事务配置项
      */
     private $startTransaction = false;
-    private $transactionLevel = 1;  // 当前的事务层级
+    private $transactionLevel = 0;  // 当前的事务层级
 
     /*
      * fetch_mode模式时
@@ -234,16 +234,23 @@ class Mysqli
     {
         // 强制结束上次事务并重开
         if ($resetLevel) {
-            $this->transactionLevel = 1;
-            $this->coroutineMysqlClient->rollback();
-            $this->coroutineMysqlClient->commit();
+            $this->transactionLevel = 0;
+            $this->rollback();
+            $this->commit();
         }
 
-        if ($this->transactionLevel == 1) {
+        if ($this->transactionLevel == 0) {
             $this->startTransaction();
         } else {
             $this->transactionLevel++;
         }
+    }
+
+
+    function resetTransactionLevel()
+    {
+        $this->transactionLevel = 0;
+        return $this;
     }
 
     /**
@@ -253,7 +260,7 @@ class Mysqli
      */
     public function commitWithCount()
     {
-        if ($this->transactionLevel == 1) {
+        if ($this->transactionLevel == 0) {
             $this->commit();
         } else {
             $this->transactionLevel--;
@@ -268,7 +275,7 @@ class Mysqli
      */
     public function rollbackWithCount($commit = true)
     {
-        if ($this->transactionLevel == 1) {
+        if ($this->transactionLevel == 0) {
             $this->rollback($commit);
         } else {
             $this->transactionLevel--;
@@ -288,7 +295,6 @@ class Mysqli
             $this->connect();
             $res = $this->coroutineMysqlClient->query('start transaction');
             if ($res) {
-                $this->transactionLevel = 1;  // 直接操作事务 需要重置等级为1
                 $this->startTransaction = true;
             }
             return $res;
@@ -306,7 +312,6 @@ class Mysqli
             $this->connect();
             $res = $this->coroutineMysqlClient->query('commit');
             if ($res) {
-                $this->transactionLevel = 1;  // 直接操作事务 需要重置等级为1
                 $this->startTransaction = false;
             }
             return $res;
@@ -329,7 +334,6 @@ class Mysqli
             if ($res && $commit) {
                 $res = $this->commit();
                 if ($res) {
-                    $this->transactionLevel = 1;  // 直接操作事务 需要重置等级为1
                     $this->startTransaction = false;
                 }
                 return $res;
