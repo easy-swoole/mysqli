@@ -535,7 +535,7 @@ class Mysqli
         }
         $column = is_array($columns) ? implode(', ', $columns) : $columns;
         $this->query = 'SELECT ' . implode(' ', $this->queryOptions) . ' ' .
-            $column . ' FROM ' . $this->tableName;
+            $column . ' FROM  `' . $this->tableName. '`';
         $stmt = $this->buildQuery($numRows);
 
         if ($this->config->isSubQuery()) {
@@ -847,9 +847,9 @@ class Mysqli
         }
         $table = $tableName;
         if (count($this->join)) {
-            $this->query = 'DELETE ' . preg_replace('/.* (.*)/', '$1', $table) . " FROM " . $table;
+            $this->query = 'DELETE ' . preg_replace('/.* (.*)/', '$1', $table) . ' FROM `'. $table .'`';
         } else {
-            $this->query = 'DELETE FROM ' . $table;
+            $this->query = 'DELETE FROM `'. $table .'`';
         }
         $stmt = $this->buildQuery($numRows);
         if ($this->isFetchSql) {
@@ -897,7 +897,7 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return null;
         }
-        $this->query = "UPDATE " . $tableName;
+        $this->query = 'UPDATE `'. $tableName .'`';
 
         $stmt = $this->buildQuery($numRows, $tableData);
         if ($this->isFetchSql) {
@@ -1589,7 +1589,7 @@ class Mysqli
         if ($this->config->isSubQuery()) {
             return null;
         }
-        $this->query = $operation . " " . implode(' ', $this->queryOptions) . " INTO " . $tableName;
+        $this->query = $operation . ' ' . implode(' ', $this->queryOptions) . ' INTO `'. $tableName .'`';
         $stmt = $this->buildQuery(null, $insertData);
         try {
             if ($this->isFetchSql){
