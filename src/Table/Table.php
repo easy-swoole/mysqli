@@ -17,7 +17,7 @@ class Table extends SplBean
 
     const ENGINE_INNODB = 'InnoDb';
     const ENGINE_MYISAM = 'MyIsam';
-    const ENGINE_Memory = 'Memory';
+    const ENGINE_MEMORY = 'Memory';
 
     const COLLATION_UTF8_BIN = 'utf8_bin';
     const COLLATION_UTF8_GENERAL_CI = 'utf8_general_ci';
