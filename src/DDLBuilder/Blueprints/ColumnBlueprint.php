@@ -16,6 +16,7 @@ class ColumnBlueprint
     protected $columnType;     // 字段类型
     protected $columnLimit;    // 字段限制 如 INT(11) / decimal(10,2) 括号部分
     protected $columnComment;  // 字段注释
+    protected $columnCharset;  // 字段编码
 
     protected $isUnique;         // 唯一的 (请勿重复设置索引UNI)
     protected $unsigned;         // 无符号 (仅数字类型可以设置)
@@ -91,6 +92,17 @@ class ColumnBlueprint
     function setColumnComment(string $comment): ColumnBlueprint
     {
         $this->columnComment = $comment;
+        return $this;
+    }
+
+    /**
+     * 设置字段编码
+     * @param string $charset
+     * @return ColumnBlueprint
+     */
+    function setColumnCharset(string $charset): ColumnBlueprint
+    {
+        $this->columnCharset = $charset;
         return $this;
     }
 
@@ -250,11 +262,13 @@ class ColumnBlueprint
     function __createDDL(): string
     {
         $default = $this->parseDefaultValue();
+        $columnCharset = $this->columnCharset ? explode('_', $this->columnCharset)[0] : false;
         return implode(' ',
             array_filter(
                 [
                     '`' . $this->columnName . '`',
                     (string)$this->parseDataType(),
+                    $this->columnCharset ? 'CHARACTER SET ' . strtoupper($columnCharset) . ' COLLATE ' . strtoupper($this->columnCharset) : null,
                     $this->unsigned ? 'UNSIGNED' : null,
                     $this->zeroFill ? 'ZEROFILL' : null,
                     $this->isUnique ? 'UNIQUE' : null,
