@@ -18,6 +18,7 @@ class ColumnBlueprint
     protected $columnComment;  // 字段注释
     protected $columnCharset;  // 字段编码
 
+    protected $isBinary;         // 二进制 (只允许在字符串类型上设置)
     protected $isUnique;         // 唯一的 (请勿重复设置索引UNI)
     protected $unsigned;         // 无符号 (仅数字类型可以设置)
     protected $zeroFill;         // 零填充 (仅数字类型可以设置)
@@ -171,6 +172,22 @@ class ColumnBlueprint
         return $this;
     }
 
+
+    /**
+     * 是否二进制
+     * 在字符列上设置了二进制会使得该列严格区分大小写
+     * @param bool $enable
+     * @return ColumnBlueprint
+     */
+    function setIsBinary(bool $enable = true): ColumnBlueprint
+    {
+        // TODO 暂未做规范判断
+        // 同样需要做规范判断 只有字符串类型才允许二进制
+
+        $this->isBinary = $enable;
+        return $this;
+    }
+
     /**
      * 直接在字段上设置PK
      * 请不要和索引互相重复设置
@@ -268,6 +285,7 @@ class ColumnBlueprint
                 [
                     '`' . $this->columnName . '`',
                     (string)$this->parseDataType(),
+                    $this->isBinary ? 'BINARY' : null,
                     $this->columnCharset ? 'CHARACTER SET ' . strtoupper($columnCharset) . ' COLLATE ' . strtoupper($this->columnCharset) : null,
                     $this->unsigned ? 'UNSIGNED' : null,
                     $this->zeroFill ? 'ZEROFILL' : null,
