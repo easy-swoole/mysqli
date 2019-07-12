@@ -275,7 +275,7 @@ class TableBlueprint
      */
     function colVarChar(string $name, ?int $limit = null): ColumnBlueprint
     {
-        $this->columns[$name] = new ColumnBlueprint($name, DataType::CHAR);
+        $this->columns[$name] = new ColumnBlueprint($name, DataType::VARCHAR);
         $this->columns[$name]->setColumnLimit($limit);
         return $this->columns[$name];
     }
