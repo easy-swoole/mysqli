@@ -1131,8 +1131,11 @@ class Mysqli
         } else {
             $data = [];
         }
-
+        $start = round(microtime(true),true);
         $ret = $stmt->execute($data,$this->config->getTimeout());
+        if($this->config->getOnQuery()){
+            call_user_func($this->config->getOnQuery(),$stmt,$this->getLastQuery(),$data,$start);
+        }
         /*
          * 重置下列成员变量
          */

@@ -26,6 +26,10 @@ class Config extends SplBean
     protected $isSubQuery = false;
     protected $max_reconnect_times = 3;
     protected $errorToException = false;
+    /**
+     * @var ?callable
+     */
+    protected $onQuery;
 
     public function isErrorToException(): bool
     {
@@ -230,4 +234,19 @@ class Config extends SplBean
         $this->max_reconnect_times = $max_reconnect_times;
     }
 
+    /**
+     * @return callable
+     */
+    public function getOnQuery():?callable
+    {
+        return $this->onQuery;
+    }
+
+    /**
+     * @param mixed $onQuery
+     */
+    public function setOnQuery(callable $onQuery): void
+    {
+        $this->onQuery = $onQuery;
+    }
 }
