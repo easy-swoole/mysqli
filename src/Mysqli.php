@@ -1566,7 +1566,7 @@ class Mysqli
             $this->traceQueryStartTime = microtime(true);
         }
         //prepare超时时间用链接时间
-        $res = $this->coroutineMysqlClient->prepare($this->query,$this->config->getConnectTimeout());
+        $res = $this->coroutineMysqlClient->prepare($this->query,$this->config->getTimeout());
         if ($res instanceof Statement) {
             return $res;
         }
