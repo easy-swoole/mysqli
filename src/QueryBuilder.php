@@ -31,7 +31,6 @@ class QueryBuilder
     protected $lastPrepareQuery = null;
     protected $lastBindParams = [];
     protected $lastQueryOptions = [];
-    protected $lastAlias = '';
 
     public function getLastPrepareQuery():?string
     {
