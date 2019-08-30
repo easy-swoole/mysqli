@@ -20,5 +20,8 @@
             "EasySwoole\\Mysqli\\": "src/",
             "EasySwoole\\Mysqli\\Tests\\": "tests/"
         }
+    },
+    "require": {
+        "easyswoole/spl": "^1.2"
     }
 }
