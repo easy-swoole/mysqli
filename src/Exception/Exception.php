@@ -1,7 +1,7 @@
 <?php
 
 
-namespace EasySwoole\Mysqli\Exceptions;
+namespace EasySwoole\Mysqli\Exception;
 
 
 class Exception extends \Exception
