@@ -12,9 +12,37 @@ class Client
 
     protected $mysqlClient;
 
+    protected $queryBuilder;
+
     function __construct(Config $config)
     {
         $this->config = $config;
+        $this->queryBuilder = new QueryBuilder();
+    }
+
+    function queryBuilder():QueryBuilder
+    {
+        return $this->queryBuilder;
+    }
+
+    function reset()
+    {
+        $this->queryBuilder()->reset();
+    }
+
+    function execBuilder()
+    {
+
+    }
+
+    function rawQuery(string $query)
+    {
+
+    }
+
+    function mysqlClient():?MySQL
+    {
+        return $this->mysqlClient;
     }
 
     function connect():bool
@@ -28,11 +56,17 @@ class Client
         return true;
     }
 
-    function disConnect():bool
+    function close():bool
     {
         if($this->mysqlClient instanceof MySQL && $this->mysqlClient->connected){
             $this->mysqlClient->close();
+            $this->mysqlClient = null;
         }
         return true;
+    }
+
+    function __destruct()
+    {
+        $this->close();
     }
 }
