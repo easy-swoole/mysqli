@@ -7,8 +7,6 @@ use EasySwoole\Mysqli\Exception\Exception;
 /**
  * 查询构造器
  * TODO 支持使用table方法预指定表名称(静态调用 QueryBuilder::table('')->where...)
- * TODO 支持使用field方法指定需要查询的字段(可做字段排除查询)
- * TODO 支持使用limit方法限制返回的记录数
  * TODO 支持使用page方法构建分页查询语句
  * TODO 支持使用union方法合并多表查询结果(UNION/UNIONALL)
  * TODO 支持使用distinct(true)筛选唯一结果
@@ -18,36 +16,43 @@ use EasySwoole\Mysqli\Exception\Exception;
  */
 class QueryBuilder
 {
-    public static $prefix = '';
+    private $prefix = '';
 
-    protected $_query;
-    protected $_lastQuery;
+    /*
+     * 构造结果
+     */
+    private $lastPrepareQuery = null;
+    private $lastBindParams = [];
+    private $lastQueryOptions = [];
+    private $lastQuery;
+
 
     // 以下为查询条件容器
-    protected $_join = [];
-    protected $_where = [];
-    protected $_joinAnd = [];
-    protected $_having = [];
-    protected $_orderBy = [];
-    protected $_groupBy = [];
-    protected $_queryOptions = [];
+    private $_join = [];
+    private $_where = [];
+    private $_joinAnd = [];
+    private $_having = [];
+    private $_orderBy = [];
+    private $_groupBy = [];
+    private $_queryOptions = [];
 
     // 以下为查询配置项
-    protected $_tableLockMethod = "READ";
-    protected $_bindParams = [''];
-    protected $_isSubQuery = false;
-    protected $_updateColumns = null;
-    protected $_nestJoin = false;
-    protected $_tableName = '';
-    protected $_forUpdate = false;
-    protected $_lockInShareMode = false;
-    protected $_subQueryAlias = '';
-    protected $_limit = null;
-    protected $_field = '*';
-    protected $lastPrepareQuery = null;
-    protected $lastBindParams = [];
-    protected $lastQueryOptions = [];
-
+    private $_tableLockMethod = "READ";
+    private $_bindParams = [''];
+    private $_isSubQuery = false;
+    private $_updateColumns = null;
+    private $_nestJoin = false;
+    private $_tableName = '';
+    private $_forUpdate = false;
+    private $_lockInShareMode = false;
+    private $_subQueryAlias = '';
+    private $_limit = null;
+    private $_field = '*';
+    private $_lastInsertId = null;
+    /*
+     * 查询构造结构
+     */
+    private $_query;
 
     public function __construct(bool $isSubQuery = false, ?string $subQueryAlias = null)
     {
@@ -76,7 +81,6 @@ class QueryBuilder
         return $this;
     }
 
-    //---------- 查询条件 ---------- //
 
     /**
      * Where条件
@@ -126,7 +130,7 @@ class QueryBuilder
         // Add table prefix to orderByField if needed.
         //FIXME: We are adding prefix only if table is enclosed into `` to distinguish aliases
         // from table names
-        $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_]*\.)/', '\1' . self::$prefix . '\2', $orderByField);
+        $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_]*\.)/', '\1' . $this->prefix . '\2', $orderByField);
         if (empty($orderbyDirection) || !in_array($orderbyDirection, $allowedDirection)) {
             throw new Exception('Wrong order direction: ' . $orderbyDirection);
         }
@@ -208,7 +212,7 @@ class QueryBuilder
             throw new Exception('Wrong JOIN type: ' . $joinType);
         }
         if (!is_object($joinTable)) {
-            $joinTable = self::$prefix . $joinTable;
+            $joinTable = $this->prefix . $joinTable;
         }
         $this->_join[] = [$joinType, $joinTable, $joinCondition];
         return $this;
@@ -225,7 +229,7 @@ class QueryBuilder
      */
     public function joinWhere($whereJoin, $whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND')
     {
-        $this->_joinAnd[self::$prefix . $whereJoin][] = Array($cond, $whereProp, $operator, $whereValue);
+        $this->_joinAnd[$this->prefix . $whereJoin][] = Array($cond, $whereProp, $operator, $whereValue);
         return $this;
     }
 
@@ -247,6 +251,7 @@ class QueryBuilder
      * LockInShareModel锁定(InnoDb)
      * @param bool $isLock
      * @throws Exception
+     * @return QueryBuilder
      */
     public function lockInShareMode($isLock = true)
     {
@@ -255,12 +260,14 @@ class QueryBuilder
         } else {
             unset($this->_queryOptions['LOCK IN SHARE MODE']);
         }
+        return $this;
     }
 
     /**
      * SELECT FOR UPDATE锁定(InnoDb)
      * @param bool $isLock
      * @throws Exception
+     * @return QueryBuilder
      */
     public function selectForUpdate($isLock = true)
     {
@@ -269,6 +276,7 @@ class QueryBuilder
         } else {
             unset($this->_queryOptions['FOR UPDATE']);
         }
+        return $this;
     }
 
     /**
@@ -307,14 +315,16 @@ class QueryBuilder
                     if ($key > 0) {
                         $this->_query .= ",";
                     }
-                    $this->_query .= " " . self::$prefix . $value . " " . $this->_tableLockMethod;
+                    $this->_query .= " " . $this->prefix . $value . " " . $this->_tableLockMethod;
+                    $this->lastQuery = $this->_query;
                 }
             }
         } else {
             // Build the table prefix
-            $table = self::$prefix . $table;
+            $table = $this->prefix . $table;
             // Build the query
             $this->_query = "LOCK TABLES " . $table . " " . $this->_tableLockMethod;
+            $this->lastQuery = $this->_query;
         }
         $this->reset();
         return $this;
@@ -327,6 +337,7 @@ class QueryBuilder
     public function unlockTable()
     {
         $this->_query = "UNLOCK TABLES";
+        $this->lastQuery = $this->_query;
         $this->reset();
         return $this;
     }
@@ -370,7 +381,7 @@ class QueryBuilder
      */
     public function setPrefix($prefix = '')
     {
-        self::$prefix = $prefix;
+        $this->prefix = $prefix;
         return $this;
     }
 
@@ -396,15 +407,12 @@ class QueryBuilder
      */
     public function get($tableName, $numRows = null, $columns = null): ?QueryBuilder
     {
-        if (empty($columns)) {
-            $columns = '*';
-        }
         if($columns == null){
             $columns = $this->_field;
         }
         $column = is_array($columns) ? implode(', ', $columns) : $columns;
         if (strpos($tableName, '.') === false) {
-            $this->_tableName = self::$prefix . $tableName;
+            $this->_tableName = $this->prefix . $tableName;
         } else {
             $this->_tableName = $tableName;
         }
@@ -434,6 +442,13 @@ class QueryBuilder
      */
     public function insert($tableName, $insertData)
     {
+        if(is_array($this->_field)){
+            foreach ($insertData as $key => $val){
+                if(!in_array($key,$this->_field)){
+                    unset($insertData[$key]);
+                }
+            }
+        }
         $this->_buildInsert($tableName, $insertData, 'INSERT');
         $this->reset();
         return $this;
@@ -477,7 +492,7 @@ class QueryBuilder
         if ($this->_isSubQuery) {
             return;
         }
-        $this->_query = "UPDATE " . self::$prefix . $tableName;
+        $this->_query = "UPDATE " . $this->prefix . $tableName;
         if(is_array($this->_field)){
             foreach ($tableData as $key => $val){
                 if(!in_array($key,$this->_field)){
@@ -501,7 +516,7 @@ class QueryBuilder
         if ($this->_isSubQuery) {
             return;
         }
-        $table = self::$prefix . $tableName;
+        $table = $this->prefix . $tableName;
         if (count($this->_join)) {
             $this->_query = "DELETE " . preg_replace('/.* (.*)/', '$1', $table) . " FROM " . $table;
         } else {
@@ -512,231 +527,237 @@ class QueryBuilder
         return $this;
     }
 
-    //---------- 语句构建 ---------- //
+    //---------- 辅助方法 ---------- //
 
     /**
-     * 参数绑定
-     * @param $value
+     * 重置构造器
+     * @return $this
      */
-    protected function _bindParam($value)
+    public function reset()
     {
-        $this->_bindParams[0] .= $this->_determineType($value);
-        array_push($this->_bindParams, $value);
+        $this->lastPrepareQuery = $this->_query;
+        $this->lastBindParams = $this->_bindParams;
+        array_shift($this->lastBindParams);
+        $this->lastQueryOptions = $this->_queryOptions;
+        $this->_limit = null;
+        $this->_field = '*';
+        $this->_where = [];
+        $this->_having = [];
+        $this->_join = [];
+        $this->_joinAnd = [];
+        $this->_orderBy = [];
+        $this->_groupBy = [];
+        $this->_bindParams = [''];
+        $this->_query = null;
+        $this->_queryOptions = array();
+        $this->_nestJoin = false;
+        $this->_forUpdate = false;
+        $this->_lockInShareMode = false;
+        $this->_tableName = '';
+        $this->_updateColumns = null;
+        return $this;
     }
-
     /**
-     * 多参数绑定
-     * @param $values
-     */
-    protected function _bindParams($values)
-    {
-        foreach ($values as $value) {
-            $this->_bindParam($value);
-        }
-    }
-
-    /**
-     * 构建占位符
-     * @param $operator
-     * @param $value
-     * @return string
-     */
-    protected function _buildPair($operator, $value)
-    {
-        if (!is_object($value)) {
-            $this->_bindParam($value);
-            return ' ' . $operator . ' ? ';
-        }
-        /** @var QueryBuilder $value */
-        $subQuery = $value->getSubQuery();
-        $this->_bindParams($subQuery['params']);
-        return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
-    }
-
-    /**
-     * 构建插入的前半部分
-     * @param $tableName
-     * @param $insertData
-     * @param $operation
-     */
-    private function _buildInsert($tableName, $insertData, $operation)
-    {
-        if ($this->_isSubQuery) {
-            return;
-        }
-        $this->_query = $operation . " " . implode(' ', $this->_queryOptions) . " INTO " . self::$prefix . $tableName;
-        $this->_buildQuery(null, $insertData);
-    }
-
-    /**
-     * 组装插入的值
-     * @param $tableData
-     */
-    protected function _buildInsertQuery($tableData)
-    {
-        if (!is_array($tableData)) {
-            return;
-        }
-        $isInsert = preg_match('/^[INSERT|REPLACE]/', $this->_query);
-        $dataColumns = array_keys($tableData);
-        if ($isInsert) {
-            if (isset ($dataColumns[0]))
-                $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
-            $this->_query .= ' VALUES (';
-        } else {
-            $this->_query .= " SET ";
-        }
-        $this->_buildDataPairs($tableData, $dataColumns, $isInsert);
-        if ($isInsert) {
-            $this->_query .= ')';
-        }
-    }
-
-    /**
-     * 构建OnDuplicate插入
-     * @param $tableData
-     */
-    protected function _buildOnDuplicate($tableData)
-    {
-        if (is_array($this->_updateColumns) && !empty($this->_updateColumns)) {
-            $this->_query .= " ON DUPLICATE KEY UPDATE ";
-            foreach ($this->_updateColumns as $key => $val) {
-                // skip all params without a value
-                if (is_numeric($key)) {
-                    $this->_updateColumns[$val] = '';
-                    unset($this->_updateColumns[$key]);
-                } else {
-                    $tableData[$key] = $val;
-                }
-            }
-            $this->_buildDataPairs($tableData, array_keys($this->_updateColumns), false);
-        }
-    }
-
-    /**
-     * 处理值绑定
-     * @param $tableData
-     * @param $tableColumns
-     * @param $isInsert
+     * MysqlFunc/Now 快捷方法
+     * @param null $diff
+     * @param string $func
+     * @return array
      * @throws Exception
      */
-    public function _buildDataPairs($tableData, $tableColumns, $isInsert)
+    public function now($diff = null, $func = "NOW()")
     {
-        foreach ($tableColumns as $column) {
-            $value = $tableData[$column];
-            if (!$isInsert) {
-                if (strpos($column, '.') === false) {
-                    $this->_query .= "`" . $column . "` = ";
-                } else {
-                    $this->_query .= str_replace('.', '.`', $column) . "` = ";
-                }
-            }
-            if ($value instanceof QueryBuilder && $value->isSubQuery()) {
-                $this->_query .= $this->_buildPair("", $value) . ", ";
-                continue;
-            }
-            // Simple value
-            if (!is_array($value)) {
-                $this->_bindParam($value);
-                $this->_query .= '?, ';
-                continue;
-            }
-            // Function value
-            $key = key($value);
-            $val = $value[$key];
-            switch ($key) {
-                case '[I]':
-                    $this->_query .= $column . $val . ", ";
-                    break;
-                case '[F]':
-                    $this->_query .= $val[0] . ", ";
-                    if (!empty($val[1])) {
-                        $this->_bindParams($val[1]);
-                    }
-                    break;
-                case '[N]':
-                    if ($val == null) {
-                        $this->_query .= "!" . $column . ", ";
-                    } else {
-                        $this->_query .= "!" . $val . ", ";
-                    }
-                    break;
-                default:
-                    throw new Exception("Wrong operation");
-            }
-        }
-        $this->_query = rtrim($this->_query, ', ');
+        return array("[F]" => Array($this->interval($diff, $func)));
     }
 
     /**
-     * 查询条件构建
-     * @param $operator
-     * @param $conditions
+     * MysqlInc表达式
+     * @param int $num
+     * @return array
+     * @throws Exception
      */
-    protected function _buildCondition($operator, &$conditions)
+    public function inc($num = 1)
     {
-        if (empty($conditions)) {
-            return;
+        if (!is_numeric($num)) {
+            throw new Exception('Argument supplied to inc must be a number');
         }
-        //Prepare the where portion of the query
-        $this->_query .= ' ' . $operator;
-        foreach ($conditions as $cond) {
-            list ($concat, $varName, $operator, $val) = $cond;
-            $this->_query .= " " . $concat . " " . $varName;
-            switch (strtolower($operator)) {
-                case 'not in':
-                case 'in':
-                    $comparison = ' ' . $operator . ' (';
-                    if (is_object($val)) {
-                        $comparison .= $this->_buildPair("", $val);
-                    } else {
-                        foreach ($val as $v) {
-                            $comparison .= ' ?,';
-                            $this->_bindParam($v);
-                        }
-                    }
-                    $this->_query .= rtrim($comparison, ',') . ' ) ';
-                    break;
-                case 'not between':
-                case 'between':
-                    $this->_query .= " $operator ? AND ? ";
-                    $this->_bindParams($val);
-                    break;
-                case 'not exists':
-                case 'exists':
-                    $this->_query .= $operator . $this->_buildPair("", $val);
-                    break;
-                default:
-                    if (is_array($val)) {
-                        $this->_bindParams($val);
-                    } elseif ($val === null) {
-                        $this->_query .= ' ' . $operator . " NULL";
-                    } elseif ($val != 'DBNULL' || $val == '0') {
-                        $this->_query .= $this->_buildPair($operator, $val);
-                    }
-            }
-        }
+        return array("[I]" => "+" . $num);
     }
 
     /**
-     * GroupBy约束构建
+     * MysqlDec表达式
+     * @param int $num
+     * @return array
+     * @throws Exception
      */
-    protected function _buildGroupBy()
+    public function dec($num = 1)
     {
-        if (empty($this->_groupBy)) {
-            return;
+        if (!is_numeric($num)) {
+            throw new Exception('Argument supplied to dec must be a number');
         }
-        $this->_query .= " GROUP BY ";
-        foreach ($this->_groupBy as $key => $value) {
-            $this->_query .= $value . ", ";
+        return array("[I]" => "-" . $num);
+    }
+
+    /**
+     * MysqlNot表达式
+     * @param null $col
+     * @return array
+     */
+    public function not($col = null)
+    {
+        return array("[N]" => (string)$col);
+    }
+
+    /**
+     * MysqlFunc表达式
+     * @param $expr
+     * @param null $bindParams
+     * @return array
+     */
+    public function func($expr, $bindParams = null)
+    {
+        return array("[F]" => array($expr, $bindParams));
+    }
+
+    /**
+     * 创建一个子查询
+     * @param string|null $subQueryAlias
+     * @return QueryBuilder
+     */
+    public static function subQuery(string $subQueryAlias = null)
+    {
+        return new static(true, $subQueryAlias);
+    }
+
+    //---------- 输出方法 ---------- //
+
+    /**
+     * 获取构建的SQL
+     * @return string|null
+     */
+    public function getLastPrepareQuery(): ?string
+    {
+        return $this->lastPrepareQuery;
+    }
+
+    /**
+     * 获取最后绑定的参数
+     * @return array
+     */
+    public function getLastBindParams()
+    {
+        return $this->lastBindParams;
+    }
+
+    /**
+     * 获取最后的查询参数
+     * @return array
+     */
+    function getLastQueryOptions(): array
+    {
+        return $this->lastQueryOptions;
+    }
+
+    /**
+     * 获取构建的SQL(已替换占位符)
+     * @return mixed
+     */
+    public function getLastQuery()
+    {
+        return $this->lastQuery;
+    }
+
+    /**
+     * 获取子查询
+     * @return array|null
+     */
+    public function getSubQuery()
+    {
+        if (!$this->_isSubQuery) {
+            return null;
         }
-        $this->_query = rtrim($this->_query, ', ') . " ";
+        $val = [
+            'query'  => $this->lastPrepareQuery,
+            'params' => $this->lastBindParams,
+            'alias'  => $this->_subQueryAlias
+        ];
+        $this->reset();
+        return $val;
+    }
+
+    /**
+     * 当前是否子查询
+     * @return bool
+     */
+    public function isSubQuery(): bool
+    {
+        return $this->_isSubQuery;
+    }
+
+    /*
+     * ***************** 私有方法
+     */
+
+    /**
+     * PDO绑定类型检测
+     * @param $item
+     * @return string
+     */
+    private function _determineType($item)
+    {
+        switch (gettype($item)) {
+            case 'NULL':
+            case 'string':
+                return 's';
+                break;
+            case 'boolean':
+            case 'integer':
+                return 'i';
+                break;
+            case 'blob':
+                return 'b';
+                break;
+            case 'double':
+                return 'd';
+                break;
+        }
+        return '';
+    }
+
+    /**
+     * 时间周期
+     * @param $diff
+     * @param string $func
+     * @return string
+     * @throws Exception
+     */
+    private function interval($diff, $func = "NOW()")
+    {
+        $types = Array("s" => "second", "m" => "minute", "h" => "hour", "d" => "day", "M" => "month", "Y" => "year");
+        $incr = '+';
+        $items = '';
+        $type = 'd';
+        if ($diff && preg_match('/([+-]?) ?([0-9]+) ?([a-zA-Z]?)/', $diff, $matches)) {
+            if (!empty($matches[1])) {
+                $incr = $matches[1];
+            }
+            if (!empty($matches[2])) {
+                $items = $matches[2];
+            }
+            if (!empty($matches[3])) {
+                $type = $matches[3];
+            }
+            if (!in_array($type, array_keys($types))) {
+                throw new Exception("invalid interval type in '{$diff}'");
+            }
+            $func .= " " . $incr . " interval " . $items . " " . $types[$type] . " ";
+        }
+        return $func;
     }
 
     /**
      * OrderBy约束构建
      */
-    protected function _buildOrderBy()
+    private function _buildOrderBy()
     {
         if (empty($this->_orderBy)) {
             return;
@@ -889,231 +910,226 @@ class QueryBuilder
         if ($this->_lockInShareMode) {
             $this->_query .= ' LOCK IN SHARE MODE';
         }
-        $this->_lastQuery = $this->replacePlaceHolders($this->_query, $this->_bindParams);
+        $this->lastQuery = $this->replacePlaceHolders($this->_query, $this->_bindParams);
     }
 
-    //---------- 辅助方法 ---------- //
 
     /**
-     * 重置构造器
-     * @return $this
+     * 参数绑定
+     * @param $value
      */
-    public function reset()
+    private function _bindParam($value)
     {
-        $this->lastPrepareQuery = $this->_query;
-        $this->lastBindParams = $this->_bindParams;
-        array_shift($this->lastBindParams);
-        $this->lastQueryOptions = $this->_queryOptions;
-        $this->_limit = null;
-        $this->_field = '*';
-        $this->_where = [];
-        $this->_having = [];
-        $this->_join = [];
-        $this->_joinAnd = [];
-        $this->_orderBy = [];
-        $this->_groupBy = [];
-        $this->_bindParams = [''];
-        $this->_query = null;
-        $this->_queryOptions = array();
-        $this->_nestJoin = false;
-        $this->_forUpdate = false;
-        $this->_lockInShareMode = false;
-        $this->_tableName = '';
-        $this->_updateColumns = null;
-        return $this;
+        $this->_bindParams[0] .= $this->_determineType($value);
+        array_push($this->_bindParams, $value);
     }
 
     /**
-     * PDO绑定类型检测
-     * @param $item
+     * 多参数绑定
+     * @param $values
+     */
+    private function _bindParams($values)
+    {
+        foreach ($values as $value) {
+            $this->_bindParam($value);
+        }
+    }
+
+    /**
+     * 构建占位符
+     * @param $operator
+     * @param $value
      * @return string
      */
-    private function _determineType($item)
+    private function _buildPair($operator, $value)
     {
-        switch (gettype($item)) {
-            case 'NULL':
-            case 'string':
-                return 's';
-                break;
-            case 'boolean':
-            case 'integer':
-                return 'i';
-                break;
-            case 'blob':
-                return 'b';
-                break;
-            case 'double':
-                return 'd';
-                break;
+        if (!is_object($value)) {
+            $this->_bindParam($value);
+            return ' ' . $operator . ' ? ';
         }
-        return '';
+        /** @var QueryBuilder $value */
+        $subQuery = $value->getSubQuery();
+        $this->_bindParams($subQuery['params']);
+        return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
     }
 
     /**
-     * 时间周期
-     * @param $diff
-     * @param string $func
-     * @return string
+     * 构建插入的前半部分
+     * @param $tableName
+     * @param $insertData
+     * @param $operation
+     */
+    private function _buildInsert($tableName, $insertData, $operation)
+    {
+        if ($this->_isSubQuery) {
+            return;
+        }
+        $this->_query = $operation . " " . implode(' ', $this->_queryOptions) . " INTO " . $this->prefix . $tableName;
+        $this->_buildQuery(null, $insertData);
+    }
+
+    /**
+     * 组装插入的值
+     * @param $tableData
+     */
+    private function _buildInsertQuery($tableData)
+    {
+        if (!is_array($tableData)) {
+            return;
+        }
+        $isInsert = preg_match('/^[INSERT|REPLACE]/', $this->_query);
+        $dataColumns = array_keys($tableData);
+        if ($isInsert) {
+            if (isset ($dataColumns[0]))
+                $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
+            $this->_query .= ' VALUES (';
+        } else {
+            $this->_query .= " SET ";
+        }
+        $this->_buildDataPairs($tableData, $dataColumns, $isInsert);
+        if ($isInsert) {
+            $this->_query .= ')';
+        }
+    }
+
+    /**
+     * 构建OnDuplicate插入
+     * @param $tableData
+     */
+    private function _buildOnDuplicate($tableData)
+    {
+        if (is_array($this->_updateColumns) && !empty($this->_updateColumns)) {
+            $this->_query .= " ON DUPLICATE KEY UPDATE ";
+            foreach ($this->_updateColumns as $key => $val) {
+                // skip all params without a value
+                if (is_numeric($key)) {
+                    $this->_updateColumns[$val] = '';
+                    unset($this->_updateColumns[$key]);
+                } else {
+                    $tableData[$key] = $val;
+                }
+            }
+            $this->_buildDataPairs($tableData, array_keys($this->_updateColumns), false);
+        }
+    }
+
+    /**
+     * 处理值绑定
+     * @param $tableData
+     * @param $tableColumns
+     * @param $isInsert
      * @throws Exception
      */
-    private function interval($diff, $func = "NOW()")
+    private function _buildDataPairs($tableData, $tableColumns, $isInsert)
     {
-        $types = Array("s" => "second", "m" => "minute", "h" => "hour", "d" => "day", "M" => "month", "Y" => "year");
-        $incr = '+';
-        $items = '';
-        $type = 'd';
-        if ($diff && preg_match('/([+-]?) ?([0-9]+) ?([a-zA-Z]?)/', $diff, $matches)) {
-            if (!empty($matches[1])) {
-                $incr = $matches[1];
+        foreach ($tableColumns as $column) {
+            $value = $tableData[$column];
+            if (!$isInsert) {
+                if (strpos($column, '.') === false) {
+                    $this->_query .= "`" . $column . "` = ";
+                } else {
+                    $this->_query .= str_replace('.', '.`', $column) . "` = ";
+                }
             }
-            if (!empty($matches[2])) {
-                $items = $matches[2];
+            if ($value instanceof QueryBuilder && $value->isSubQuery()) {
+                $this->_query .= $this->_buildPair("", $value) . ", ";
+                continue;
             }
-            if (!empty($matches[3])) {
-                $type = $matches[3];
+            // Simple value
+            if (!is_array($value)) {
+                $this->_bindParam($value);
+                $this->_query .= '?, ';
+                continue;
             }
-            if (!in_array($type, array_keys($types))) {
-                throw new Exception("invalid interval type in '{$diff}'");
+            // Function value
+            $key = key($value);
+            $val = $value[$key];
+            switch ($key) {
+                case '[I]':
+                    $this->_query .= $column . $val . ", ";
+                    break;
+                case '[F]':
+                    $this->_query .= $val[0] . ", ";
+                    if (!empty($val[1])) {
+                        $this->_bindParams($val[1]);
+                    }
+                    break;
+                case '[N]':
+                    if ($val == null) {
+                        $this->_query .= "!" . $column . ", ";
+                    } else {
+                        $this->_query .= "!" . $val . ", ";
+                    }
+                    break;
+                default:
+                    throw new Exception("Wrong operation");
             }
-            $func .= " " . $incr . " interval " . $items . " " . $types[$type] . " ";
         }
-        return $func;
+        $this->_query = rtrim($this->_query, ', ');
     }
 
     /**
-     * MysqlFunc/Now 快捷方法
-     * @param null $diff
-     * @param string $func
-     * @return array
-     * @throws Exception
+     * 查询条件构建
+     * @param $operator
+     * @param $conditions
      */
-    public function now($diff = null, $func = "NOW()")
+    private function _buildCondition($operator, &$conditions)
     {
-        return array("[F]" => Array($this->interval($diff, $func)));
-    }
-
-    /**
-     * MysqlInc表达式
-     * @param int $num
-     * @return array
-     * @throws Exception
-     */
-    public function inc($num = 1)
-    {
-        if (!is_numeric($num)) {
-            throw new Exception('Argument supplied to inc must be a number');
+        if (empty($conditions)) {
+            return;
         }
-        return array("[I]" => "+" . $num);
-    }
-
-    /**
-     * MysqlDec表达式
-     * @param int $num
-     * @return array
-     * @throws Exception
-     */
-    public function dec($num = 1)
-    {
-        if (!is_numeric($num)) {
-            throw new Exception('Argument supplied to dec must be a number');
+        //Prepare the where portion of the query
+        $this->_query .= ' ' . $operator;
+        foreach ($conditions as $cond) {
+            list ($concat, $varName, $operator, $val) = $cond;
+            $this->_query .= " " . $concat . " " . $varName;
+            switch (strtolower($operator)) {
+                case 'not in':
+                case 'in':
+                    $comparison = ' ' . $operator . ' (';
+                    if (is_object($val)) {
+                        $comparison .= $this->_buildPair("", $val);
+                    } else {
+                        foreach ($val as $v) {
+                            $comparison .= ' ?,';
+                            $this->_bindParam($v);
+                        }
+                    }
+                    $this->_query .= rtrim($comparison, ',') . ' ) ';
+                    break;
+                case 'not between':
+                case 'between':
+                    $this->_query .= " $operator ? AND ? ";
+                    $this->_bindParams($val);
+                    break;
+                case 'not exists':
+                case 'exists':
+                    $this->_query .= $operator . $this->_buildPair("", $val);
+                    break;
+                default:
+                    if (is_array($val)) {
+                        $this->_bindParams($val);
+                    } elseif ($val === null) {
+                        $this->_query .= ' ' . $operator . " NULL";
+                    } elseif ($val != 'DBNULL' || $val == '0') {
+                        $this->_query .= $this->_buildPair($operator, $val);
+                    }
+            }
         }
-        return array("[I]" => "-" . $num);
     }
 
     /**
-     * MysqlNot表达式
-     * @param null $col
-     * @return array
+     * GroupBy约束构建
      */
-    public function not($col = null)
+    private function _buildGroupBy()
     {
-        return array("[N]" => (string)$col);
-    }
-
-    /**
-     * MysqlFunc表达式
-     * @param $expr
-     * @param null $bindParams
-     * @return array
-     */
-    public function func($expr, $bindParams = null)
-    {
-        return array("[F]" => array($expr, $bindParams));
-    }
-
-    /**
-     * 创建一个子查询
-     * @param string|null $subQueryAlias
-     * @return QueryBuilder
-     */
-    public static function subQuery(string $subQueryAlias = null)
-    {
-        return new static(true, $subQueryAlias);
-    }
-
-    //---------- 输出方法 ---------- //
-
-    /**
-     * 获取构建的SQL
-     * @return string|null
-     */
-    public function getLastPrepareQuery(): ?string
-    {
-        return $this->lastPrepareQuery;
-    }
-
-    /**
-     * 获取最后绑定的参数
-     * @return array
-     */
-    public function getLastBindParams()
-    {
-        return $this->lastBindParams;
-    }
-
-    /**
-     * 获取最后的查询参数
-     * @return array
-     */
-    function getLastQueryOptions(): array
-    {
-        return $this->lastQueryOptions;
-    }
-
-    /**
-     * 获取构建的SQL(已替换占位符)
-     * @return mixed
-     */
-    public function getLastQuery()
-    {
-        return $this->_lastQuery;
-    }
-
-    /**
-     * 获取子查询
-     * @return array|null
-     */
-    public function getSubQuery()
-    {
-        if (!$this->_isSubQuery) {
-            return null;
+        if (empty($this->_groupBy)) {
+            return;
         }
-        $val = [
-            'query'  => $this->lastPrepareQuery,
-            'params' => $this->lastBindParams,
-            'alias'  => $this->_subQueryAlias
-        ];
-        $this->reset();
-        return $val;
+        $this->_query .= " GROUP BY ";
+        foreach ($this->_groupBy as $key => $value) {
+            $this->_query .= $value . ", ";
+        }
+        $this->_query = rtrim($this->_query, ', ') . " ";
     }
-
-    /**
-     * 当前是否子查询
-     * @return bool
-     */
-    public function isSubQuery(): bool
-    {
-        return $this->_isSubQuery;
-    }
-
 }
