@@ -42,20 +42,38 @@ class QueryBuilder
     protected $_forUpdate = false;
     protected $_lockInShareMode = false;
     protected $_subQueryAlias = '';
+    protected $_limit = null;
+    protected $_field = '*';
     protected $lastPrepareQuery = null;
     protected $lastBindParams = [];
     protected $lastQueryOptions = [];
 
-    /**
-     * QueryBuilder constructor.
-     * @param null $host
-     */
-    public function __construct(bool $isSubQuery = false, string $subQueryAlias = '')
+
+    public function __construct(bool $isSubQuery = false, ?string $subQueryAlias = null)
     {
         if ($isSubQuery) {
             $this->_isSubQuery = true;
             $this->_subQueryAlias = $subQueryAlias;
         }
+    }
+
+    public function limit(int $one,?int $two = null):QueryBuilder
+    {
+        if($two !== null){
+            $this->_limit = [$one,$two];
+        }else{
+            $this->_limit = $one;
+        }
+        return $this;
+    }
+
+    public function fields($fields):QueryBuilder
+    {
+        if(!is_array($fields)){
+            $fields = [$fields];
+        }
+        $this->_field = $fields;
+        return $this;
     }
 
     //---------- 查询条件 ---------- //
@@ -376,10 +394,13 @@ class QueryBuilder
      * @param string $columns
      * @return QueryBuilder|null
      */
-    public function get($tableName, $numRows = null, $columns = '*'): ?QueryBuilder
+    public function get($tableName, $numRows = null, $columns = null): ?QueryBuilder
     {
         if (empty($columns)) {
             $columns = '*';
+        }
+        if($columns == null){
+            $columns = $this->_field;
         }
         $column = is_array($columns) ? implode(', ', $columns) : $columns;
         if (strpos($tableName, '.') === false) {
@@ -457,6 +478,13 @@ class QueryBuilder
             return;
         }
         $this->_query = "UPDATE " . self::$prefix . $tableName;
+        if(is_array($this->_field)){
+            foreach ($tableData as $key => $val){
+                if(!in_array($key,$this->_field)){
+                    unset($tableData[$key]);
+                }
+            }
+        }
         $this->_buildQuery($numRows, $tableData);
         $this->reset();
         return $this;
@@ -728,7 +756,7 @@ class QueryBuilder
      * Limit约束构建
      * @param $numRows
      */
-    protected function _buildLimit($numRows)
+    private function _buildLimit($numRows)
     {
         if (!isset($numRows)) {
             return;
@@ -743,7 +771,7 @@ class QueryBuilder
     /**
      * Join约束构建
      */
-    protected function _buildJoin()
+    private function _buildJoin()
     {
         if (empty ($this->_join))
             return;
@@ -773,7 +801,7 @@ class QueryBuilder
      * @param $vals
      * @return bool|string
      */
-    protected function replacePlaceHolders($str, $vals)
+    private function replacePlaceHolders($str, $vals)
     {
         $i = 1;
         $newStr = "";
@@ -845,7 +873,7 @@ class QueryBuilder
      * @param null $numRows
      * @param null $tableData
      */
-    protected function _buildQuery($numRows = null, $tableData = null)
+    private function _buildQuery($numRows = null, $tableData = null)
     {
         $this->_buildJoin();
         $this->_buildInsertQuery($tableData);
@@ -876,6 +904,8 @@ class QueryBuilder
         $this->lastBindParams = $this->_bindParams;
         array_shift($this->lastBindParams);
         $this->lastQueryOptions = $this->_queryOptions;
+        $this->_limit = null;
+        $this->_field = '*';
         $this->_where = [];
         $this->_having = [];
         $this->_join = [];
@@ -898,7 +928,7 @@ class QueryBuilder
      * @param $item
      * @return string
      */
-    protected function _determineType($item)
+    private function _determineType($item)
     {
         switch (gettype($item)) {
             case 'NULL':
@@ -926,7 +956,7 @@ class QueryBuilder
      * @return string
      * @throws Exception
      */
-    public function interval($diff, $func = "NOW()")
+    private function interval($diff, $func = "NOW()")
     {
         $types = Array("s" => "second", "m" => "minute", "h" => "hour", "d" => "day", "M" => "month", "Y" => "year");
         $incr = '+';
