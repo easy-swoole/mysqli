@@ -6,8 +6,6 @@ use EasySwoole\Mysqli\Exception\Exception;
 
 /**
  * 查询构造器
- * TODO 支持使用table方法预指定表名称(静态调用 QueryBuilder::table('')->where...)
- * TODO 支持使用page方法构建分页查询语句
  * TODO 支持使用union方法合并多表查询结果(UNION/UNIONALL)
  * TODO 支持使用distinct(true)筛选唯一结果
  * TODO 支持使用setInc/setDec快捷自增自减
