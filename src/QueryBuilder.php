@@ -8,7 +8,6 @@ use EasySwoole\Mysqli\Exception\Exception;
  * 查询构造器
  * TODO 支持使用union方法合并多表查询结果(UNION/UNIONALL)
  * TODO 支持使用distinct(true)筛选唯一结果
- * TODO 支持使用setInc/setDec快捷自增自减
  * Class QueryBuilder
  * @package EasySwoole\Mysqli
  */
@@ -562,9 +561,9 @@ class QueryBuilder
      * @return array
      * @throws Exception
      */
-    public function now($diff = null, $func = "NOW()")
+    public static function now($diff = null, $func = "NOW()")
     {
-        return array("[F]" => Array($this->interval($diff, $func)));
+        return array("[F]" => Array(self::interval($diff, $func)));
     }
 
     /**
@@ -573,7 +572,7 @@ class QueryBuilder
      * @return array
      * @throws Exception
      */
-    public function inc($num = 1)
+    public static function inc($num = 1)
     {
         if (!is_numeric($num)) {
             throw new Exception('Argument supplied to inc must be a number');
@@ -587,7 +586,7 @@ class QueryBuilder
      * @return array
      * @throws Exception
      */
-    public function dec($num = 1)
+    public static function dec($num = 1)
     {
         if (!is_numeric($num)) {
             throw new Exception('Argument supplied to dec must be a number');
@@ -600,7 +599,7 @@ class QueryBuilder
      * @param null $col
      * @return array
      */
-    public function not($col = null)
+    public static function not($col = null)
     {
         return array("[N]" => (string)$col);
     }
@@ -611,7 +610,7 @@ class QueryBuilder
      * @param null $bindParams
      * @return array
      */
-    public function func($expr, $bindParams = null)
+    public static function func($expr, $bindParams = null)
     {
         return array("[F]" => array($expr, $bindParams));
     }
@@ -728,7 +727,7 @@ class QueryBuilder
      * @return string
      * @throws Exception
      */
-    private function interval($diff, $func = "NOW()")
+    private static function interval($diff, $func = "NOW()")
     {
         $types = Array("s" => "second", "m" => "minute", "h" => "hour", "d" => "day", "M" => "month", "Y" => "year");
         $incr = '+';
