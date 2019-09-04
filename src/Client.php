@@ -4,6 +4,7 @@
 namespace EasySwoole\Mysqli;
 
 
+use EasySwoole\Mysqli\Exception\Exception;
 use Swoole\Coroutine\MySQL;
 
 class Client
@@ -30,14 +31,34 @@ class Client
         $this->queryBuilder()->reset();
     }
 
-    function execBuilder()
+    function execBuilder(float $timeout = null)
     {
-
+        if($timeout === null){
+            $timeout = $this->config->getTimeout();
+        }
+        $this->connect();
+        $stmt = $this->mysqlClient()->prepare($this->queryBuilder()->getLastPrepareQuery(),$timeout);
+        $ret = null;
+        if($stmt){
+            $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
+        }
+        if($this->mysqlClient()->errno){
+            throw new Exception($this->mysqlClient()->error);
+        }
+        return $ret;
     }
 
-    function rawQuery(string $query)
+    function rawQuery(string $query,float $timeout = null)
     {
-
+        if($timeout === null){
+            $timeout = $this->config->getTimeout();
+        }
+        $this->connect();
+        $ret = $this->mysqlClient()->query($query,$timeout);
+        if($this->mysqlClient()->errno){
+            throw new Exception($this->mysqlClient()->error);
+        }
+        return $ret;
     }
 
     function mysqlClient():?MySQL
@@ -51,7 +72,7 @@ class Client
             $this->mysqlClient = new MySQL();
         }
         if(!$this->mysqlClient->connected){
-           return (bool)$this->mysqlClient->connect($this->config);
+           return (bool)$this->mysqlClient->connect($this->config->toArray());
         }
         return true;
     }
