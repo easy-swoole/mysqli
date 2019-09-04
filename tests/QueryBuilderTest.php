@@ -212,4 +212,11 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1],$this->builder->getLastBindParams());
 
     }
+
+    public function testUnion()
+    {
+        $this->builder->union((new QueryBuilder)->where('userName', 'user')->get('user'))->where('adminUserName', 'admin')->get('admin');
+        $this->assertEquals('SELECT  * FROM admin WHERE  adminUserName = ? UNION SELECT  * FROM user WHERE  userName = ?', $this->builder->getLastPrepareQuery());
+        $this->assertEquals("SELECT  * FROM admin WHERE  adminUserName = 'admin' UNION ALL SELECT  * FROM user WHERE  userName = 'user' ", $this->builder->getLastQuery());
+    }
 }

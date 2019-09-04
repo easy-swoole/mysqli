@@ -6,7 +6,6 @@ use EasySwoole\Mysqli\Exception\Exception;
 
 /**
  * 查询构造器
- * TODO 支持使用union方法合并多表查询结果(UNION/UNIONALL)
  * TODO 支持使用distinct(true)筛选唯一结果
  * Class QueryBuilder
  * @package EasySwoole\Mysqli
@@ -27,6 +26,7 @@ class QueryBuilder
     // 以下为查询条件容器
     private $_join = [];
     private $_where = [];
+    private $_union = [];
     private $_joinAnd = [];
     private $_having = [];
     private $_orderBy = [];
@@ -59,19 +59,19 @@ class QueryBuilder
         }
     }
 
-    public function limit(int $one,?int $two = null):QueryBuilder
+    public function limit(int $one, ?int $two = null): QueryBuilder
     {
-        if($two !== null){
-            $this->_limit = [$one,$two];
-        }else{
+        if ($two !== null) {
+            $this->_limit = [$one, $two];
+        } else {
             $this->_limit = $one;
         }
         return $this;
     }
 
-    public function fields($fields):QueryBuilder
+    public function fields($fields): QueryBuilder
     {
-        if(!is_array($fields)){
+        if (!is_array($fields)) {
             $fields = [$fields];
         }
         $this->_field = $fields;
@@ -245,10 +245,26 @@ class QueryBuilder
     }
 
     /**
+     * 构建UNION语句
+     * @param $cond
+     * @param $isUnionAll
+     * @return  $this
+     */
+    public function union($cond, $isUnionAll = false)
+    {
+        if ($cond instanceof QueryBuilder) {
+            $this->_union[] = [$cond->getLastPrepareQuery(), $cond->getLastBindParams(), $isUnionAll];
+        } elseif (is_string($cond)) {
+            $this->_union[] = [$cond, [], $isUnionAll];
+        }
+        return $this;
+    }
+
+    /**
      * LockInShareModel锁定(InnoDb)
      * @param bool $isLock
-     * @throws Exception
      * @return QueryBuilder
+     * @throws Exception
      */
     public function lockInShareMode($isLock = true)
     {
@@ -263,8 +279,8 @@ class QueryBuilder
     /**
      * SELECT FOR UPDATE锁定(InnoDb)
      * @param bool $isLock
-     * @throws Exception
      * @return QueryBuilder
+     * @throws Exception
      */
     public function selectForUpdate($isLock = true)
     {
@@ -404,7 +420,7 @@ class QueryBuilder
      */
     public function get($tableName, $numRows = null, $columns = null): ?QueryBuilder
     {
-        if($columns == null){
+        if ($columns == null) {
             $columns = $this->_field;
         }
         $column = is_array($columns) ? implode(', ', $columns) : $columns;
@@ -439,9 +455,9 @@ class QueryBuilder
      */
     public function insert($tableName, $insertData)
     {
-        if(is_array($this->_field)){
-            foreach ($insertData as $key => $val){
-                if(!in_array($key,$this->_field)){
+        if (is_array($this->_field)) {
+            foreach ($insertData as $key => $val) {
+                if (!in_array($key, $this->_field)) {
                     unset($insertData[$key]);
                 }
             }
@@ -490,9 +506,9 @@ class QueryBuilder
             return;
         }
         $this->_query = "UPDATE " . $this->prefix . $tableName;
-        if(is_array($this->_field)){
-            foreach ($tableData as $key => $val){
-                if(!in_array($key,$this->_field)){
+        if (is_array($this->_field)) {
+            foreach ($tableData as $key => $val) {
+                if (!in_array($key, $this->_field)) {
                     unset($tableData[$key]);
                 }
             }
@@ -554,6 +570,7 @@ class QueryBuilder
         $this->_updateColumns = null;
         return $this;
     }
+
     /**
      * MysqlFunc/Now 快捷方法
      * @param null $diff
@@ -901,6 +918,7 @@ class QueryBuilder
         $this->_buildOrderBy();
         $this->_buildLimit($numRows);
         $this->_buildOnDuplicate($tableData);
+        $this->_buildUnion();
         if ($this->_forUpdate) {
             $this->_query .= ' FOR UPDATE';
         }
@@ -929,6 +947,20 @@ class QueryBuilder
     {
         foreach ($values as $value) {
             $this->_bindParam($value);
+        }
+    }
+
+    /**
+     * 构建UNION语句
+     */
+    private function _buildUnion()
+    {
+        if ($this->_union) {
+            foreach ($this->_union as $unionData) {
+                list($cond, $param, $isUnionAll) = $unionData;
+                $this->_query .= 'UNION ' . ($isUnionAll ? 'ALL ' : '') . $cond;
+                $this->_bindParams($param);
+            }
         }
     }
 
