@@ -47,6 +47,12 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals('SELECT  col1, col2 FROM get LIMIT 2, 10',$this->builder->getLastPrepareQuery());
         $this->assertEquals('SELECT  col1, col2 FROM get LIMIT 2, 10',$this->builder->getLastQuery());
         $this->assertEquals([],$this->builder->getLastBindParams());
+
+
+        $this->builder->get('get',[2,10],['distinct col1','col2']);
+        $this->assertEquals('SELECT  distinct col1, col2 FROM get LIMIT 2, 10',$this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  distinct col1, col2 FROM get LIMIT 2, 10',$this->builder->getLastQuery());
+        $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
     function testWhereGet()
