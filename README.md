@@ -11,7 +11,26 @@ composer require easyswoole/mysqli
 ```
 
 ## Client实例
+```php
+$config = new \EasySwoole\Mysqli\Config([
+        'host'          => '',
+        'port'          => 3300,
+        'user'          => '',
+        'password'      => '',
+        'database'      => '',
+        'timeout'       => 5,
+        'charset'       => 'utf8mb4',
+]);
 
+$client = new \EasySwoole\Mysqli\Client($config);
+
+go(function ()use($client){
+    //构建sql
+    $client->queryBuilder()->get('user_list');
+    //执行sql
+    var_dump($client->execBuilder());
+});
+```
 ## 查询构造器
 QueryBuilder是一个SQL构造器，用来构造prepare sql。例如：
 ```php
