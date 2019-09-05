@@ -55,7 +55,7 @@ echo $builder->getLastBindParams();
 ```
 
 ### GET
-```
+```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
@@ -99,7 +99,7 @@ $builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1',2)->
 ```
 
 ### UPDATE
-```
+```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
@@ -119,7 +119,7 @@ $builder->setQueryOption("FOR UPDATE")->where('whereUpdate', 'whereValue')->upda
 ```
 
 ### DELETE
-```
+```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
@@ -136,7 +136,7 @@ $builder->where('whereDelete', 'whereValue')->delete('deleteTable');
 ```
 
 ### INSERT
-```
+```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
@@ -146,7 +146,7 @@ $builder->insert('insertTable', ['a' => 1, 'b' => "b"]);
 ```
 
 ### UNION
-```angular2html
+```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
