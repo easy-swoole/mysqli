@@ -63,14 +63,16 @@ $builder = new QueryBuilder();
 // 获取全表
 $builder->get('getTable');
 
-// limit 1
+// fields。支持一维数组或字符串
+$builder->fields('col1, col2')->get('getTable');
+$builder->get('getTable', null, ['col1','col2']);
+
+// limit 1。下面两个结果相同
 $builder->get('getTable', 1)
+$builder->getOne('getTable', 1)
 
 // offset 1, limit 10
 $builder->get('getTable',[1, 10])
-
-// 针对colums查询
-$builder->get('getTable', null, ['col1','col2']);
 
 // 去重查询。
 $builder->get('getTable', [2,10], ['distinct col1','col2']);
@@ -89,13 +91,64 @@ $builder->where('col3', [1,2,3], 'IN')->get('getTable');
 
 // orWhere
 $builder->where('col1', 2)->orWhere('col2', 'str')->get('getTable');
+```
+
+##### Join
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
 
 // join。默认INNER JOIN
 $builder->join('table2', 'table2.col1 = getTable.col2')->get('getTable');
 $builder->join('table2', 'table2.col1 = getTable.col2', 'LEFT')->get('getTable');
 
 // join Where
-$builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1',2)->get('getTable');
+$builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1', 2)->get('getTable');
+```
+##### GroupBy Having
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+
+// groupBy. 
+$builder->groupBy('col1')->get('getTable');
+$builder->where('col1',2)->groupBy('col1')->get('getTable');
+
+// having
+$builder->groupBy('col1')->having('col1')->get('getTable');
+$builder->groupBy('col1')->having('col1', 1, '>')->get('whereGet');
+
+// and having. having第4个参数默认是 `AND`，默认多having是`且`关系
+$builder->groupBy('col1')->having('col1', 1, '>')->having('col2', 1, '>')->get('whereGet');
+
+// or having. 下面两种方法效果相等
+$builder->groupBy('col1')->having('col1', 1, '>')->orHaving('col2', 1, '>')->get('whereGet');
+$builder->groupBy('col1')->having('col1', 1, '>')->having('col2', 1, '>', 'OR')->get('whereGet');
+```
+
+##### OrderBy
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+
+// orderBy. 默认DESC
+$builder->orderBy('col1', 'ASC')->get('getTable');
+$builder->where('col1',2)->orderBy('col1', 'ASC')->get('getTable');
+
+```
+
+##### Union
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+
+// union. 相当于 adminTable UNION userTable
+$builder->union((new QueryBuilder)->where('userName', 'user')->get('userTable'))
+    ->where('adminUserName', 'admin')->get('adminTable');
 ```
 
 ### UPDATE
@@ -141,18 +194,43 @@ use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
 
+// insert into
 $builder->insert('insertTable', ['a' => 1, 'b' => "b"]);
+
+// replace into
+$builder->replace('replaceTable', ['a' => 1]);
 
 ```
 
-### UNION
+### SUBQUERY
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
 
-// 具体用法可看单元测试(mysqli/tests/QueryBuilderTest.php),union部分
-$builder->union((new QueryBuilder)->where('userName', 'user')->get('user'))
-    ->where('adminUserName', 'admin')->get('admin');
+// 单一where条件子查询
+// 等同于 SELECT * FROM users WHERE id in ((SELECT userId FROM products WHERE  qty > 2))
+$sub = $this->builder::subQuery();
+$sub->where("qty", 2, ">");
+$sub->get("products", null, "userId");
+$builder->where("id", $sub, 'in')->get('users');
 
+// 多where条件子查询
+// 等同于 SELECT * FROM users WHERE col2 = 1 AND id in ((SELECT userId FROM products WHERE  qty > 2))
+$sub = $this->builder::subQuery();
+$sub->where ("qty", 2, ">");
+$sub->get ("products", null, "userId");
+$this->builder->where('col2',1)->where ("id", $sub, 'in')->get('users');
+
+// INSERT 包含子结果集
+// 等同于 INSERT INTO products (`productName`, `userId`, `lastUpdated`) VALUES ('test product', (SELECT name FROM users WHERE  id = 6  LIMIT 1), NOW())
+$userIdQ = $this->builder::subQuery();
+$userIdQ->where ("id", 6);
+$userIdQ->getOne ("users", "name");
+$data = Array (
+    "productName" => "test product",
+    "userId" => $userIdQ,
+    "lastUpdated" => $this->builder->now()
+);
+$this->builder->insert ("products", $data);
 ```
