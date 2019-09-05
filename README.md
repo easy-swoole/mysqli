@@ -93,7 +93,7 @@ $builder->where('col3', [1,2,3], 'IN')->get('getTable');
 $builder->where('col1', 2)->orWhere('col2', 'str')->get('getTable');
 ```
 
-##### Join
+#### Join
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
 
@@ -106,7 +106,7 @@ $builder->join('table2', 'table2.col1 = getTable.col2', 'LEFT')->get('getTable')
 // join Where
 $builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1', 2)->get('getTable');
 ```
-##### GroupBy Having
+#### GroupBy Having
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
 
@@ -128,7 +128,7 @@ $builder->groupBy('col1')->having('col1', 1, '>')->orHaving('col2', 1, '>')->get
 $builder->groupBy('col1')->having('col1', 1, '>')->having('col2', 1, '>', 'OR')->get('whereGet');
 ```
 
-##### OrderBy
+#### OrderBy
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
 
@@ -140,7 +140,7 @@ $builder->where('col1',2)->orderBy('col1', 'ASC')->get('getTable');
 
 ```
 
-##### Union
+#### Union
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
 
