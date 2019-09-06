@@ -63,13 +63,20 @@ $builder = new QueryBuilder();
 // 获取全表
 $builder->get('getTable');
 
+// 表前缀
+$builder->setPrefix('easyswoole_')->get('getTable');
+
+// 获取总数。下面两个结果相同
+$builder->withTotalCount()->where('col1', 1, '>')->get('getTable');
+$builder->setQueryOption('SQL_CALC_FOUND_ROWS')->where('col1', 1, '>')->get('getTable');
+
 // fields。支持一维数组或字符串
 $builder->fields('col1, col2')->get('getTable');
 $builder->get('getTable', null, ['col1','col2']);
 
 // limit 1。下面两个结果相同
 $builder->get('getTable', 1)
-$builder->getOne('getTable', 1)
+$builder->getOne('getTable')
 
 // offset 1, limit 10
 $builder->get('getTable',[1, 10])
@@ -165,10 +172,6 @@ $builder->update('updateTable', ['a' => 1], 5);
 
 // where update
 $builder->where('whereUpdate', 'whereValue')->update('updateTable', ['a' => 1]);
-
-// 上锁更新。lock update
-$builder->setQueryOption("FOR UPDATE")->where('whereUpdate', 'whereValue')->update('updateTable', ['a' => 1], 5);
-
 ```
 
 ### DELETE
@@ -233,4 +236,26 @@ $data = Array (
     "lastUpdated" => $this->builder->now()
 );
 $this->builder->insert ("products", $data);
+```
+
+### LOCK
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+
+// FOR UPDATE 排它锁。下面两个方法效果相同
+$builder->setQueryOption("FOR UPDATE")->get('getTable');
+$builder->selectForUpdate(true)->get('getTable');
+
+//  LOCK IN SHARE MODE。共享锁
+$builder->lockInShareMode()->get('getTable');
+$builder->setQueryOption(['LOCK IN SHARE MODE'])->get('getTable');
+
+// LOCK TABLES 获取表锁
+$builder->lockTable('table');
+
+// UNLOCK TABLES 释放表锁
+$builder->unlockTable('table');
+
 ```
