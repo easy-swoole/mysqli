@@ -414,7 +414,7 @@ class QueryBuilder
     /**
      * SELECT查询
      * @param $tableName
-     * @param null $numRows
+     * @param array|int|null $numRows
      * @param string $columns
      * @return QueryBuilder|null
      */
@@ -497,7 +497,7 @@ class QueryBuilder
      * update查询
      * @param $tableName
      * @param $tableData
-     * @param null $numRows
+     * @param array|int|null $numRows
      * @return $this|void
      */
     public function update($tableName, $tableData, $numRows = null)
@@ -521,7 +521,7 @@ class QueryBuilder
     /**
      * delete查询
      * @param $tableName
-     * @param null $numRows
+     * @param array|int|null $numRows
      * @return $this|void
      */
     public function delete($tableName, $numRows = null)
