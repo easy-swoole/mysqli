@@ -250,6 +250,88 @@ class Mysqli
         }
     }
 
+    
+    /**
+     * where 复合条件处理（括号嵌套条件）
+     * @param $fields
+     * @return string
+     * $db->buildWhere([
+     *      ["ip", "%127.0.0.1%", 'like'],
+     *      [
+     *          ['id', '1', '>'],
+     *          [
+     *              ['id', ['5', 10], 'not in'],
+     *              ['id', '1'],
+     *          'or'
+     *      ],
+     *      ["username", "abc"],
+     *      'or'
+     *  ],
+     *  'and'
+     * ]);
+     *
+     *  $domains = $db->where($where)->get('user');
+     * // "SELECT  * FROM user WHERE   (
+     * //    `ip` LIKE '%127.0.0.1%' AND (
+     * //        `id` > '1' OR (
+     * //              `id` NOT IN( '5' , 10 ) OR
+     * //              `id` = '1'  )
+     * //         OR `username` = 'abc'
+     * //     )
+     * //  ) "
+     */
+    public function buildWhere($fields)
+    {
+        if (count($fields) > 1 && isset($fields[0]) && is_string($fields[0])) {
+            $tmpFill = [null, null, '='];
+            list($field, $params, $operator) = $fields + $tmpFill;
+            switch (strtolower($operator)) {
+                case 'not in':
+                case 'in':
+                    $inSql = '';
+                    foreach ($params as $param) {
+                        if (is_string($param)) {
+                            $inSql .= ", '{$param}' ";
+                        } else {
+                            $inSql .= ", {$param} ";
+                        }
+                    }
+                    $newSql = " `" . $field . "` " . strtoupper($operator) . "(" . ltrim($inSql, ',') . ") ";
+                    break;
+                case 'not between':
+                case 'between':
+                    $beginStr = is_string($params[0]) ? "'{$params[0]}'" : $params[0];
+                    $endStr = is_string($params[1]) ? "'{$params[1]}'" : $params[1];
+                    $newSql = " `{$field}` " . strtoupper($operator) . " {$beginStr} AND {$endStr} ";
+                    break;
+                default:
+                    if (is_string($params)) {
+                        $newSql = " `" . $field . "` " . strtoupper($operator) . " '" . $params . "' ";
+                    } elseif ($params === null) {
+                        $newSql = " `" . $field . "` " . strtoupper($operator) . " NULL";
+                    } else {
+                        $newSql = " `" . $field . "` " . strtoupper($operator) . " " . $params . " ";
+                    }
+            }
+            return $newSql;
+        } else {
+            $whereArray = [];
+            $cond = $fields[count($fields) - 1];
+            if (is_string($cond) && in_array(strtoupper($cond), ['OR', 'AND'])) {
+                $cond = strtoupper($cond);
+                unset($fields[count($fields) - 1]);
+            } else {
+                $cond = ' AND ';
+            }
+            foreach ($fields as $value) {
+                $whereArray[] = $this->buildWhere($value);
+            }
+            return " ( " . implode($cond, $whereArray) . " ) ";
+        }
+
+    }
+
+    
     /**
      * 添加一个WHERE条件
      * @param string $whereProp 字段名
