@@ -707,6 +707,26 @@ class QueryBuilder
         return $this->_isSubQuery;
     }
 
+    public function startTrans()
+    {
+        $this->lastQuery = "start transaction";
+    }
+
+    public function commit()
+    {
+        $this->lastQuery = "commit";
+    }
+
+    public function rollback()
+    {
+        $this->lastQuery = "rollback";
+    }
+
+    public function raw($sql)
+    {
+        $this->lastQuery = $sql;
+    }
+
     /*
      * ***************** 私有方法
      */
