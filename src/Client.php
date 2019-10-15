@@ -15,6 +15,23 @@ class Client
 
     protected $queryBuilder;
 
+    protected $trace = [];
+    protected $enableTrace = false;
+
+    function enableTrace():Client
+    {
+        $this->enableTrace = true;
+        return $this;
+    }
+
+    function endTrace():array
+    {
+        $ret = $this->trace;
+        $this->trace = [];
+        $this->enableTrace = false;
+        return $ret;
+    }
+
     function __construct(Config $config)
     {
         $this->config = $config;
@@ -33,6 +50,7 @@ class Client
 
     function execBuilder(float $timeout = null)
     {
+        $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
         }
@@ -42,6 +60,13 @@ class Client
         if($stmt){
             $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
         }
+        if($this->enableTrace){
+            $this->trace[] = [
+                'start'=>$start,
+                'end'=>microtime(true),
+                'sql'=>$this->queryBuilder()->getLastQuery()
+            ];
+        }
         if($this->mysqlClient()->errno){
             throw new Exception($this->mysqlClient()->error);
         }
@@ -50,11 +75,19 @@ class Client
 
     function rawQuery(string $query,float $timeout = null)
     {
+        $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
         }
         $this->connect();
         $ret = $this->mysqlClient()->query($query,$timeout);
+        if($this->enableTrace){
+            $this->trace[] = [
+                'start'=>$start,
+                'end'=>microtime(true),
+                'sql'=>$query
+            ];
+        }
         if($this->mysqlClient()->errno){
             throw new Exception($this->mysqlClient()->error);
         }
