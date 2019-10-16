@@ -15,22 +15,9 @@ class Client
 
     protected $queryBuilder;
 
-    protected $trace = [];
-    protected $enableTrace = false;
+    protected $lastQueryBuilder;
 
-    function enableTrace():Client
-    {
-        $this->enableTrace = true;
-        return $this;
-    }
-
-    function endTrace():array
-    {
-        $ret = $this->trace;
-        $this->trace = [];
-        $this->enableTrace = false;
-        return $ret;
-    }
+    protected $onQuery;
 
     function __construct(Config $config)
     {
@@ -38,9 +25,20 @@ class Client
         $this->queryBuilder = new QueryBuilder();
     }
 
+    function onQuery(callable $call):Client
+    {
+        $this->onQuery = $call;
+        return $this;
+    }
+
     function queryBuilder():QueryBuilder
     {
         return $this->queryBuilder;
+    }
+
+    function lastQueryBuilder():?QueryBuilder
+    {
+        return $this->lastQueryBuilder;
     }
 
     function reset()
@@ -50,43 +48,45 @@ class Client
 
     function execBuilder(float $timeout = null)
     {
+        $this->lastQueryBuilder = $this->queryBuilder;
         $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
         }
-        $this->connect();
-        $stmt = $this->mysqlClient()->prepare($this->queryBuilder()->getLastPrepareQuery(),$timeout);
-        $ret = null;
-        if($stmt){
-            $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
+        try{
+            $this->connect();
+            $stmt = $this->mysqlClient()->prepare($this->queryBuilder()->getLastPrepareQuery(),$timeout);
+            $ret = null;
+            if($stmt){
+                $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
+            }
+            if($this->onQuery){
+                call_user_func($this->onQuery,$ret,$this,$start);
+            }
+            if($this->mysqlClient()->errno){
+                throw new Exception($this->mysqlClient()->error);
+            }
+            return $ret;
+        }catch (\Throwable $exception){
+            throw $exception;
+        }finally{
+            $this->reset();
         }
-        if($this->enableTrace){
-            $this->trace[] = [
-                'start'=>$start,
-                'end'=>microtime(true),
-                'sql'=>$this->queryBuilder()->getLastQuery()
-            ];
-        }
-        if($this->mysqlClient()->errno){
-            throw new Exception($this->mysqlClient()->error);
-        }
-        return $ret;
     }
 
     function rawQuery(string $query,float $timeout = null)
     {
+        $builder = new QueryBuilder();
+        $builder->raw($query);
+        $this->lastQueryBuilder = $builder;
         $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
         }
         $this->connect();
         $ret = $this->mysqlClient()->query($query,$timeout);
-        if($this->enableTrace){
-            $this->trace[] = [
-                'start'=>$start,
-                'end'=>microtime(true),
-                'sql'=>$query
-            ];
+        if($this->onQuery){
+            call_user_func($this->onQuery,$ret,$this,$start);
         }
         if($this->mysqlClient()->errno){
             throw new Exception($this->mysqlClient()->error);

@@ -710,7 +710,7 @@ class QueryBuilder
         return $this->_isSubQuery;
     }
 
-    public function startTrans()
+    public function starTtransaction()
     {
         $this->lastQuery = "start transaction";
     }
