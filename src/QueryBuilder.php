@@ -431,6 +431,9 @@ class QueryBuilder
         }
         $this->_query = 'SELECT ' . implode(' ', $this->_queryOptions) . ' ' .
             $column . " FROM " . $this->_tableName;
+        if($numRows == null){
+            $numRows = $this->_limit;
+        }
         $this->_buildQuery($numRows);
         $this->reset();
         return $this;
