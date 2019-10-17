@@ -674,6 +674,11 @@ class QueryBuilder
         return $this->lastQueryOptions;
     }
 
+    function getQueryOptions():array
+    {
+        return $this->_queryOptions;
+    }
+
     /**
      * 获取构建的SQL(已替换占位符)
      * @return mixed
