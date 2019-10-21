@@ -715,24 +715,24 @@ class QueryBuilder
         return $this->_isSubQuery;
     }
 
-    public function starTtransaction()
+    public function startTransaction()
     {
-        $this->lastQuery = "start transaction";
+        $this->raw('start transaction');
     }
 
     public function commit()
     {
-        $this->lastQuery = "commit";
+        $this->raw('commit');
     }
 
     public function rollback()
     {
-        $this->lastQuery = "rollback";
+        $this->raw("rollback");
     }
 
     public function raw($sql)
     {
-        $this->lastQuery = $sql;
+        $this->lastQuery = $this->lastPrepareQuery = $sql;
     }
 
     /*
