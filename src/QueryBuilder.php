@@ -79,9 +79,9 @@ class QueryBuilder
     }
 
     /**
-     * @return string
+     * @return array
      */
-    public function getField(): string
+    public function getField(): array
     {
         if ( !is_array($this->_field) ){
             $field = [$this->_field];
