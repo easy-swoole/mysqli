@@ -78,6 +78,19 @@ class QueryBuilder
         return $this;
     }
 
+    /**
+     * @return array
+     */
+    public function getField(): array
+    {
+        if ( !is_array($this->_field) ){
+            $field = [$this->_field];
+        }else{
+            $field = $this->_field;
+        }
+        return $field;
+    }
+
 
     /**
      * Where条件
