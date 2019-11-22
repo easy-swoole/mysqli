@@ -76,6 +76,16 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals('SELECT  * FROM whereGet WHERE  col3 IN ( ?, ?, ? ) ',$this->builder->getLastPrepareQuery());
         $this->assertEquals('SELECT  * FROM whereGet WHERE  col3 IN ( 1, 2, 3 ) ',$this->builder->getLastQuery());
         $this->assertEquals([1,2,3],$this->builder->getLastBindParams());
+
+
+        $this->builder->where("find_in_set(1, test)")->get('whereGet');
+        $this->assertEquals('SELECT  * FROM whereGet WHERE  find_in_set(1, test)', $this->builder->getLastPrepareQuery());
+
+        $this->builder->where("find_in_set(?, test)", [1])->get('whereGet');
+        $this->assertEquals('SELECT  * FROM whereGet WHERE  find_in_set(1, test)', $this->builder->getLastQuery());
+
+        $this->builder->where("(id = ? or id = ?)", [1,3])->get('whereGet');
+        $this->assertEquals('SELECT  * FROM whereGet WHERE  (id = 1 or id = 3)', $this->builder->getLastQuery());
     }
 
     function testJoinGet()
