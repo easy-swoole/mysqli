@@ -136,7 +136,7 @@ class QueryBuilder
     {
         $allowedDirection = ["ASC", "DESC"];
         $orderbyDirection = strtoupper(trim($orderbyDirection));
-        $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"%`\']+/i", '', $orderByField);
+        $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"%`]+/i", '', $orderByField);
         // Add table prefix to orderByField if needed.
         //FIXME: We are adding prefix only if table is enclosed into `` to distinguish aliases
         // from table names
