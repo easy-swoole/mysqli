@@ -101,6 +101,23 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
+    function testGroup()
+    {
+        $this->builder->groupBy("user_id")->get("test_table");
+        $this->assertEquals('SELECT  * FROM test_table GROUP BY user_id ',$this->builder->getLastPrepareQuery());
+
+        $this->builder->groupBy("FROM_UNIXTIME(create_time, '%Y%m')")->get("test_table");
+        $this->assertEquals('SELECT  * FROM test_table GROUP BY FROM_UNIXTIME(create_time, \'%Y%m\') ',$this->builder->getLastPrepareQuery());
+
+
+        $this->builder->fields([
+            "DATE_FORMAT(create_time, '%Y%m') AS month",
+            "sum(age)"
+        ])->groupBy("month")->get("test_table");
+        $this->assertEquals('SELECT  DATE_FORMAT(create_time, \'%Y%m\') AS month, sum(age) FROM test_table GROUP BY month ',$this->builder->getLastPrepareQuery());
+
+    }
+
     function testJoinWhereGet()
     {
         $this->builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1',2)->get('getTable');

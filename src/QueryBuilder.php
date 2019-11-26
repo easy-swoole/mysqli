@@ -136,17 +136,17 @@ class QueryBuilder
     {
         $allowedDirection = ["ASC", "DESC"];
         $orderbyDirection = strtoupper(trim($orderbyDirection));
-        $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"]+/i", '', $orderByField);
+        $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"%`\']+/i", '', $orderByField);
         // Add table prefix to orderByField if needed.
         //FIXME: We are adding prefix only if table is enclosed into `` to distinguish aliases
         // from table names
-        $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_]*\.)/', '\1' . $this->prefix . '\2', $orderByField);
+        $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_%`\']*\.)/', '\1' . $this->prefix . '\2', $orderByField);
         if (empty($orderbyDirection) || !in_array($orderbyDirection, $allowedDirection)) {
             throw new Exception('Wrong order direction: ' . $orderbyDirection);
         }
         if (is_array($customFieldsOrRegExp)) {
             foreach ($customFieldsOrRegExp as $key => $value) {
-                $customFieldsOrRegExp[$key] = preg_replace("/[^\x80-\xff-a-z0-9\.\(\),_` ]+/i", '', $value);
+                $customFieldsOrRegExp[$key] = preg_replace("/[^\x80-\xff-a-z0-9\.\(\),_` %\']+/i", '', $value);
             }
             $orderByField = 'FIELD (' . $orderByField . ', "' . implode('","', $customFieldsOrRegExp) . '")';
         } elseif (is_string($customFieldsOrRegExp)) {
@@ -166,7 +166,7 @@ class QueryBuilder
      */
     public function groupBy($groupByField)
     {
-        $groupByField = preg_replace("/[^-a-z0-9\.\(\),_\* <>=!]+/i", '', $groupByField);
+        $groupByField = preg_replace("/[^-a-z0-9\.\(\),_\* <>=!%`\']+/i", '', $groupByField);
         $this->_groupBy[] = $groupByField;
         return $this;
     }
