@@ -483,6 +483,26 @@ class QueryBuilder
         return $this;
     }
 
+    public function insertAll($tableName, $insertData, $option = [])
+    {
+        $allowFields = $option['field'] ?? [];
+
+        foreach ($insertData as $data){
+            // 过滤掉不允许的字段
+            if (!empty($allowFields)) {
+                foreach ($data as $data_k => $data_v){
+                    if (!in_array($data_v, $allowFields)){
+                        unset($data[$data_k]);
+                    }
+                }
+            }
+        }
+
+        $this->_buildInsert($tableName, $insertData, $option['replace'] ? 'REPLACE' : 'INSERT');
+        $this->reset();
+        return $this;
+    }
+
     /**
      * REPLACE插入
      * @param $tableName
@@ -1041,6 +1061,7 @@ class QueryBuilder
     /**
      * 组装插入的值
      * @param $tableData
+     * @throws Exception
      */
     private function _buildInsertQuery($tableData)
     {
@@ -1048,17 +1069,36 @@ class QueryBuilder
             return;
         }
         $isInsert = preg_match('/^[INSERT|REPLACE]/', $this->_query);
-        $dataColumns = array_keys($tableData);
-        if ($isInsert) {
-            if (isset ($dataColumns[0]))
-                $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
-            $this->_query .= ' VALUES (';
-        } else {
-            $this->_query .= " SET ";
-        }
-        $this->_buildDataPairs($tableData, $dataColumns, $isInsert);
-        if ($isInsert) {
-            $this->_query .= ')';
+        // 如果是二维数组则为批量插入
+        if (isset($tableData[0]) && is_array($tableData[0])){
+            $dataColumns = array_keys($tableData[0]);
+            if ($isInsert) {
+                if (isset ($dataColumns[0]))
+                    $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
+                $this->_query .= ' VALUES ';
+                foreach ($tableData as $data){
+                    $this->_query .= '(';
+                    $this->_buildDataPairs($data, $dataColumns, $isInsert);
+                    $this->_query .= '),';
+                }
+                $this->_query = rtrim($this->_query, ',');
+            } else {
+                $this->_query .= " SET ";
+                $this->_buildDataPairs($tableData, $dataColumns, $isInsert);
+            }
+        }else{
+            $dataColumns = array_keys($tableData);
+            if ($isInsert) {
+                if (isset ($dataColumns[0]))
+                    $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
+                $this->_query .= ' VALUES (';
+            } else {
+                $this->_query .= " SET ";
+            }
+            $this->_buildDataPairs($tableData, $dataColumns, $isInsert);
+            if ($isInsert) {
+                $this->_query .= ')';
+            }
         }
     }
 
