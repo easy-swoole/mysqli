@@ -1074,7 +1074,7 @@ class QueryBuilder
             $dataColumns = array_keys($tableData[0]);
             if ($isInsert) {
                 if (isset ($dataColumns[0]))
-                    $this->_query .= ' (`' . implode($dataColumns, '`, `') . '`) ';
+                    $this->_query .= ' (`' . implode('`, `', $dataColumns) . '`) ';
                 $this->_query .= ' VALUES ';
                 foreach ($tableData as $data){
                     $this->_query .= '(';
