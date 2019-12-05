@@ -194,6 +194,16 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1,'b'], $this->builder->getLastBindParams());
     }
 
+    function testInsertAll()
+    {
+        $this->builder->insertAll('insertTable', [
+            ['a' => 1, 'b' => "a"],
+            ['a' => 2, 'b' => "b"],
+        ]);
+        $this->assertEquals('INSERT  INTO insertTable (`a`, `b`)  VALUES (?, ?),(?, ?)', $this->builder->getLastPrepareQuery());
+        $this->assertEquals("INSERT  INTO insertTable (`a`, `b`)  VALUES (1, 'a'),(2, 'b')", $this->builder->getLastQuery());
+    }
+
     function testSubQuery()
     {
         $sub = $this->builder::subQuery();

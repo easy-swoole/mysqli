@@ -59,6 +59,8 @@ class Client
             $ret = null;
             if($stmt){
                 $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
+            }else{
+                $ret = false;
             }
             if($this->onQuery){
                 call_user_func($this->onQuery,$ret,$this,$start);

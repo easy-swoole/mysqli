@@ -53,4 +53,37 @@ class ClientTest extends TestCase
         $this->assertEquals([], $res);
 
     }
+
+    public function testInsertAll()
+    {
+        $this->client->queryBuilder()->insertAll("user_test_list", [
+            [
+                'name' => 'siam,你好',
+                'age'  => 21,
+                'addTime' => "2019-11-22 20:19:16",
+                'state' => 1
+            ],
+            [
+                'name' => 'siam,你好',
+                'age'  => 21,
+                'addTime' => "2019-11-22 20:19:16",
+                'state' => 2
+            ]
+        ]);
+        $res = $this->client->execBuilder();
+
+        // var_dump($this->client->mysqlClient()->insert_id);
+        // insert_id 是第一行的
+
+        $this->assertTrue($res);
+        $this->assertEquals($this->client->mysqlClient()->affected_rows, 2);
+    }
+
+    public function testDelete()
+    {
+        $this->client->queryBuilder()->delete("user_test_list");
+        $res = $this->client->execBuilder();
+        $this->assertTrue($res);
+        $this->assertEquals($this->client->mysqlClient()->affected_rows, 3);
+    }
 }
