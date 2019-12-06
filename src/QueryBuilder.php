@@ -763,9 +763,11 @@ class QueryBuilder
         $this->raw("rollback");
     }
 
-    public function raw($sql)
+    public function raw($sql): QueryBuilder
     {
         $this->lastQuery = $this->lastPrepareQuery = $sql;
+
+        return $this;
     }
 
     /*
