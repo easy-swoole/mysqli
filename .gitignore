@@ -1,1 +1,4 @@
-.idea
+.idea/
+.vscode/
+vendor/
+composer.lock
