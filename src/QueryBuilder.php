@@ -792,10 +792,16 @@ class QueryBuilder
         $this->raw("rollback");
     }
 
-    public function raw($sql): QueryBuilder
+    public function raw($sql, $param = [])
     {
-        $this->lastQuery = $this->lastPrepareQuery = $sql;
-
+        $this->_query = $sql;
+        if (!empty($param) && is_array($param)){
+            $this->_bindParams($param);
+            $this->lastQuery = $this->replacePlaceHolders($this->_query, $this->_bindParams);
+        }else{
+            $this->lastQuery = $sql;
+        }
+        $this->reset();
         return $this;
     }
 
