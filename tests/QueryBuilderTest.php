@@ -326,4 +326,14 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals("SELECT  * FROM admin WHERE  adminUserName = 'admin' UNION SELECT  * FROM user WHERE  userName = 'user' ", $this->builder->getLastQuery());
         $this->assertEquals(['admin','user'],$this->builder->getLastBindParams());
     }
+
+    public function testRaw()
+    {
+        $this->builder->raw("SELECT * FROM siam ");
+        $this->assertEquals("SELECT * FROM siam ", $this->builder->getLastQuery());
+
+
+        $this->builder->raw("SELECT * FROM siam WHERE siam_name = ? AND age = ?", ['siam', 321]);
+        $this->assertEquals("SELECT * FROM siam WHERE siam_name = 'siam' AND age = 321", $this->builder->getLastQuery());
+    }
 }
