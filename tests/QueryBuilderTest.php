@@ -327,24 +327,6 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals(['admin','user'],$this->builder->getLastBindParams());
     }
 
-    public function testUpdateNull()
-    {
-
-        $this->builder->insert('test_user', [
-           'name' => 'siam',
-           'age' => 20,
-           'addTime' => '2019-12-19 14:48:03',
-           'state' => 1,
-        ]);
-
-
-        $this->builder->where('name', 'siam')->update('test_table', [
-            'addTime' => null
-        ]);
-
-        $this->assertEquals("UPDATE test_table SET `addTime` = ? WHERE  name = ? ", $this->builder->getLastPrepareQuery());
-        $this->assertEquals("UPDATE test_table SET `addTime` = 'NULL' WHERE  name = 'siam' ", $this->builder->getLastQuery());
-    }
 
     public function testRaw()
     {
