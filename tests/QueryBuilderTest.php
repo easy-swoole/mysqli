@@ -327,6 +327,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals(['admin','user'],$this->builder->getLastBindParams());
     }
 
+
     public function testRaw()
     {
         $this->builder->raw("SELECT * FROM siam ");
