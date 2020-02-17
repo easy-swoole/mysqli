@@ -460,6 +460,9 @@ class QueryBuilder
      */
     public function getOne($tableName, $columns = '*'): ?QueryBuilder
     {
+        if ($columns === '*'){
+            $columns = $this->_field;
+        }
         return $this->get($tableName, 1, $columns);
     }
 
