@@ -586,6 +586,31 @@ class QueryBuilder
     }
 
     /**
+     * 插入多行数据
+     * @param string $tableName 插入的表名称
+     * @param array $multiInsertData 需要插入的数据
+     * @param array|null $dataKeys 插入数据对应的字段名
+     * @return array|bool
+     * TODO 多行插入应优化为INSERT INTO ... VALUES (...) , (...)
+     */
+    public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
+    {
+        $ids = array();
+        foreach ($multiInsertData as $insertData) {
+            if ($dataKeys !== null) {
+                // apply column-names if given, else assume they're already given in the data
+                $insertData = array_combine($dataKeys, $insertData);
+            }
+            $id = $this->insert($tableName, $insertData);
+            if (!$id) {
+                return false;
+            }
+            $ids[] = $id;
+        }
+        return $ids;
+    }
+
+    /**
      * delete查询
      * @param $tableName
      * @param array|int|null $numRows
