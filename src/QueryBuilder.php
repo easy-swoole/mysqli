@@ -1234,7 +1234,8 @@ class QueryBuilder
         foreach ($conditions as $cond) {
             list ($concat, $varName, $operator, $val) = $cond;
 
-            if (strpos($varName, '.') !== false){
+             if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false){
+                // DBNULL是纯字符串条件，也不能有()函数调用
                 $varNameArray = explode('.', $varName);
                 $varName = "`{$varNameArray[0]}`.`{$varNameArray[1]}`";
             }else{
