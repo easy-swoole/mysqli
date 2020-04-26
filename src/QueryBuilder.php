@@ -511,7 +511,7 @@ class QueryBuilder
         $this->reset();
         return $this;
     }
-
+    //多行插入为INSERT INTO ... VALUES (...) , (...)
     public function insertAll($tableName, $insertData, $option = [])
     {
         $allowFields = $option['field'] ?? [];
@@ -591,7 +591,6 @@ class QueryBuilder
      * @param array $multiInsertData 需要插入的数据
      * @param array|null $dataKeys 插入数据对应的字段名
      * @return array|bool
-     * TODO 多行插入应优化为INSERT INTO ... VALUES (...) , (...)
      */
     public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
     {
