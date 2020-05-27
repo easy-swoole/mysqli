@@ -1297,10 +1297,18 @@ class QueryBuilder
                     if (is_array($val)) {
                         $this->_bindParams($val);
                     } elseif ($val === null) {
-                        if ($operator == '=') {
-                            $this->_query .= ' IS NULL';
-                        } else {
-                            $this->_query .= ' IS NOT NULL';
+                        switch($operator) {
+                            case '=':
+                                $this->_query .= ' IS NULL';
+                                break;
+                            case '!=':
+                                $this->_query .= ' IS NOT NULL';
+                                break;
+                            case '<>':
+                                $this->_query .= ' IS NOT NULL';
+                                break;
+                            default:
+                                $this->_query .= ' '.$operator.' NULL';
                         }
                     } elseif ($val != 'DBNULL' || $val == '0') {
                         $this->_query .= $this->_buildPair($operator, $val);
