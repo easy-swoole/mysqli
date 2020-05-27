@@ -1297,7 +1297,11 @@ class QueryBuilder
                     if (is_array($val)) {
                         $this->_bindParams($val);
                     } elseif ($val === null) {
-                        $this->_query .= ' ' . $operator . " NULL";
+                        if ($operator == '=') {
+                            $this->_query .= ' IS NULL';
+                        } else {
+                            $this->_query .= ' IS NOT NULL';
+                        }
                     } elseif ($val != 'DBNULL' || $val == '0') {
                         $this->_query .= $this->_buildPair($operator, $val);
                     }
