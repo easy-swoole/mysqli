@@ -5,16 +5,19 @@ namespace EasySwoole\Mysqli\Export;
 
 use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\QueryBuilder;
+use EasySwoole\Mysqli\Utility;
 
 class Table
 {
     protected $client;
     protected $tableName;
+    protected $config;
 
-    function __construct(Client $client, string $tableName)
+    function __construct(Client $client, string $tableName, Config $config)
     {
         $this->client = $client;
         $this->tableName = $tableName;
+        $this->config = $config;
     }
 
     function createTableSql()
@@ -33,11 +36,7 @@ class Table
         $structure .= $this->createTableSql() . ';' . PHP_EOL . PHP_EOL;
 
 
-        if (is_resource($output)) {
-            fwrite($output, $structure);
-        } else {
-            $output = $structure;
-        }
+        Utility::writeSql($output, $structure);
 
         if ($onlyStruct) return;
 
@@ -46,38 +45,25 @@ class Table
         $data .= '--' . PHP_EOL . PHP_EOL;
         $data .= "LOCK TABLES `{$this->tableName}` WRITE;" . PHP_EOL;
 
-        if (is_resource($output)) {
-            fwrite($output, $data);
-        } else {
-            $output = $data;
-        }
+        Utility::writeSql($output, $data);
 
-        $page = 1;
-        $size = 1000;
+        $page = $this->config->getPage();
+        $size = $this->config->getSize();
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
             if (empty($insertSql)) break;
 
-            if (is_resource($output)) {
-                fwrite($output, $insertSql);
-            } else {
-                $output = $insertSql;
-            }
+            Utility::writeSql($output, $insertSql);
 
             $page++;
         }
 
         $data = 'UNLOCK TABLES;' . PHP_EOL . PHP_EOL;
 
-        if (is_resource($output)) {
-            fwrite($output, $data);
-        } else {
-            $output = $data;
-        }
-
+        Utility::writeSql($output, $data);
     }
 
-    private function getInsertSql($page = 1, $size = 1000): string
+    private function getInsertSql($page, $size): string
     {
         $limit = ($page - 1) * $size;
         $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
@@ -88,7 +74,7 @@ class Table
         foreach ($result as $item) {
 
             $item = array_map(function ($v) {
-                return str_replace(["\r", "\n", "'", '"'], ['\r', '\n', "\'", '\"'], $v);
+                return str_replace(["\r", "\n"], ['\r', '\n'], addslashes($v));
             }, $item);
 
             $queryBuilder->insert($this->tableName, $item);
@@ -98,6 +84,6 @@ class Table
             $data .= "{$insertSql};" . PHP_EOL;
         }
 
-        return $data ?? '';
+        return $data;
     }
 }
