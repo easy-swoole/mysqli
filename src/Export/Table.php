@@ -3,7 +3,6 @@
 
 namespace EasySwoole\Mysqli\Export;
 
-use EasySwoole\DDL\Blueprint\Table as DDLTable;
 use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\QueryBuilder;
 
@@ -18,12 +17,7 @@ class Table
         $this->tableName = $tableName;
     }
 
-    /*function ddl(): DDLTable
-    {
-
-    }*/
-
-    function ddl()
+    function createTableSql()
     {
         $result = $this->client->rawQuery("SHOW CREATE TABLE `{$this->tableName}`");
         return $result[0]['Create Table'];
@@ -36,7 +30,7 @@ class Table
         $structure .= "-- Table structure for table `{$this->tableName}`" . PHP_EOL;
         $structure .= '--' . PHP_EOL . PHP_EOL;
         $structure .= "DROP TABLE IF EXISTS `{$this->tableName}`;" . PHP_EOL;
-        $structure .= $this->ddl() . ';' . PHP_EOL . PHP_EOL;
+        $structure .= $this->createTableSql() . ';' . PHP_EOL . PHP_EOL;
 
 
         if (is_resource($output)) {
