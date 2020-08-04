@@ -93,10 +93,9 @@ class Table
         $data = '';
         foreach ($result as $item) {
 
-          /*  $item = array_map(function ($v) {
+            $item = array_map(function ($v) {
                 return str_replace(["\r", "\n", "'", '"'], ['\r', '\n', "\'", '\"'], $v);
-            }, $item);*/
-
+            }, $item);
 
             $queryBuilder->insert($this->tableName, $item);
             $insertSql = $queryBuilder->getLastQuery();
