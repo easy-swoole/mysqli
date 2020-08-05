@@ -40,6 +40,10 @@ class Table
 
         if ($onlyStruct) return;
 
+        // 是否存在数据
+        $checkData = $this->getInsertSql(1, 1);
+        if (!$checkData) return;
+
         $data = '--' . PHP_EOL;
         $data .= "-- Dumping data for table `{$this->tableName}`" . PHP_EOL;
         $data .= '--' . PHP_EOL . PHP_EOL;
@@ -47,7 +51,7 @@ class Table
 
         Utility::writeSql($output, $data);
 
-        $page = $this->config->getPage();
+        $page = 1;
         $size = $this->config->getSize();
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
