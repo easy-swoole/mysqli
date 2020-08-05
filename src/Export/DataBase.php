@@ -54,6 +54,7 @@ class DataBase
         $startTime = date('Y-m-d H:i:s');
 
         $tables = $this->showTables();
+        if (!$tables) return;
 
         $serverInfo = $this->client->mysqlClient()->serverInfo;
         $version = current(current($this->client->rawQuery('SELECT VERSION();')));
