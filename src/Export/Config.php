@@ -9,25 +9,11 @@ namespace EasySwoole\Mysqli\Export;
 
 class Config
 {
-    protected $page = 1;
-
     protected $size = 1000;
 
-    /**
-     * @return int
-     */
-    public function getPage(): int
-    {
-        return $this->page;
-    }
+    protected $inTable = [];
 
-    /**
-     * @param int $page
-     */
-    public function setPage(int $page): void
-    {
-        $this->page = $page;
-    }
+    protected $notInTable = [];
 
     /**
      * @return int
@@ -43,5 +29,37 @@ class Config
     public function setSize(int $size): void
     {
         $this->size = $size;
+    }
+
+    /**
+     * @return array
+     */
+    public function getInTable(): array
+    {
+        return $this->inTable;
+    }
+
+    /**
+     * @param array $inTable
+     */
+    public function setInTable(array $inTable): void
+    {
+        $this->inTable = $inTable;
+    }
+
+    /**
+     * @return array
+     */
+    public function getNotInTable(): array
+    {
+        return $this->notInTable;
+    }
+
+    /**
+     * @param array $notInTable
+     */
+    public function setNotInTable(array $notInTable): void
+    {
+        $this->notInTable = $notInTable;
     }
 }
