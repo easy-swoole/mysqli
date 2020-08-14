@@ -49,28 +49,43 @@ class DataBase
     }
 
 
-    function export(&$output, bool $onlyStruct = false)
+    function export(&$output)
     {
         $startTime = date('Y-m-d H:i:s');
 
         $tables = $this->showTables();
         if (!$tables) return;
 
+        /** EasySwoole Mysql dump start */
         $serverInfo = $this->client->mysqlClient()->serverInfo;
         $version = current(current($this->client->rawQuery('SELECT VERSION();')));
-        $front = '-- EasySwoole MySQL dump, for ' . PHP_OS . PHP_EOL;
+        $front = '-- EasySwoole Mysql dump, for ' . PHP_OS . PHP_EOL;
         $front .= '--' . PHP_EOL;
         $front .= "-- Host: {$serverInfo['host']}    Database: {$serverInfo['database']}" . PHP_EOL;
         $front .= '-- ------------------------------------------------------' . PHP_EOL;
         $front .= "-- Server version	{$version}   Date: $startTime" . PHP_EOL . PHP_EOL;
 
-        Utility::writeSql($output, $front);
-
-        foreach ($tables as $table) {
-            if (!$table instanceof Table) continue;
-            $table->export($output, $onlyStruct);
+        /** names */
+        $names = $this->config->getNames();
+        if ($names) {
+            $front .= "SET NAMES {$names};" . PHP_EOL;
         }
 
+        /** 外键约束 */
+        if ($this->config->isCloseForeignKeyChecks()) {
+            $front .= 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
+        };
+
+        $front .= PHP_EOL;
+
+        Utility::writeSql($output, $front);
+
+        /** Table data */
+        foreach ($tables as $table) {
+            $table->export($output);
+        }
+
+        /** EasySwoole Mysql dump completed */
         $completedTime = date('Y-m-d H:i:s');
         $end = "-- Dump completed on {$completedTime}" . PHP_EOL;
         Utility::writeSql($output, $end);
