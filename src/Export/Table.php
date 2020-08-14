@@ -23,22 +23,34 @@ class Table
     function createTableSql()
     {
         $result = $this->client->rawQuery("SHOW CREATE TABLE `{$this->tableName}`");
-        return $result[0]['Create Table'];
+        $createTableSql = $result[0]['Create Table'];
+
+        /** 创建表检测是否存在 */
+        if ($this->config->isCreateTableIsNotExist()) {
+            $createTableSql = str_replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS', $createTableSql);
+        }
+
+        return $createTableSql;
     }
 
 
-    function export(&$output, bool $onlyStruct = false)
+    function export(&$output)
     {
         $structure = '--' . PHP_EOL;
         $structure .= "-- Table structure for table `{$this->tableName}`" . PHP_EOL;
         $structure .= '--' . PHP_EOL . PHP_EOL;
-        $structure .= "DROP TABLE IF EXISTS `{$this->tableName}`;" . PHP_EOL;
+
+        /** 是否生成dropTableSql */
+        if ($this->config->isDrop()) {
+            $structure .= "DROP TABLE IF EXISTS `{$this->tableName}`;" . PHP_EOL;
+        }
         $structure .= $this->createTableSql() . ';' . PHP_EOL . PHP_EOL;
-
-
         Utility::writeSql($output, $structure);
 
-        if ($onlyStruct) return;
+        /** 仅导出表结构 */
+        if ($this->config->isOnlyStruct()) {
+            return;
+        }
 
         // 是否存在数据
         $checkData = $this->getInsertSql(1, 1);
@@ -47,7 +59,17 @@ class Table
         $data = '--' . PHP_EOL;
         $data .= "-- Dumping data for table `{$this->tableName}`" . PHP_EOL;
         $data .= '--' . PHP_EOL . PHP_EOL;
-        $data .= "LOCK TABLES `{$this->tableName}` WRITE;" . PHP_EOL;
+
+        $isLockTablesWrite = $this->config->isLockTablesWrite();
+        $startTransaction = $this->config->isStartTransaction();
+
+        if ($isLockTablesWrite) {
+            $data .= "LOCK TABLES `{$this->tableName}` WRITE;" . PHP_EOL;
+        }
+
+        if ($startTransaction) {
+            $data .= 'BEGIN;' . PHP_EOL;
+        }
 
         Utility::writeSql($output, $data);
 
@@ -62,7 +84,14 @@ class Table
             $page++;
         }
 
-        $data = 'UNLOCK TABLES;' . PHP_EOL . PHP_EOL;
+        $data = '';
+        if ($startTransaction) {
+            $data .= 'COMMIT;' . PHP_EOL;
+        }
+
+        if ($isLockTablesWrite) {
+            $data .= 'UNLOCK TABLES;' . PHP_EOL . PHP_EOL;
+        }
 
         Utility::writeSql($output, $data);
     }
