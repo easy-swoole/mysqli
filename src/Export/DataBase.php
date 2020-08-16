@@ -90,4 +90,43 @@ class DataBase
         $end = "-- Dump completed on {$completedTime}" . PHP_EOL;
         Utility::writeSql($output, $end);
     }
+
+    function import($file, $mode = 'r+')
+    {
+        $f = fopen($file, $mode);
+        $sqls = [];
+        $createTableSql = '';
+        $size = $this->config->getSize();
+        while (!feof($f)) {
+            $line = fgets($f);
+
+            // 为空 或者 是注释
+            if ((trim($line) == '') || preg_match('/^--*?/', $line, $match)) {
+                continue;
+            }
+
+            if (!preg_match('/;/', $line, $match) || preg_match('/ENGINE=/', $line, $match)) {
+                // 将本次sql语句与创建表sql连接存起来
+                $createTableSql .= $line;
+                // 如果包含了创建表的最后一句
+                if (preg_match('/ENGINE=/', $createTableSql, $match)) {
+                    // 则将其合并到sql数组
+                    $sqls [] = $createTableSql;
+                    // 清空当前，准备下一个表的创建
+                    $createTableSql = '';
+                }
+                continue;
+            }
+            $sqls[] = $line;
+
+
+            if ((count($sqls) == $size) || feof($f)) {
+                foreach ($sqls as $sql) {
+                    $sql = str_replace("\n", "", $sql);
+                    $this->client->rawQuery(trim($sql));
+                }
+                $sqls = [];
+            }
+        }
+    }
 }
