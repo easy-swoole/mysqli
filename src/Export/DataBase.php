@@ -81,6 +81,7 @@ class DataBase
         Utility::writeSql($output, $front);
 
         /** Table data */
+        /** @var Table $table */
         foreach ($tables as $table) {
             $table->export($output);
         }
@@ -94,12 +95,33 @@ class DataBase
     function import($file, $mode = 'r+')
     {
         $f = fopen($file, $mode);
+
+        // init
         $sqls = [];
         $createTableSql = '';
-        $size = $this->config->getSize();
-        while (!feof($f)) {
-            $line = fgets($f);
 
+        // config
+        $size = $this->config->getSize();
+        $debug = $this->config->isDebug();
+
+        if ($debug) {
+            // 获取文件行数
+            $currentLine = 0;
+            $totalLine = 0;
+            while (!feof($f)) {
+                fgets($f);
+                $totalLine++;
+            }
+            rewind($f);
+        }
+
+        while (!feof($f)) {
+
+            if ($debug) {
+                Utility::progressBar(++$currentLine, $totalLine);
+            }
+
+            $line = fgets($f);
             // 为空 或者 是注释
             if ((trim($line) == '') || preg_match('/^--*?/', $line, $match)) {
                 continue;
@@ -127,6 +149,10 @@ class DataBase
                 }
                 $sqls = [];
             }
+        }
+
+        if ($debug) {
+            echo PHP_EOL;
         }
     }
 }

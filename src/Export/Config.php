@@ -39,6 +39,9 @@ class Config
     /** 仅导出表结构 */
     protected $onlyStruct = false;
 
+    /** debug 进度条 */
+    protected $debug = false;
+
     /**
      * @return int
      */
@@ -197,5 +200,21 @@ class Config
     public function setOnlyStruct(bool $onlyStruct): void
     {
         $this->onlyStruct = $onlyStruct;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isDebug(): bool
+    {
+        return $this->debug;
+    }
+
+    /**
+     * @param bool $debug
+     */
+    public function setDebug(bool $debug): void
+    {
+        $this->debug = $debug;
     }
 }

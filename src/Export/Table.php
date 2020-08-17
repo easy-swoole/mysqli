@@ -75,8 +75,20 @@ class Table
 
         $page = 1;
         $size = $this->config->getSize();
+        $debug = $this->config->isDebug();
+
+        if ($debug) {
+            echo "Dumping data for table `{$this->tableName}`" . PHP_EOL;
+            $totalCount = current(current($this->client->rawQuery("SELECT COUNT(1) FROM {$this->tableName}")));
+        }
+
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
+
+            if ($debug) {
+                Utility::progressBar(($page * $size) > $totalCount ? $totalCount : ($page * $size), $totalCount);
+            }
+
             if (empty($insertSql)) break;
 
             Utility::writeSql($output, $insertSql);
@@ -94,6 +106,10 @@ class Table
         }
 
         Utility::writeSql($output, $data);
+
+        if ($debug) {
+            echo PHP_EOL;
+        }
     }
 
     private function getInsertSql($page, $size): string
