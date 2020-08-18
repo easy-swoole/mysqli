@@ -124,6 +124,7 @@ class Table
             try {
                 $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
                 $result = $this->client->execBuilder();
+                break;
             }catch (Exception $exception){
                 if (++$attempts > $maxFails) {
                     throw $exception;
