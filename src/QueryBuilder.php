@@ -975,7 +975,7 @@ class QueryBuilder
             if ($val === null) {
                 $val = 'NULL';
             }
-            if (is_numeric($val)) {
+            if (is_int($val) || is_float($val)) {
                 $newStr .= substr($str, 0, $pos) . $val;
             } else {
                 $newStr .= substr($str, 0, $pos) . "'" . $val . "'";

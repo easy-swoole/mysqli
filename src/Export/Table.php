@@ -4,6 +4,7 @@
 namespace EasySwoole\Mysqli\Export;
 
 use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Utility;
 
@@ -75,8 +76,20 @@ class Table
 
         $page = 1;
         $size = $this->config->getSize();
+        $debug = $this->config->isDebug();
+
+        if ($debug) {
+            echo "Dumping data for table `{$this->tableName}`" . PHP_EOL;
+            $totalCount = current(current($this->client->rawQuery("SELECT COUNT(1) FROM {$this->tableName}")));
+        }
+
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
+
+            if ($debug) {
+                Utility::progressBar(($page * $size) > $totalCount ? $totalCount : ($page * $size), $totalCount);
+            }
+
             if (empty($insertSql)) break;
 
             Utility::writeSql($output, $insertSql);
@@ -94,16 +107,34 @@ class Table
         }
 
         Utility::writeSql($output, $data);
+
+        if ($debug) {
+            echo PHP_EOL;
+        }
     }
 
     private function getInsertSql($page, $size): string
     {
         $limit = ($page - 1) * $size;
-        $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
-        $result = $this->client->execBuilder();
-        $queryBuilder = new QueryBuilder();
+        $attempts = 0;
+        $maxFails = $this->config->getMaxFails();
+
+        // 异常重试
+        while ($attempts <= $maxFails) {
+            try {
+                $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
+                $result = $this->client->execBuilder();
+                break;
+            }catch (Exception $exception){
+                if (++$attempts > $maxFails) {
+                    throw $exception;
+                }
+            }
+        }
 
         $data = '';
+        $queryBuilder = new QueryBuilder();
+
         foreach ($result as $item) {
 
             $item = array_map(function ($v) {
