@@ -11,15 +11,19 @@ use EasySwoole\Mysqli\Utility;
 
 class DataBase
 {
+    /** @var Client $client */
     protected $client;
 
+    /** @var Config $config */
     protected $config;
 
     function __construct(Client $client, ?Config $config = null)
     {
-        $this->client = $client;
+        if ($config == null) {
+            $config = new Config();
+        };
 
-        if ($config == null) $config = new Config();
+        $this->client = $client;
         $this->config = $config;
     }
 
@@ -115,6 +119,8 @@ class DataBase
         // config
         $size = $this->config->getSize();
         $debug = $this->config->isDebug();
+        $maxFails = $this->config->getMaxFails();
+        $continueOnError = $this->config->isContinueOnError();
 
         if ($debug) {
             // 获取文件行数
@@ -155,19 +161,30 @@ class DataBase
                 $sqls[] = $line;
             }
 
-
+            // 数组长度等于限制长度或者资源到底 执行sql
             if ((count($sqls) == $size) || feof($resource)) {
                 foreach ($sqls as $sql) {
-                    try {
-                        $sql = str_replace("\n", "", $sql);
-                        $this->client->rawQuery(trim($sql));
-                        $successNum++;
-                    } catch (Exception $exception) {
-                        $errorNum++;
-                        $result->setErrorMsg($exception->getMessage());
-                        $result->setErrorSql($sql);
+                    //重置次数
+                    $attempts = 0;
+                    $sql = str_replace("\n", "", $sql);
+                    while ($attempts <= $maxFails) {
+                        try {
+                            $this->client->rawQuery(trim($sql));
+                            $successNum++;
+                            throw new Exception('aa');
+                            break;
+                        } catch (Exception $exception) {
+                            $errorNum++;
+                            $result->setErrorMsg($exception->getMessage());
+                            $result->setErrorSql($sql);
+
+                            if (++$attempts > $maxFails && !$continueOnError) {
+                                throw $exception;
+                            }
+                        }
                     }
                 }
+                // 清空sql组
                 $sqls = [];
             }
         }

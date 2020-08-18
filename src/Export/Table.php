@@ -4,6 +4,7 @@
 namespace EasySwoole\Mysqli\Export;
 
 use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Utility;
 
@@ -115,11 +116,24 @@ class Table
     private function getInsertSql($page, $size): string
     {
         $limit = ($page - 1) * $size;
-        $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
-        $result = $this->client->execBuilder();
-        $queryBuilder = new QueryBuilder();
+        $attempts = 0;
+        $maxFails = $this->config->getMaxFails();
+
+        // 异常重试
+        while ($attempts <= $maxFails) {
+            try {
+                $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
+                $result = $this->client->execBuilder();
+            }catch (Exception $exception){
+                if (++$attempts > $maxFails) {
+                    throw $exception;
+                }
+            }
+        }
 
         $data = '';
+        $queryBuilder = new QueryBuilder();
+
         foreach ($result as $item) {
 
             $item = array_map(function ($v) {

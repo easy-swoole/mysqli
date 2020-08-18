@@ -42,6 +42,12 @@ class Config
     /** debug 进度条 */
     protected $debug = false;
 
+    /** 失败重试次数 */
+    protected $maxFails = 3;
+
+    /** 导入发送错误是否继续 */
+    protected $continueOnError = true;
+
     /**
      * @return int
      */
@@ -216,5 +222,37 @@ class Config
     public function setDebug(bool $debug): void
     {
         $this->debug = $debug;
+    }
+
+    /**
+     * @return int
+     */
+    public function getMaxFails(): int
+    {
+        return $this->maxFails;
+    }
+
+    /**
+     * @param int $maxFails
+     */
+    public function setMaxFails(int $maxFails): void
+    {
+        $this->maxFails = $maxFails;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isContinueOnError(): bool
+    {
+        return $this->continueOnError;
+    }
+
+    /**
+     * @param bool $continueOnError
+     */
+    public function setContinueOnError(bool $continueOnError): void
+    {
+        $this->continueOnError = $continueOnError;
     }
 }
