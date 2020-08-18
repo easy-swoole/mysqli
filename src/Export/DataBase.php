@@ -171,7 +171,6 @@ class DataBase
                         try {
                             $this->client->rawQuery(trim($sql));
                             $successNum++;
-                            throw new Exception('aa');
                             break;
                         } catch (Exception $exception) {
                             $errorNum++;
