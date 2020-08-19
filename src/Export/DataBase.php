@@ -187,4 +187,55 @@ class DataBase
         $result->setErrorNum($errorNum);
         return $result;
     }
+
+    function repair(array $tableNames, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
+    {
+        $tmp = $tableNames;
+        $tableNames = '';
+        foreach ($tmp as $tableName) {
+            $tableNames .= "`{$tableName}`,";
+        }
+        $tableNames = trim($tableNames, ',');
+
+        $repairSql = 'REPAIR';
+        if ($noWriteToBinLog) {
+            $repairSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $repairSql .= " TABLE {$tableNames}";
+
+        if ($quick) {
+            $repairSql .= ' QUICK';
+        }
+
+        if ($extended) {
+            $repairSql .= ' EXTENDED';
+        }
+
+        if ($useFrm) {
+            $repairSql .= ' USE_FRM';
+        }
+
+        $ret = $this->client->rawQuery($repairSql);
+        return $ret;
+    }
+
+    function optimize(array $tableNames, bool $noWriteToBinLog = false)
+    {
+        $tmp = $tableNames;
+        $tableNames = '';
+        foreach ($tmp as $tableName) {
+            $tableNames .= "`{$tableName}`,";
+        }
+        $tableNames = trim($tableNames, ',');
+
+        $optimizeSql = 'OPTIMIZE';
+        if ($noWriteToBinLog) {
+            $optimizeSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $optimizeSql .= " TABLE {$tableNames};";
+        $ret = $this->client->rawQuery($optimizeSql);
+        return $ret;
+    }
 }
