@@ -39,13 +39,13 @@ class Config
     /** 仅导出表结构 */
     protected $onlyStruct = false;
 
-    /** debug 进度条 */
-    protected $debug = false;
+    /** 事件 */
+    protected $callbacks = [];
 
     /** 失败重试次数 */
     protected $maxFails = 3;
 
-    /** 导入发送错误是否继续 */
+    /** 导入发生错误是否继续 */
     protected $continueOnError = true;
 
     /**
@@ -209,19 +209,37 @@ class Config
     }
 
     /**
-     * @return bool
+     * @return array
      */
-    public function isDebug(): bool
+    public function getCallbacks(): array
     {
-        return $this->debug;
+        return $this->callbacks;
     }
 
     /**
-     * @param bool $debug
+     * @param array $callbacks
      */
-    public function setDebug(bool $debug): void
+    public function setCallbacks(array $callbacks): void
     {
-        $this->debug = $debug;
+        $this->callbacks = $callbacks;
+    }
+
+    /**
+     * @param $eventName
+     * @return callable|null
+     */
+    public function getCallback(string $eventName)
+    {
+        return $this->callbacks[$eventName] ?? NULL;
+    }
+
+    /**
+     * @param string $eventName
+     * @param callable $callback
+     */
+    public function setCallback(string $eventName,callable $callback)
+    {
+        $this->callbacks[$eventName] = $callback;
     }
 
     /**

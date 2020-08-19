@@ -60,7 +60,10 @@ class DataBase
         $startTime = date('Y-m-d H:i:s');
 
         $tables = $this->showTables();
-        if (!$tables) return;
+
+        if (!$tables) {
+            return;
+        }
 
         /** EasySwoole Mysql dump start */
         $serverInfo = $this->client->mysqlClient()->serverInfo;
@@ -118,31 +121,20 @@ class DataBase
 
         // config
         $size = $this->config->getSize();
-        $debug = $this->config->isDebug();
         $maxFails = $this->config->getMaxFails();
         $continueOnError = $this->config->isContinueOnError();
 
-        if ($debug) {
-            // 获取文件行数
-            $currentLine = 0;
-            $totalLine = 0;
-            while (!feof($resource)) {
-                fgets($resource);
-                $totalLine++;
-            }
-            // 倒回文件指针的位置
-            if (!rewind($resource)) {
-                throw new DumpException('Failed to reset file pointer position');
-            };
-        }
+        $beforeResult = null;
+        $beforeCallback = $this->config->getCallback(Event::onBeforeImportTableData);
+        is_callable($beforeCallback) && $beforeResult = call_user_func($beforeCallback, $this->client, $resource);
+
+        $importingCallback = $this->config->getCallback(Event::onImportingTableData);
 
         while (!feof($resource)) {
-
-            if ($debug) {
-                Utility::progressBar(++$currentLine, $totalLine);
-            }
-
             $line = fgets($resource);
+
+            is_callable($importingCallback) && call_user_func($importingCallback, $this->client, $beforeResult);
+
             // 为空 或者 是注释
             if ((trim($line) == '') || preg_match('/^--*?/', $line, $match)) {
                 if (empty($sqls)) continue;
@@ -188,9 +180,8 @@ class DataBase
             }
         }
 
-        if ($debug) {
-            echo PHP_EOL;
-        }
+        $afterCallback = $this->config->getCallback(Event::onAfterImportTableData);
+        is_callable($afterCallback) && call_user_func($afterCallback, $this->client);
 
         $result->setSuccessNum($successNum);
         $result->setErrorNum($errorNum);

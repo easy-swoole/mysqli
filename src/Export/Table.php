@@ -55,7 +55,9 @@ class Table
 
         // 是否存在数据
         $checkData = $this->getInsertSql(1, 1);
-        if (!$checkData) return;
+        if (!$checkData) {
+            return;
+        };
 
         $data = '--' . PHP_EOL;
         $data .= "-- Dumping data for table `{$this->tableName}`" . PHP_EOL;
@@ -76,24 +78,22 @@ class Table
 
         $page = 1;
         $size = $this->config->getSize();
-        $debug = $this->config->isDebug();
 
-        if ($debug) {
-            echo "Dumping data for table `{$this->tableName}`" . PHP_EOL;
-            $totalCount = current(current($this->client->rawQuery("SELECT COUNT(1) FROM {$this->tableName}")));
-        }
+        // before dump data for table callback
+        $beforeResult = null;
+        $beforeCallback = $this->config->getCallback(Event::onBeforeExportTableData);
+        is_callable($beforeCallback) && $beforeResult = call_user_func($beforeCallback, $this->client, $this->tableName);
+
+        // dumping data table callback
+        $exportingCallback = $this->config->getCallback(Event::onExportingTableData);
 
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
-
-            if ($debug) {
-                Utility::progressBar(($page * $size) > $totalCount ? $totalCount : ($page * $size), $totalCount);
-            }
+            is_callable($exportingCallback) && call_user_func($exportingCallback, $this->client, $this->tableName, $page, $size, $beforeResult);
 
             if (empty($insertSql)) break;
 
             Utility::writeSql($output, $insertSql);
-
             $page++;
         }
 
@@ -108,9 +108,8 @@ class Table
 
         Utility::writeSql($output, $data);
 
-        if ($debug) {
-            echo PHP_EOL;
-        }
+        $afterCallback = $this->config->getCallback(Event::onAfterExportTableData);
+        is_callable($afterCallback) && call_user_func($afterCallback, $this->client, $this->tableName);
     }
 
     private function getInsertSql($page, $size): string
@@ -125,7 +124,7 @@ class Table
                 $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
                 $result = $this->client->execBuilder();
                 break;
-            }catch (Exception $exception){
+            } catch (Exception $exception) {
                 if (++$attempts > $maxFails) {
                     throw $exception;
                 }
