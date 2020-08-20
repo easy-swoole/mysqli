@@ -193,10 +193,11 @@ class DataBase
         return $result;
     }
 
-    function repair(bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
+    function repair(array $tableNames, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
     {
+        $tmp = $tableNames;
         $tableNames = '';
-        foreach ($this->config->getInTable() as $tableName) {
+        foreach ($tmp as $tableName) {
             $tableNames .= "`{$tableName}`,";
         }
 
@@ -229,10 +230,11 @@ class DataBase
         return $ret;
     }
 
-    function optimize(bool $noWriteToBinLog = false)
+    function optimize(array $tableNames, bool $noWriteToBinLog = false)
     {
+        $tmp = $tableNames;
         $tableNames = '';
-        foreach ($this->config->getInTable() as $tableName) {
+        foreach ($tmp as $tableName) {
             $tableNames .= "`{$tableName}`,";
         }
 
