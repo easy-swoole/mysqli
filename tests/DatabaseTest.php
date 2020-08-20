@@ -146,15 +146,21 @@ class DatabaseTest extends TestCase
     public function testOptimize()
     {
         $database = new DataBase($this->client);
-        $result = $database->optimize(['test']);
-        $this->assertIsArray($result);
+        $result = $database->optimize('test');
+        $this->assertFalse($result);
+
+        $result = $database->optimize('hiai_notice');
+        $this->assertTrue($result);
     }
 
     public function testRepair()
     {
         $database = new DataBase($this->client);
-        $result = $database->repair(['test']);
-        $this->assertIsArray($result);
+        $result = $database->repair('test');
+        $this->assertFalse($result);
+
+        $result = $database->repair('hiai_notice');
+        $this->assertTrue($result);
     }
 
     public function testConfig()

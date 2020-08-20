@@ -55,6 +55,11 @@ class DataBase
     }
 
 
+    /**
+     * 导出表数据
+     * @param $output
+     * @throws Exception
+     */
     function export(&$output)
     {
         $startTime = date('Y-m-d H:i:s', time());
@@ -106,11 +111,19 @@ class DataBase
         Utility::writeSql($output, $end);
     }
 
-    function import($file, $mode = 'r+'): Result
+    /**
+     * 导入表数据
+     * @param string $filePath
+     * @param string $mode
+     * @return Result
+     * @throws DumpException
+     * @throws Exception
+     */
+    function import(string $filePath, $mode = 'r+'): Result
     {
         // file 文件检测
         $resource = false;
-        file_exists($file) && $resource = fopen($file, $mode);
+        file_exists($filePath) && $resource = fopen($filePath, $mode);
         if ($resource === false || !is_resource($resource)) {
             throw new DumpException('Not a valid resource');
         }
@@ -193,26 +206,24 @@ class DataBase
         return $result;
     }
 
-    function repair(array $tableNames, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
+    /**
+     * 修复表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog
+     * @param bool $quick
+     * @param bool $extended
+     * @param bool $useFrm
+     * @return bool
+     * @throws Exception
+     */
+    function repair(string $tableName, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
     {
-        $tmp = $tableNames;
-        $tableNames = '';
-        foreach ($tmp as $tableName) {
-            $tableNames .= "`{$tableName}`,";
-        }
-
-        if (!$tableNames) {
-            return false;
-        }
-
-        $tableNames = trim($tableNames, ',');
-
         $repairSql = 'REPAIR';
         if ($noWriteToBinLog) {
             $repairSql .= ' NO_WRITE_TO_BINLOG';
         }
 
-        $repairSql .= " TABLE {$tableNames}";
+        $repairSql .= " TABLE {$tableName}";
 
         if ($quick) {
             $repairSql .= ' QUICK';
@@ -226,32 +237,48 @@ class DataBase
             $repairSql .= ' USE_FRM';
         }
 
-        $ret = $this->client->rawQuery($repairSql);
-        return $ret;
-    }
+        $result = $this->client->rawQuery($repairSql);
 
-    function optimize(array $tableNames, bool $noWriteToBinLog = false)
-    {
-        $tmp = $tableNames;
-        $tableNames = '';
-        foreach ($tmp as $tableName) {
-            $tableNames .= "`{$tableName}`,";
-        }
-
-        if (!$tableNames) {
+        if (!$result || !is_array($result)) {
             return false;
         }
 
-        $tableNames = trim($tableNames, ',');
+        foreach ($result as $item) {
+            if ($item['Msg_text'] != 'OK') {
+                return false;
+            }
+        }
 
+        return true;
+    }
 
+    /**
+     * 优化表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog
+     * @return bool
+     * @throws Exception
+     */
+    function optimize(string $tableName, bool $noWriteToBinLog = false)
+    {
         $optimizeSql = 'OPTIMIZE';
         if ($noWriteToBinLog) {
             $optimizeSql .= ' NO_WRITE_TO_BINLOG';
         }
 
-        $optimizeSql .= " TABLE {$tableNames};";
-        $ret = $this->client->rawQuery($optimizeSql);
-        return $ret;
+        $optimizeSql .= " TABLE {$tableName};";
+        $result = $this->client->rawQuery($optimizeSql);
+
+        if (!$result || !is_array($result)) {
+            return false;
+        }
+
+        foreach ($result as $item) {
+            if ($item['Msg_text'] != 'OK') {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
