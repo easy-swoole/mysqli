@@ -21,7 +21,7 @@ class DataBase
     {
         if ($config == null) {
             $config = new Config();
-        };
+        }
 
         $this->client = $client;
         $this->config = $config;
@@ -57,7 +57,7 @@ class DataBase
 
     function export(&$output)
     {
-        $startTime = date('Y-m-d H:i:s');
+        $startTime = date('Y-m-d H:i:s', time());
 
         $tables = $this->showTables();
 
@@ -83,10 +83,12 @@ class DataBase
         /** 外键约束 */
         if ($this->config->isCloseForeignKeyChecks()) {
             $front .= 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
-        };
+        }
 
         $front .= PHP_EOL;
 
+        $writeFrontCallback = $this->config->getCallback(Event::onWriteFront);
+        is_callable($writeFrontCallback) && $front = call_user_func($writeFrontCallback, $this->client, $front);
         Utility::writeSql($output, $front);
 
         /** Table data */
@@ -98,6 +100,9 @@ class DataBase
         /** EasySwoole Mysql dump completed */
         $completedTime = date('Y-m-d H:i:s');
         $end = "-- Dump completed on {$completedTime}" . PHP_EOL;
+
+        $writeCompletedCallback = $this->config->getCallback(Event::onWriteCompleted);
+        is_callable($writeCompletedCallback) && $end = call_user_func($writeCompletedCallback, $this->client, $front);
         Utility::writeSql($output, $end);
     }
 
@@ -188,13 +193,17 @@ class DataBase
         return $result;
     }
 
-    function repair(array $tableNames, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
+    function repair(bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
     {
-        $tmp = $tableNames;
         $tableNames = '';
-        foreach ($tmp as $tableName) {
+        foreach ($this->config->getInTable() as $tableName) {
             $tableNames .= "`{$tableName}`,";
         }
+
+        if (!$tableNames) {
+            return false;
+        }
+
         $tableNames = trim($tableNames, ',');
 
         $repairSql = 'REPAIR';
@@ -220,14 +229,19 @@ class DataBase
         return $ret;
     }
 
-    function optimize(array $tableNames, bool $noWriteToBinLog = false)
+    function optimize(bool $noWriteToBinLog = false)
     {
-        $tmp = $tableNames;
         $tableNames = '';
-        foreach ($tmp as $tableName) {
+        foreach ($this->config->getInTable() as $tableName) {
             $tableNames .= "`{$tableName}`,";
         }
+
+        if (!$tableNames) {
+            return false;
+        }
+
         $tableNames = trim($tableNames, ',');
+
 
         $optimizeSql = 'OPTIMIZE';
         if ($noWriteToBinLog) {

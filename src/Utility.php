@@ -9,7 +9,7 @@ namespace EasySwoole\Mysqli;
 
 class Utility
 {
-    public static function writeSql(&$output, string $data)
+    public static function writeSql(&$output, ?string $data)
     {
         if (is_resource($output)) {
             fwrite($output, $data);

@@ -46,6 +46,9 @@ class Table
             $structure .= "DROP TABLE IF EXISTS `{$this->tableName}`;" . PHP_EOL;
         }
         $structure .= $this->createTableSql() . ';' . PHP_EOL . PHP_EOL;
+
+        $writeStructCallback = $this->config->getCallback(Event::onWriteTableStruct);
+        is_callable($writeStructCallback) && $structure = call_user_func($writeStructCallback, $this->client, $this->tableName, $structure);
         Utility::writeSql($output, $structure);
 
         /** 仅导出表结构 */
