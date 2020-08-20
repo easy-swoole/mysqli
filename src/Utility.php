@@ -17,9 +17,4 @@ class Utility
             $output .= $data;
         }
     }
-
-    public static function progressBar(int $current, int $total)
-    {
-        printf("[%-100s] %d%% \r", str_repeat('=', $current / $total * 100) . '>', $current / $total * 100);
-    }
 }
