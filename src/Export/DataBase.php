@@ -206,10 +206,67 @@ class DataBase
         return $result;
     }
 
+
+    /**
+     * 分析表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
+     * @return array|bool
+     * @throws Exception
+     */
+    function analyze(string $tableName, bool $noWriteToBinLog = false)
+    {
+        $analyzeSql = 'ANALYZE';
+        if ($noWriteToBinLog) {
+            $analyzeSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $analyzeSql .= " TABLE `{$tableName}`;";
+        return $this->client->rawQuery($analyzeSql);
+    }
+
+    /**
+     * 检查表
+     * @param string $tableName
+     * @param bool $quick 不扫描行，不检查错误的链接。
+     * @param bool $fast 只检查没有被正确关闭的表。
+     * @param bool $changed 只检查上次检查后被更改的表，和没有被正确关闭的表。
+     * @param bool $medium 扫描行，以验证被删除的链接是有效的。也可以计算各行的关键字校验和，并使用计算出的校验和验证这一点。
+     * @param bool $extended 对每行的所有关键字进行一个全面的关键字查找。这可以确保表是100％一致的，但是花的时间较长。
+     * @return array|bool
+     * @throws Exception
+     */
+    function check(string $tableName, bool $quick = false, bool $fast = false, bool $changed = false, bool $medium = false, bool $extended = false)
+    {
+        $checkSql = "CHECK TABLE `{$tableName}`";
+
+        if ($quick) {
+            $checkSql .= ' QUICK';
+        }
+
+        if ($fast) {
+            $checkSql .= ' FAST';
+        }
+
+        if ($changed) {
+            $checkSql .= ' CHANGED';
+        }
+
+        if ($medium) {
+            $checkSql .= ' MEDIUM';
+        }
+
+        if ($extended) {
+            $checkSql .= ' EXTENDED';
+        }
+
+        return $this->client->rawQuery($checkSql);
+    }
+
     /**
      * 修复表
      * @param string $tableName
-     * @param bool $noWriteToBinLog
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
      * @param bool $quick
      * @param bool $extended
      * @param bool $useFrm
@@ -223,7 +280,7 @@ class DataBase
             $repairSql .= ' NO_WRITE_TO_BINLOG';
         }
 
-        $repairSql .= " TABLE {$tableName}";
+        $repairSql .= " TABLE `{$tableName}`";
 
         if ($quick) {
             $repairSql .= ' QUICK';
@@ -255,18 +312,19 @@ class DataBase
     /**
      * 优化表
      * @param string $tableName
-     * @param bool $noWriteToBinLog
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
      * @return bool
      * @throws Exception
      */
     function optimize(string $tableName, bool $noWriteToBinLog = false)
     {
+        // ALTER TABLE `test` ENGINE = InnoDB;
         $optimizeSql = 'OPTIMIZE';
         if ($noWriteToBinLog) {
             $optimizeSql .= ' NO_WRITE_TO_BINLOG';
         }
 
-        $optimizeSql .= " TABLE {$tableName};";
+        $optimizeSql .= " TABLE `{$tableName}`;";
         $result = $this->client->rawQuery($optimizeSql);
 
         if (!$result || !is_array($result)) {
@@ -280,5 +338,18 @@ class DataBase
         }
 
         return true;
+    }
+
+
+    /**
+     * 整理表碎片 innodb
+     * @param string $tableName
+     * @return bool
+     * @throws Exception
+     */
+    function alter(string $tableName)
+    {
+        $alterSql = "ALTER TABLE `{$tableName}` ENGINE = InnoDB;";
+        return $this->client->rawQuery($alterSql);
     }
 }

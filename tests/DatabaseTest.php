@@ -143,6 +143,33 @@ class DatabaseTest extends TestCase
         $this->assertContains('Success', file_get_contents('./test111.sql'));
     }
 
+    public function testAnalyze(){
+        $database = new DataBase($this->client);
+        $result = $database->analyze('test');
+        $this->assertEquals('OK',current($result)['Msg_text']);
+
+        $result = $database->analyze('hiai_notice');
+        $this->assertNotEquals('OK',current($result)['Msg_text']);
+    }
+
+    public function testCheck(){
+        $database = new DataBase($this->client);
+        $result = $database->check('test');
+        $this->assertEquals('OK',current($result)['Msg_text']);
+
+        $result = $database->check('hiai_notice');
+        $this->assertEquals('OK',current($result)['Msg_text']);
+    }
+
+    public function testAlter(){
+        $database = new DataBase($this->client);
+        $result = $database->alter('test');
+        $this->assertTrue($result);
+
+        $result = $database->alter('hiai_notice');
+        $this->assertTrue($result);
+    }
+
     public function testOptimize()
     {
         $database = new DataBase($this->client);
