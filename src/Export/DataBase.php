@@ -87,7 +87,7 @@ class DataBase
 
         $front .= PHP_EOL;
 
-        $writeFrontCallback = $this->config->getCallback(Event::onWriteFront);
+        $writeFrontCallback = $this->config->getCallback(Event::onWriteFrontNotes);
         is_callable($writeFrontCallback) && $front = call_user_func($writeFrontCallback, $this->client, $front);
         Utility::writeSql($output, $front);
 
@@ -101,7 +101,7 @@ class DataBase
         $completedTime = date('Y-m-d H:i:s');
         $end = "-- Dump completed on {$completedTime}" . PHP_EOL;
 
-        $writeCompletedCallback = $this->config->getCallback(Event::onWriteCompleted);
+        $writeCompletedCallback = $this->config->getCallback(Event::onWriteCompletedNotes);
         is_callable($writeCompletedCallback) && $end = call_user_func($writeCompletedCallback, $this->client, $front);
         Utility::writeSql($output, $end);
     }

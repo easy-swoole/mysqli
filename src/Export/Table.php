@@ -77,6 +77,8 @@ class Table
             $data .= 'BEGIN;' . PHP_EOL;
         }
 
+        $callback = $this->config->getCallback(Event::onBeforeWriteTableDataNotes);
+        is_callable($callback) && $data = call_user_func($callback, $this->client, $this->tableName, $data);
         Utility::writeSql($output, $data);
 
         $page = 1;
@@ -100,6 +102,9 @@ class Table
             $page++;
         }
 
+        $afterCallback = $this->config->getCallback(Event::onAfterExportTableData);
+        is_callable($afterCallback) && call_user_func($afterCallback, $this->client, $this->tableName);
+
         $data = '';
         if ($startTransaction) {
             $data .= 'COMMIT;' . PHP_EOL;
@@ -109,10 +114,9 @@ class Table
             $data .= 'UNLOCK TABLES;' . PHP_EOL . PHP_EOL;
         }
 
+        $callback = $this->config->getCallback(Event::onAfterWriteTableDataNotes);
+        is_callable($callback) && $data = call_user_func($callback, $this->client, $this->tableName, $data);
         Utility::writeSql($output, $data);
-
-        $afterCallback = $this->config->getCallback(Event::onAfterExportTableData);
-        is_callable($afterCallback) && call_user_func($afterCallback, $this->client, $this->tableName);
     }
 
     private function getInsertSql($page, $size): string
