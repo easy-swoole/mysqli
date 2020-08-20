@@ -156,4 +156,54 @@ class DatabaseTest extends TestCase
         $result = $database->repair(['test']);
         $this->assertIsArray($result);
     }
+
+    public function testConfig()
+    {
+        $result = '';
+        $config = new Config();
+        $tableName = 'blog_users';
+        $config->setInTable([$tableName]);
+        $config->setLockTablesWrite(true);
+        $config->setStartTransaction(true);
+        $config->setCreateTableIsNotExist(true);
+        $config->setCloseForeignKeyChecks(true);
+        $config->setNames('utf8mb4');
+        $config->setDrop(true);
+        $database = new DataBase($this->client, $config);
+        $database->export($result);
+
+        $this->assertContains("LOCK TABLES `{$tableName}` WRITE;", $result);
+        $this->assertContains("UNLOCK TABLES;", $result);
+        $this->assertContains("BEGIN", $result);
+        $this->assertContains("COMMIT", $result);
+        $this->assertContains("DROP", $result);
+        $this->assertContains("CREATE TABLE IF NOT EXISTS ", $result);
+        $this->assertContains("SET NAMES utf8mb4;", $result);
+        $this->assertContains("SET FOREIGN_KEY_CHECKS = 0;", $result);
+        $this->assertContains("DROP TABLE IF EXISTS `{$tableName}`", $result);
+
+
+        $result = '';
+        $config = new Config();
+        $tableName = 'blog_users';
+        $config->setInTable([$tableName]);
+        $config->setLockTablesWrite(false);
+        $config->setStartTransaction(false);
+        $config->setCreateTableIsNotExist(false);
+        $config->setCloseForeignKeyChecks(false);
+        $config->setNames(false);
+        $config->setDrop(false);
+        $database = new DataBase($this->client, $config);
+        $database->export($result);
+
+        $this->assertNotContains("LOCK TABLES `{$tableName}` WRITE;", $result);
+        $this->assertNotContains("UNLOCK TABLES;", $result);
+        $this->assertNotContains("BEGIN", $result);
+        $this->assertNotContains("COMMIT", $result);
+        $this->assertNotContains("DROP", $result);
+        $this->assertNotContains("CREATE TABLE IF NOT EXISTS ", $result);
+        $this->assertNotContains("SET NAMES utf8mb4;", $result);
+        $this->assertNotContains("SET FOREIGN_KEY_CHECKS = 0;", $result);
+        $this->assertNotContains("DROP TABLE IF EXISTS `{$tableName}`", $result);
+    }
 }
