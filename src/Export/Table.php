@@ -46,6 +46,9 @@ class Table
             $structure .= "DROP TABLE IF EXISTS `{$this->tableName}`;" . PHP_EOL;
         }
         $structure .= $this->createTableSql() . ';' . PHP_EOL . PHP_EOL;
+
+        $writeStructCallback = $this->config->getCallback(Event::onWriteTableStruct);
+        is_callable($writeStructCallback) && $structure = call_user_func($writeStructCallback, $this->client, $this->tableName, $structure);
         Utility::writeSql($output, $structure);
 
         /** 仅导出表结构 */
@@ -55,7 +58,9 @@ class Table
 
         // 是否存在数据
         $checkData = $this->getInsertSql(1, 1);
-        if (!$checkData) return;
+        if (!$checkData) {
+            return;
+        };
 
         $data = '--' . PHP_EOL;
         $data .= "-- Dumping data for table `{$this->tableName}`" . PHP_EOL;
@@ -72,30 +77,33 @@ class Table
             $data .= 'BEGIN;' . PHP_EOL;
         }
 
+        $callback = $this->config->getCallback(Event::onBeforeWriteTableDataNotes);
+        is_callable($callback) && $data = call_user_func($callback, $this->client, $this->tableName, $data);
         Utility::writeSql($output, $data);
 
         $page = 1;
         $size = $this->config->getSize();
-        $debug = $this->config->isDebug();
 
-        if ($debug) {
-            echo "Dumping data for table `{$this->tableName}`" . PHP_EOL;
-            $totalCount = current(current($this->client->rawQuery("SELECT COUNT(1) FROM {$this->tableName}")));
-        }
+        // before dump data for table callback
+        $beforeResult = null;
+        $beforeCallback = $this->config->getCallback(Event::onBeforeExportTableData);
+        is_callable($beforeCallback) && $beforeResult = call_user_func($beforeCallback, $this->client, $this->tableName);
+
+        // dumping data table callback
+        $exportingCallback = $this->config->getCallback(Event::onExportingTableData);
 
         while (true) {
             $insertSql = $this->getInsertSql($page, $size);
-
-            if ($debug) {
-                Utility::progressBar(($page * $size) > $totalCount ? $totalCount : ($page * $size), $totalCount);
-            }
+            is_callable($exportingCallback) && call_user_func($exportingCallback, $this->client, $this->tableName, $page, $size, $beforeResult);
 
             if (empty($insertSql)) break;
 
             Utility::writeSql($output, $insertSql);
-
             $page++;
         }
+
+        $afterCallback = $this->config->getCallback(Event::onAfterExportTableData);
+        is_callable($afterCallback) && call_user_func($afterCallback, $this->client, $this->tableName);
 
         $data = '';
         if ($startTransaction) {
@@ -106,11 +114,9 @@ class Table
             $data .= 'UNLOCK TABLES;' . PHP_EOL . PHP_EOL;
         }
 
+        $callback = $this->config->getCallback(Event::onAfterWriteTableDataNotes);
+        is_callable($callback) && $data = call_user_func($callback, $this->client, $this->tableName, $data);
         Utility::writeSql($output, $data);
-
-        if ($debug) {
-            echo PHP_EOL;
-        }
     }
 
     private function getInsertSql($page, $size): string
@@ -125,7 +131,7 @@ class Table
                 $this->client->queryBuilder()->limit($limit, $size)->get($this->tableName);
                 $result = $this->client->execBuilder();
                 break;
-            }catch (Exception $exception){
+            } catch (Exception $exception) {
                 if (++$attempts > $maxFails) {
                     throw $exception;
                 }

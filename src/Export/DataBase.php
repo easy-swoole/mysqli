@@ -21,7 +21,7 @@ class DataBase
     {
         if ($config == null) {
             $config = new Config();
-        };
+        }
 
         $this->client = $client;
         $this->config = $config;
@@ -55,12 +55,20 @@ class DataBase
     }
 
 
+    /**
+     * 导出表数据
+     * @param $output
+     * @throws Exception
+     */
     function export(&$output)
     {
-        $startTime = date('Y-m-d H:i:s');
+        $startTime = date('Y-m-d H:i:s', time());
 
         $tables = $this->showTables();
-        if (!$tables) return;
+
+        if (!$tables) {
+            return;
+        }
 
         /** EasySwoole Mysql dump start */
         $serverInfo = $this->client->mysqlClient()->serverInfo;
@@ -80,10 +88,12 @@ class DataBase
         /** 外键约束 */
         if ($this->config->isCloseForeignKeyChecks()) {
             $front .= 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
-        };
+        }
 
         $front .= PHP_EOL;
 
+        $writeFrontCallback = $this->config->getCallback(Event::onWriteFrontNotes);
+        is_callable($writeFrontCallback) && $front = call_user_func($writeFrontCallback, $this->client, $front);
         Utility::writeSql($output, $front);
 
         /** Table data */
@@ -95,14 +105,25 @@ class DataBase
         /** EasySwoole Mysql dump completed */
         $completedTime = date('Y-m-d H:i:s');
         $end = "-- Dump completed on {$completedTime}" . PHP_EOL;
+
+        $writeCompletedCallback = $this->config->getCallback(Event::onWriteCompletedNotes);
+        is_callable($writeCompletedCallback) && $end = call_user_func($writeCompletedCallback, $this->client, $front);
         Utility::writeSql($output, $end);
     }
 
-    function import($file, $mode = 'r+'): Result
+    /**
+     * 导入表数据
+     * @param string $filePath
+     * @param string $mode
+     * @return Result
+     * @throws DumpException
+     * @throws Exception
+     */
+    function import(string $filePath, $mode = 'r+'): Result
     {
         // file 文件检测
         $resource = false;
-        file_exists($file) && $resource = fopen($file, $mode);
+        file_exists($filePath) && $resource = fopen($filePath, $mode);
         if ($resource === false || !is_resource($resource)) {
             throw new DumpException('Not a valid resource');
         }
@@ -118,31 +139,20 @@ class DataBase
 
         // config
         $size = $this->config->getSize();
-        $debug = $this->config->isDebug();
         $maxFails = $this->config->getMaxFails();
         $continueOnError = $this->config->isContinueOnError();
 
-        if ($debug) {
-            // 获取文件行数
-            $currentLine = 0;
-            $totalLine = 0;
-            while (!feof($resource)) {
-                fgets($resource);
-                $totalLine++;
-            }
-            // 倒回文件指针的位置
-            if (!rewind($resource)) {
-                throw new DumpException('Failed to reset file pointer position');
-            };
-        }
+        $beforeResult = null;
+        $beforeCallback = $this->config->getCallback(Event::onBeforeImportTableData);
+        is_callable($beforeCallback) && $beforeResult = call_user_func($beforeCallback, $this->client, $resource);
+
+        $importingCallback = $this->config->getCallback(Event::onImportingTableData);
 
         while (!feof($resource)) {
-
-            if ($debug) {
-                Utility::progressBar(++$currentLine, $totalLine);
-            }
-
             $line = fgets($resource);
+
+            is_callable($importingCallback) && call_user_func($importingCallback, $this->client, $beforeResult);
+
             // 为空 或者 是注释
             if ((trim($line) == '') || preg_match('/^--*?/', $line, $match)) {
                 if (empty($sqls)) continue;
@@ -188,12 +198,158 @@ class DataBase
             }
         }
 
-        if ($debug) {
-            echo PHP_EOL;
-        }
+        $afterCallback = $this->config->getCallback(Event::onAfterImportTableData);
+        is_callable($afterCallback) && call_user_func($afterCallback, $this->client);
 
         $result->setSuccessNum($successNum);
         $result->setErrorNum($errorNum);
         return $result;
+    }
+
+
+    /**
+     * 分析表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
+     * @return array|bool
+     * @throws Exception
+     */
+    function analyze(string $tableName, bool $noWriteToBinLog = false)
+    {
+        $analyzeSql = 'ANALYZE';
+        if ($noWriteToBinLog) {
+            $analyzeSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $analyzeSql .= " TABLE `{$tableName}`;";
+        return $this->client->rawQuery($analyzeSql);
+    }
+
+    /**
+     * 检查表
+     * @param string $tableName
+     * @param bool $quick 不扫描行，不检查错误的链接。
+     * @param bool $fast 只检查没有被正确关闭的表。
+     * @param bool $changed 只检查上次检查后被更改的表，和没有被正确关闭的表。
+     * @param bool $medium 扫描行，以验证被删除的链接是有效的。也可以计算各行的关键字校验和，并使用计算出的校验和验证这一点。
+     * @param bool $extended 对每行的所有关键字进行一个全面的关键字查找。这可以确保表是100％一致的，但是花的时间较长。
+     * @return array|bool
+     * @throws Exception
+     */
+    function check(string $tableName, bool $quick = false, bool $fast = false, bool $changed = false, bool $medium = false, bool $extended = false)
+    {
+        $checkSql = "CHECK TABLE `{$tableName}`";
+
+        if ($quick) {
+            $checkSql .= ' QUICK';
+        }
+
+        if ($fast) {
+            $checkSql .= ' FAST';
+        }
+
+        if ($changed) {
+            $checkSql .= ' CHANGED';
+        }
+
+        if ($medium) {
+            $checkSql .= ' MEDIUM';
+        }
+
+        if ($extended) {
+            $checkSql .= ' EXTENDED';
+        }
+
+        return $this->client->rawQuery($checkSql);
+    }
+
+    /**
+     * 修复表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
+     * @param bool $quick
+     * @param bool $extended
+     * @param bool $useFrm
+     * @return bool
+     * @throws Exception
+     */
+    function repair(string $tableName, bool $noWriteToBinLog = false, bool $quick = false, bool $extended = false, bool $useFrm = false)
+    {
+        $repairSql = 'REPAIR';
+        if ($noWriteToBinLog) {
+            $repairSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $repairSql .= " TABLE `{$tableName}`";
+
+        if ($quick) {
+            $repairSql .= ' QUICK';
+        }
+
+        if ($extended) {
+            $repairSql .= ' EXTENDED';
+        }
+
+        if ($useFrm) {
+            $repairSql .= ' USE_FRM';
+        }
+
+        $result = $this->client->rawQuery($repairSql);
+
+        if (!$result || !is_array($result)) {
+            return false;
+        }
+
+        foreach ($result as $item) {
+            if ($item['Msg_text'] != 'OK') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 优化表
+     * @param string $tableName
+     * @param bool $noWriteToBinLog 语句是否写入二进制日志 默认false 写入
+     * @return bool
+     * @throws Exception
+     */
+    function optimize(string $tableName, bool $noWriteToBinLog = false)
+    {
+        // ALTER TABLE `test` ENGINE = InnoDB;
+        $optimizeSql = 'OPTIMIZE';
+        if ($noWriteToBinLog) {
+            $optimizeSql .= ' NO_WRITE_TO_BINLOG';
+        }
+
+        $optimizeSql .= " TABLE `{$tableName}`;";
+        $result = $this->client->rawQuery($optimizeSql);
+
+        if (!$result || !is_array($result)) {
+            return false;
+        }
+
+        foreach ($result as $item) {
+            if ($item['Msg_text'] != 'OK') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+
+    /**
+     * 整理表碎片 innodb
+     * @param string $tableName
+     * @return bool
+     * @throws Exception
+     */
+    function alter(string $tableName)
+    {
+        $alterSql = "ALTER TABLE `{$tableName}` ENGINE = InnoDB;";
+        return $this->client->rawQuery($alterSql);
     }
 }
