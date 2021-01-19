@@ -230,6 +230,25 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1, 'whereValue'], $this->builder->getLastBindParams());
     }
 
+    function testForUpdate()
+    {
+        $this->builder->selectForUpdate(true)->where('name',1)->get('test');
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = ?  FOR UPDATE', $this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = 1  FOR UPDATE', $this->builder->getLastQuery());
+
+        $this->builder->selectForUpdate(true, 'NOWAIT')->where('name',1)->get('test');
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = ?  FOR UPDATE NOWAIT', $this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = 1  FOR UPDATE NOWAIT', $this->builder->getLastQuery());
+
+        $this->builder->selectForUpdate(true, 'WAIT 5')->where('name',1)->get('test');
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = ?  FOR UPDATE WAIT 5', $this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = 1  FOR UPDATE WAIT 5', $this->builder->getLastQuery());
+
+        $this->builder->selectForUpdate(true, 'SKIP LOCKED')->where('name',1)->get('test');
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = ?  FOR UPDATE SKIP LOCKED', $this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = 1  FOR UPDATE SKIP LOCKED', $this->builder->getLastQuery());
+    }
+
 
     function testDelete()
     {

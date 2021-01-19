@@ -42,6 +42,7 @@ class QueryBuilder
     private $_tableName = '';
     private $_forUpdate = false;
     private $_lockInShareMode = false;
+    private $_lockOption = false;
     private $_subQueryAlias = '';
     private $_limit = null;
     private $_field = '*';
@@ -292,15 +293,20 @@ class QueryBuilder
     /**
      * SELECT FOR UPDATE锁定(InnoDb)
      * @param bool $isLock
-     * @return QueryBuilder
+     * @param string|null $option NOWAIT,WAIT 5,SKIP LOCKED
+     * @return $this
      * @throws Exception
      */
-    public function selectForUpdate($isLock = true)
+    public function selectForUpdate($isLock = true, string $option = null)
     {
         if ($isLock) {
             $this->setQueryOption(['FOR UPDATE']);
+            if ($option) {
+                $this->_lockOption = $option;
+            }
         } else {
             unset($this->_queryOptions['FOR UPDATE']);
+            $this->_lockOption = false;
         }
         return $this;
     }
@@ -397,6 +403,16 @@ class QueryBuilder
                 $this->_queryOptions[] = $option;
             }
         }
+        return $this;
+    }
+
+    /**
+     * @param string $option NOWAIT,WAIT 5,SKIP LOCKED
+     * @return $this
+     */
+    public function setLockOption(string $option)
+    {
+        $this->_lockOption = $option;
         return $this;
     }
 
@@ -657,6 +673,7 @@ class QueryBuilder
         $this->_nestJoin = false;
         $this->_forUpdate = false;
         $this->_lockInShareMode = false;
+        $this->_lockOption = false;
         $this->_tableName = '';
         $this->_updateColumns = null;
         return $this;
@@ -1044,7 +1061,8 @@ class QueryBuilder
         $this->_buildOnDuplicate($tableData);
         $this->_buildUnion();
         if ($this->_forUpdate) {
-            $this->_query .= ' FOR UPDATE';
+            $lockStr = $this->_lockOption ? ' FOR UPDATE '. $this->_lockOption : ' FOR UPDATE';
+            $this->_query .= $lockStr;
         }
         if ($this->_lockInShareMode) {
             $this->_query .= ' LOCK IN SHARE MODE';

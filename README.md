@@ -248,6 +248,13 @@ $builder = new QueryBuilder();
 $builder->setQueryOption("FOR UPDATE")->get('getTable');
 $builder->selectForUpdate(true)->get('getTable');
 
+// FOR UPDATE NOWAIT
+$builder->selectForUpdate(true, 'NOWAIT')->get('getTable');
+// FOR UPDATE WAIT Second
+$builder->selectForUpdate(true, 'WAIT 5')->get('getTable');
+// FOR UPDATE SKIP LOCKED
+$builder->selectForUpdate(true, 'SKIP LOCKED')->get('getTable');
+
 //  LOCK IN SHARE MODE。共享锁
 $builder->lockInShareMode()->get('getTable');
 $builder->setQueryOption(['LOCK IN SHARE MODE'])->get('getTable');
