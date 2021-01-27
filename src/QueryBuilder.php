@@ -42,7 +42,7 @@ class QueryBuilder
     private $_tableName = '';
     private $_forUpdate = false;
     private $_lockInShareMode = false;
-    private $_lockOption = false;
+    private $_lockOption = '';
     private $_subQueryAlias = '';
     private $_limit = null;
     private $_field = '*';
@@ -673,7 +673,7 @@ class QueryBuilder
         $this->_nestJoin = false;
         $this->_forUpdate = false;
         $this->_lockInShareMode = false;
-        $this->_lockOption = false;
+        $this->_lockOption = '';
         $this->_tableName = '';
         $this->_updateColumns = null;
         return $this;
