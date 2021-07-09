@@ -125,4 +125,26 @@ class Client
     {
         $this->close();
     }
+    
+    public function startTransaction(): bool
+    {
+        $this->connect();
+        $res = $this->mysqlClient->query('start transaction');
+        return $res;
+    }
+
+    public function commit(): bool
+    {
+        $this->connect();
+        $res = $this->mysqlClient->query('commit');
+        return $res;
+    }
+
+    public function rollback($commit = true)
+    {
+        $this->connect();
+        $res = $this->mysqlClient->query('rollback');
+        return $res;
+
+    }
 }
