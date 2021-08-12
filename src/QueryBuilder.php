@@ -995,7 +995,7 @@ class QueryBuilder
             if (is_int($val) || is_float($val)) {
                 $newStr .= substr($str, 0, $pos) . $val;
             } else {
-                $newStr .= substr($str, 0, $pos) . "'" . $val . "'";
+                $newStr .= substr($str, 0, $pos) . "'" . addslashes($val) . "'";
             }
 
             $str = substr($str, $pos + 1);
