@@ -1100,7 +1100,7 @@ class QueryBuilder
         if ($this->_union) {
             foreach ($this->_union as $unionData) {
                 list($cond, $param, $isUnionAll) = $unionData;
-                $this->_query .= 'UNION ' . ($isUnionAll ? 'ALL ' : '') . $cond;
+                $this->_query .= ' UNION ' . ($isUnionAll ? 'ALL ' : '') . $cond;
                 $this->_bindParams($param);
             }
         }
