@@ -693,11 +693,11 @@ class QueryBuilder
 
     /**
      * MysqlInc表达式
-     * @param int $num
+     * @param int|float $num
      * @return array
      * @throws Exception
      */
-    public static function inc(int $num = 1)
+    public static function inc($num = 1)
     {
         if (!is_numeric($num)||$num<=0) {
             throw new Exception('Argument supplied to inc must be a positive number');
@@ -707,11 +707,11 @@ class QueryBuilder
 
     /**
      * MysqlDec表达式
-     * @param int $num
+     * @param int|float $num
      * @return array
      * @throws Exception
      */
-    public static function dec(int $num = 1)
+    public static function dec($num = 1)
     {
         if (!is_numeric($num)||$num<=0) {
             throw new Exception('Argument supplied to dec must be a positive number');
