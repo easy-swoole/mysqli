@@ -447,7 +447,7 @@ class QueryBuilder
      * @param string $columns
      * @return QueryBuilder|null
      */
-    public function get($tableName, $numRows = null, $columns = null): ?QueryBuilder
+    public function get($tableName, $numRows = null, $columns = null)
     {
         if ($columns == null) {
             $columns = $this->_field;
@@ -471,7 +471,7 @@ class QueryBuilder
      * @param string $columns
      * @return QueryBuilder|null
      */
-    public function getOne($tableName, $columns = '*'): ?QueryBuilder
+    public function getOne($tableName, $columns = '*')
     {
         if ($columns === '*'){
             $columns = $this->_field;
@@ -598,30 +598,6 @@ class QueryBuilder
         $this->_buildQuery($numRows, $tableData);
         $this->reset();
         return $this;
-    }
-
-    /**
-     * 插入多行数据
-     * @param string $tableName 插入的表名称
-     * @param array $multiInsertData 需要插入的数据
-     * @param array|null $dataKeys 插入数据对应的字段名
-     * @return array|bool
-     */
-    public function insertMulti($tableName, array $multiInsertData, array $dataKeys = null)
-    {
-        $ids = array();
-        foreach ($multiInsertData as $insertData) {
-            if ($dataKeys !== null) {
-                // apply column-names if given, else assume they're already given in the data
-                $insertData = array_combine($dataKeys, $insertData);
-            }
-            $id = $this->insert($tableName, $insertData);
-            if (!$id) {
-                return false;
-            }
-            $ids[] = $id;
-        }
-        return $ids;
     }
 
     /**
