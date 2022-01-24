@@ -14,6 +14,15 @@ class QueryBuilder
 {
     private $prefix = '';
 
+    const TS_OP_START = 1;
+    const TS_OP_COMMIT = 2;
+    const TS_OP_ROLLBACK = 3;
+    const TS_OP_LOCK_TABLE = 4;
+    const TS_OP_UNLOCK_TABLE = 5;
+    const TS_OP_LOCK_IN_SHARE = 6;
+    const TS_OP_LOCK_FOR_UPDATE = 7;
+
+
     /*
      * 构造结果
      */
@@ -21,6 +30,9 @@ class QueryBuilder
     private $lastBindParams = [];
     private $lastQueryOptions = [];
     private $lastQuery;
+    private $lastTransactionOp = null;
+    //锁标记
+    private $_lastTransactionOp = null;
 
 
     // 以下为查询条件容器
@@ -337,7 +349,7 @@ class QueryBuilder
      */
     public function lockTable($table)
     {
-        // Main Query
+        $this->_lastTransactionOp = self::TS_OP_LOCK_TABLE;
         $this->_query = "LOCK TABLES";
         // Is the table an array?
         if (gettype($table) == "array") {
@@ -368,6 +380,7 @@ class QueryBuilder
      */
     public function unlockTable()
     {
+        $this->_lastTransactionOp = self::TS_OP_UNLOCK_TABLE;
         $this->_query = "UNLOCK TABLES";
         $this->lastQuery = $this->_query;
         $this->reset();
@@ -635,6 +648,10 @@ class QueryBuilder
         $this->lastBindParams = $this->_bindParams;
         array_shift($this->lastBindParams);
         $this->lastQueryOptions = $this->_queryOptions;
+        $this->lastTransactionOp = $this->_lastTransactionOp;
+
+        $this->_lastTransactionOp = null;
+
         $this->_limit = null;
         $this->_field = '*';
         $this->_where = [];
@@ -737,6 +754,11 @@ class QueryBuilder
         return $this->lastPrepareQuery;
     }
 
+    public function getLastTransactionOp():?int
+    {
+        return $this->lastTransactionOp;
+    }
+
     /**
      * 获取最后绑定的参数
      * @return array
@@ -798,16 +820,19 @@ class QueryBuilder
 
     public function startTransaction()
     {
+        $this->_lastTransactionOp = self::TS_OP_START;
         $this->raw('start transaction');
     }
 
     public function commit()
     {
+        $this->_lastTransactionOp = self::TS_OP_COMMIT;
         $this->raw('commit');
     }
 
     public function rollback()
     {
+        $this->_lastTransactionOp = self::TS_OP_ROLLBACK;
         $this->raw("rollback");
     }
 
@@ -1037,10 +1062,12 @@ class QueryBuilder
         $this->_buildOnDuplicate($tableData);
         $this->_buildUnion();
         if ($this->_forUpdate) {
+            $this->_lastTransactionOp = self::TS_OP_LOCK_FOR_UPDATE;
             $lockStr = $this->_lockOption ? ' FOR UPDATE '. $this->_lockOption : ' FOR UPDATE';
             $this->_query .= $lockStr;
         }
         if ($this->_lockInShareMode) {
+            $this->_lastTransactionOp = self::TS_OP_LOCK_IN_SHARE;
             $this->_query .= ' LOCK IN SHARE MODE';
         }
         $this->lastQuery = $this->replacePlaceHolders($this->_query, $this->_bindParams);
