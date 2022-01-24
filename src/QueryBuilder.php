@@ -54,7 +54,7 @@ class QueryBuilder
     private $_tableName = '';
     private $_forUpdate = false;
     private $_lockInShareMode = false;
-    private $_lockOption = '';
+    private $_selectLockOption = '';
     private $_subQueryAlias = '';
     private $_limit = null;
     private $_field = '*';
@@ -314,11 +314,11 @@ class QueryBuilder
         if ($isLock) {
             $this->setQueryOption(['FOR UPDATE']);
             if ($option) {
-                $this->_lockOption = $option;
+                $this->_selectLockOption = $option;
             }
         } else {
             unset($this->_queryOptions['FOR UPDATE']);
-            $this->_lockOption = false;
+            $this->_selectLockOption = false;
         }
         return $this;
     }
@@ -423,9 +423,9 @@ class QueryBuilder
      * @param string $option NOWAIT,WAIT 5,SKIP LOCKED
      * @return $this
      */
-    public function setLockOption(string $option)
+    public function setSelectLockOption(string $option)
     {
-        $this->_lockOption = $option;
+        $this->_selectLockOption = $option;
         return $this;
     }
 
@@ -666,7 +666,7 @@ class QueryBuilder
         $this->_nestJoin = false;
         $this->_forUpdate = false;
         $this->_lockInShareMode = false;
-        $this->_lockOption = '';
+        $this->_selectLockOption = '';
         $this->_tableName = '';
         $this->_updateColumns = null;
         return $this;
@@ -1063,7 +1063,7 @@ class QueryBuilder
         $this->_buildUnion();
         if ($this->_forUpdate) {
             $this->_lastTransactionOp = self::TS_OP_LOCK_FOR_UPDATE;
-            $lockStr = $this->_lockOption ? ' FOR UPDATE '. $this->_lockOption : ' FOR UPDATE';
+            $lockStr = $this->_selectLockOption ? ' FOR UPDATE '. $this->_selectLockOption : ' FOR UPDATE';
             $this->_query .= $lockStr;
         }
         if ($this->_lockInShareMode) {
