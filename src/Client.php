@@ -46,9 +46,36 @@ class Client
         $this->queryBuilder()->reset();
     }
 
+    function query(QueryBuilder $builder,float $timeout = null)
+    {
+        $this->lastQueryBuilder = $builder;
+        $start = microtime(true);
+        if($timeout === null){
+            $timeout = $this->config->getTimeout();
+        }
+        try{
+            $this->connect();
+            $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
+            if($stmt){
+                $ret = $stmt->execute($builder->getLastBindParams(),$timeout);
+            }else{
+                $ret = false;
+            }
+            if($this->onQuery){
+                call_user_func($this->onQuery,$ret,$this,$start);
+            }
+            if($ret === false && $this->mysqlClient()->errno){
+                throw new Exception($this->mysqlClient()->error);
+            }
+            return $ret;
+        }catch (\Throwable $exception){
+            throw $exception;
+        }
+    }
+
     function execBuilder(float $timeout = null)
     {
-        $this->lastQueryBuilder = $this->queryBuilder;
+        $this->lastQueryBuilder = clone $this->queryBuilder;
         $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
@@ -56,7 +83,6 @@ class Client
         try{
             $this->connect();
             $stmt = $this->mysqlClient()->prepare($this->queryBuilder()->getLastPrepareQuery(),$timeout);
-            $ret = null;
             if($stmt){
                 $ret = $stmt->execute($this->queryBuilder()->getLastBindParams(),$timeout);
             }else{
