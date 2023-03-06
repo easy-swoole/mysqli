@@ -22,6 +22,6 @@
         }
     },
     "require": {
-        "easyswoole/spl": "^1.2"
+        "easyswoole/spl": "^2.0"
     }
 }
