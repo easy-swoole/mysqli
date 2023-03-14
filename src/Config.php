@@ -14,7 +14,7 @@ class Config extends SplBean
     protected $database;//数据库
     protected $port = 3306;
     protected $timeout = 30;
-    protected $charset = 'utf8';
+    protected $charset = 'utf8mb4';
     protected $strict_type =  false; //开启严格模式，返回的字段将自动转为数字类型
     protected $fetch_mode = false;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行
     protected $maxReconnectTimes = 3;
