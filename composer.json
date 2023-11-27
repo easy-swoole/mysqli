@@ -23,6 +23,6 @@
     },
     "require": {
         "easyswoole/spl": "^2.0",
-        "ext-php": ">=8.1"
+        "php": ">=8.1"
     }
 }
