@@ -19,6 +19,8 @@ class Config extends SplBean
     protected $fetch_mode = false;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行
     protected $maxReconnectTimes = 3;
 
+    protected $useMysqli = false;
+
     /**
      * @return mixed
      */
@@ -177,5 +179,15 @@ class Config extends SplBean
     public function setMaxReconnectTimes(int $maxReconnectTimes): void
     {
         $this->maxReconnectTimes = $maxReconnectTimes;
+    }
+
+    public function isUseMysqli(): bool
+    {
+        return $this->useMysqli;
+    }
+
+    public function setUseMysqli(bool $useMysqli): void
+    {
+        $this->useMysqli = $useMysqli;
     }
 }
