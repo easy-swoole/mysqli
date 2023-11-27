@@ -413,7 +413,9 @@ class QueryBuilder
             } elseif ($option == 'LOCK IN SHARE MODE') {
                 $this->_lockInShareMode = true;
             } else {
-                $this->_queryOptions[] = $option;
+                if(!in_array($option,$this->_queryOptions)){
+                    $this->_queryOptions[] = $option;
+                }
             }
         }
         return $this;
