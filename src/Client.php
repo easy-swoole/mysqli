@@ -6,6 +6,7 @@ namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exception\Exception;
 use mysqli;
+use mysqli_result;
 use Swoole\Coroutine\MySQL;
 use Throwable;
 
@@ -54,7 +55,9 @@ class Client
                 $stmt->bind_param(...$p);
                 $stmt->execute();
                 $ret = $stmt->get_result();
-                $ret = $ret->fetch_all(MYSQLI_ASSOC);
+                if($ret instanceof mysqli_result){
+                    $ret = $ret->fetch_all(MYSQLI_ASSOC);
+                }
             }else{
                 $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
                 if($stmt){
@@ -81,7 +84,6 @@ class Client
     {
         $builder = new QueryBuilder();
         $builder->raw($query);
-        $this->lastQueryBuilder = $builder;
         $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
@@ -90,7 +92,7 @@ class Client
             $this->connect();
             if($this->config->isUseMysqli()){
                 $ret = $this->mysqlClient->query($query);
-                if($ret){
+                if($ret instanceof mysqli_result){
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
                 }
             }else{
