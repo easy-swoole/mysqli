@@ -58,6 +58,7 @@ class Client
                 if($ret instanceof mysqli_result){
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
                 }
+                $stmt->close();
             }else{
                 $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
                 if($stmt){
@@ -119,9 +120,10 @@ class Client
     function connect():bool
     {
         if($this->config->isUseMysqli()){
-            if(!$this->mysqlClient instanceof mysqli){
-                $this->mysqlClient = new mysqli();
+            if($this->mysqliHasConnected){
+                return true;
             }
+            $this->mysqlClient = new mysqli();
             $c = [
                 'hostname'=>$this->config->getHost(),
                 'username'=>$this->config->getUser(),
