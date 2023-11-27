@@ -154,9 +154,11 @@ class Client
                 $this->mysqlClient->close();
             }
             $this->mysqlClient = null;
-        }else{
-            $this->mysqlClient->close();
-            $this->mysqliHasConnected = false;
+        }else if($this->mysqlClient instanceof mysqli){
+            if($this->mysqliHasConnected){
+                $this->mysqlClient->close();
+                $this->mysqliHasConnected = false;
+            }
             $this->mysqlClient = null;
         }
         return true;
