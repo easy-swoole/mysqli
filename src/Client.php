@@ -54,11 +54,13 @@ class Client
                 foreach ($builder->getLastBindParams() as $item){
                     $p .= $this->determineType($item);
                 }
-                $p = [$p];
-                foreach ($builder->getLastBindParams() as $param){
-                    $p[] = $param;
+                if(!empty($p)){
+                    $p = [$p];
+                    foreach ($builder->getLastBindParams() as $param){
+                        $p[] = $param;
+                    }
+                    $stmt->bind_param(...$p);
                 }
-                $stmt->bind_param(...$p);
                 $stmt->execute();
                 $ret = $stmt->get_result();
                 if($ret instanceof mysqli_result){
