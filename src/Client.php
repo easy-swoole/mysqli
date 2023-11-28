@@ -20,6 +20,10 @@ class Client
 
     protected $onQuery;
 
+    protected int|string|null $lastInsertId = null;
+
+    protected int|string|null $lastAffectRows = null;
+
     function __construct(Config $config)
     {
         $this->config = $config;
@@ -33,6 +37,8 @@ class Client
 
     function query(QueryBuilder $builder,float $timeout = null)
     {
+        $this->lastInsertId = null;
+        $this->lastAffectRows = null;
         $start = microtime(true);
         if($timeout === null){
             $timeout = $this->config->getTimeout();
@@ -40,7 +46,7 @@ class Client
         try{
             $this->connect();
             if($this->config->isUseMysqli()){
-                $stmt = $this->mysqlClient->prepare($builder->getLastPrepareQuery());
+                $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery());
                 if(!$stmt){
                    throw new Exception("prepare {$builder->getLastPrepareQuery()} fail");
                 }
@@ -57,12 +63,16 @@ class Client
                 $ret = $stmt->get_result();
                 if($ret instanceof mysqli_result){
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
+                    $this->lastInsertId = $stmt->insert_id;
+                    $this->lastAffectRows = $stmt->affected_rows;
                 }
                 $stmt->close();
             }else{
                 $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
                 if($stmt){
                     $ret = $stmt->execute($builder->getLastBindParams(),$timeout);
+                    $this->lastInsertId = $this->mysqlClient()->insert_id;
+                    $this->lastAffectRows = $this->mysqlClient()->affected_rows;
                 }else{
                     $ret = false;
                 }
@@ -83,6 +93,8 @@ class Client
 
     function rawQuery(string $query,float $timeout = null)
     {
+        $this->lastInsertId = null;
+        $this->lastAffectRows = null;
         $builder = new QueryBuilder();
         $builder->raw($query);
         $start = microtime(true);
@@ -92,12 +104,16 @@ class Client
         try{
             $this->connect();
             if($this->config->isUseMysqli()){
-                $ret = $this->mysqlClient->query($query);
+                $ret = $this->mysqlClient()->query($query);
                 if($ret instanceof mysqli_result){
+                    $this->lastInsertId = $this->mysqlClient()->insert_id;
+                    $this->lastAffectRows = $this->mysqlClient()->affected_rows;
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
                 }
             }else{
                 $ret = $this->mysqlClient()->query($query,$timeout);
+                $this->lastInsertId = $this->mysqlClient()->insert_id;
+                $this->lastAffectRows = $this->mysqlClient()->affected_rows;
             }
             if($this->onQuery){
                 call_user_func($this->onQuery,$ret,$this,$start);
@@ -194,5 +210,15 @@ class Client
                 break;
         }
         return '';
+    }
+
+    public function getLastInsertId(): int|string|null
+    {
+        return $this->lastInsertId;
+    }
+
+    public function getLastAffectRows(): int|string|null
+    {
+        return $this->lastAffectRows;
     }
 }
