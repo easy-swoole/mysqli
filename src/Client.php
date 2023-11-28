@@ -48,7 +48,7 @@ class Client
             if($this->config->isUseMysqli()){
                 $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery());
                 if(!$stmt){
-                   throw new Exception("prepare {$builder->getLastPrepareQuery()} fail");
+                    throw new Exception("prepare {$builder->getLastPrepareQuery()} fail");
                 }
                 $p = '';
                 foreach ($builder->getLastBindParams() as $item){
@@ -63,9 +63,9 @@ class Client
                 $ret = $stmt->get_result();
                 if($ret instanceof mysqli_result){
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
-                    $this->lastInsertId = $stmt->insert_id;
-                    $this->lastAffectRows = $stmt->affected_rows;
                 }
+                $this->lastInsertId = $stmt->insert_id;
+                $this->lastAffectRows = $stmt->affected_rows;
                 $stmt->close();
             }else{
                 $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
@@ -106,10 +106,10 @@ class Client
             if($this->config->isUseMysqli()){
                 $ret = $this->mysqlClient()->query($query);
                 if($ret instanceof mysqli_result){
-                    $this->lastInsertId = $this->mysqlClient()->insert_id;
-                    $this->lastAffectRows = $this->mysqlClient()->affected_rows;
                     $ret = $ret->fetch_all(MYSQLI_ASSOC);
                 }
+                $this->lastInsertId = $this->mysqlClient()->insert_id;
+                $this->lastAffectRows = $this->mysqlClient()->affected_rows;
             }else{
                 $ret = $this->mysqlClient()->query($query,$timeout);
                 $this->lastInsertId = $this->mysqlClient()->insert_id;
