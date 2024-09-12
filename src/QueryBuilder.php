@@ -50,7 +50,6 @@ class QueryBuilder
     private $_bindParams = [''];
     private $_isSubQuery = false;
     private $_updateColumns = null;
-    private $_nestJoin = false;
     private $_tableName = '';
     private $_forUpdate = false;
     private $_lockInShareMode = false;
@@ -397,7 +396,7 @@ class QueryBuilder
     {
         $allowedOptions = ['ALL', 'DISTINCT', 'DISTINCTROW', 'HIGH_PRIORITY', 'STRAIGHT_JOIN', 'SQL_SMALL_RESULT',
             'SQL_BIG_RESULT', 'SQL_BUFFER_RESULT', 'SQL_CACHE', 'SQL_NO_CACHE', 'SQL_CALC_FOUND_ROWS',
-            'LOW_PRIORITY', 'IGNORE', 'QUICK', 'MYSQLI_NESTJOIN', 'FOR UPDATE', 'LOCK IN SHARE MODE'];
+            'LOW_PRIORITY', 'IGNORE', 'QUICK', 'FOR UPDATE', 'LOCK IN SHARE MODE'];
         if (!is_array($options)) {
             $options = [$options];
         }
@@ -406,9 +405,7 @@ class QueryBuilder
             if (!in_array($option, $allowedOptions)) {
                 throw new Exception('Wrong query option: ' . $option);
             }
-            if ($option == 'MYSQLI_NESTJOIN') {
-                $this->_nestJoin = true;
-            } elseif ($option == 'FOR UPDATE') {
+            if ($option == 'FOR UPDATE') {
                 $this->_forUpdate = true;
             } elseif ($option == 'LOCK IN SHARE MODE') {
                 $this->_lockInShareMode = true;
@@ -665,7 +662,6 @@ class QueryBuilder
         $this->_bindParams = [''];
         $this->_query = null;
         $this->_queryOptions = array();
-        $this->_nestJoin = false;
         $this->_forUpdate = false;
         $this->_lockInShareMode = false;
         $this->_selectLockOption = '';
