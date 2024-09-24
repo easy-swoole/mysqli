@@ -693,7 +693,7 @@ class QueryBuilder
         if (!is_numeric($num)||$num<=0) {
             throw new Exception('Argument supplied to inc must be a positive number');
         }
-        return array("[I]" => "+" . $num);
+        return array("[I]" => " + " . $num);
     }
 
     /**
@@ -707,7 +707,7 @@ class QueryBuilder
         if (!is_numeric($num)||$num<=0) {
             throw new Exception('Argument supplied to dec must be a positive number');
         }
-        return array("[I]" => "-" . $num);
+        return array("[I]" => " - " . $num);
     }
 
     /**
