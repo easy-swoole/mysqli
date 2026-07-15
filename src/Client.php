@@ -35,7 +35,7 @@ class Client
         return $this;
     }
 
-    function query(QueryBuilder $builder,float $timeout = null)
+    function query(QueryBuilder $builder,float|null $timeout = null)
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;
@@ -93,7 +93,7 @@ class Client
     }
 
 
-    function rawQuery(string $query,float $timeout = null)
+    function rawQuery(string $query,float|null $timeout = null)
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;

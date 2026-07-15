@@ -63,7 +63,7 @@ class QueryBuilder
      */
     private $_query;
 
-    public function __construct(bool $isSubQuery = false, ?string $subQueryAlias = null)
+    public function __construct(bool $isSubQuery = false, string|null $subQueryAlias = null)
     {
         if ($isSubQuery) {
             $this->_isSubQuery = true;
@@ -71,7 +71,7 @@ class QueryBuilder
         }
     }
 
-    public function limit(int $one, ?int $two = null): QueryBuilder
+    public function limit(int $one, int|null $two = null): QueryBuilder
     {
         if ($two !== null) {
             $this->_limit = [$one, $two];
@@ -308,7 +308,7 @@ class QueryBuilder
      * @return $this
      * @throws Exception
      */
-    public function selectForUpdate($isLock = true, string $option = null)
+    public function selectForUpdate($isLock = true, string|null $option = null)
     {
         if ($isLock) {
             $this->setQueryOption(['FOR UPDATE']);
@@ -736,7 +736,7 @@ class QueryBuilder
      * @param string|null $subQueryAlias
      * @return QueryBuilder
      */
-    public static function subQuery(string $subQueryAlias = null)
+    public static function subQuery(string|null $subQueryAlias = null)
     {
         return new static(true, $subQueryAlias);
     }
