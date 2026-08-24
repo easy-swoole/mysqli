@@ -7,7 +7,6 @@ namespace EasySwoole\Mysqli;
 use EasySwoole\Mysqli\Exception\Exception;
 use mysqli;
 use mysqli_result;
-use Swoole\Coroutine\MySQL;
 use Throwable;
 
 class Client
@@ -16,7 +15,7 @@ class Client
 
     protected bool $mysqliHasConnected = false;
 
-    protected MySQL|mysqli|null $mysqlClient = null;
+    protected mysqli|null $mysqlClient = null;
 
     protected $onQuery;
 
@@ -35,61 +34,53 @@ class Client
         return $this;
     }
 
-    function query(QueryBuilder $builder,float|null $timeout = null)
+    function query(QueryBuilder $builder)
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;
         $start = microtime(true);
-        if($timeout === null){
-            $timeout = $this->config->getTimeout();
-        }
-        try{
-            $this->connect();
-            if($this->config->isUseMysqli()){
-                $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery());
-                if(!$stmt){
-                    throw new Exception("prepare {$builder->getLastPrepareQuery()} fail");
-                }
-                $p = '';
-                foreach ($builder->getLastBindParams() as $item){
-                    $p .= $this->determineType($item);
-                }
-                if(!empty($p)){
-                    $p = [$p];
-                    foreach ($builder->getLastBindParams() as $param){
-                        $p[] = $param;
-                    }
-                    $stmt->bind_param(...$p);
-                }
-                $stmt->execute();
-                $ret = $stmt->get_result();
-                if($ret instanceof mysqli_result){
-                    $ret = $ret->fetch_all(MYSQLI_ASSOC);
-                }
-                $this->lastInsertId = $stmt->insert_id;
-                $this->lastAffectRows = $stmt->affected_rows;
-                $stmt->close();
-            }else{
-                $stmt = $this->mysqlClient()->prepare($builder->getLastPrepareQuery(),$timeout);
-                if($stmt){
-                    $ret = $stmt->execute($builder->getLastBindParams(),$timeout);
-                    $this->lastInsertId = $this->mysqlClient()->insert_id;
-                    $this->lastAffectRows = $this->mysqlClient()->affected_rows;
-                }else{
-                    $ret = false;
-                }
-            }
+        $this->connect();
 
-            if($this->onQuery){
-                call_user_func($this->onQuery,$ret,$this,$start);
-            }
-            if($ret === false && $this->mysqlClient()->errno){
-                throw new Exception($this->mysqlClient()->error);
-            }
-            return $ret;
-        }catch (Throwable $exception){
-            throw new Exception($exception->getMessage());
+        $lastPrepareSql = $builder->getLastPrepareQuery();
+
+        $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
+        if(!$stmt){
+            throw new Exception("mysqli prepare {$lastPrepareSql} fail");
         }
+        $p = '';
+        foreach ($builder->getLastBindParams() as $item){
+            $p .= $this->determineType($item);
+        }
+
+        var_dump($builder->getLastQuery());
+
+        try {
+            if(!empty($p)){
+                $p = [$p];
+                foreach ($builder->getLastBindParams() as $param){
+                    $p[] = $param;
+                }
+                $stmt->bind_param(...$p);
+            }
+        }catch (\Throwable $throwable){
+
+        }
+
+        $stmt->execute();
+        $ret = $stmt->get_result();
+        if($ret instanceof mysqli_result){
+            $ret = $ret->fetch_all(MYSQLI_ASSOC);
+        }
+        $this->lastInsertId = $stmt->insert_id;
+        $this->lastAffectRows = $stmt->affected_rows;
+        $stmt->close();
+        if($this->onQuery){
+            call_user_func($this->onQuery,$ret,$this,$start);
+        }
+        if($ret === false && $this->mysqlClient()->errno){
+            throw new Exception($this->mysqlClient()->error);
+        }
+        return $ret;
     }
 
 
@@ -130,57 +121,40 @@ class Client
 
     }
 
-    function mysqlClient():MySQL|mysqli|null
+    function mysqlClient():mysqli|null
     {
         return $this->mysqlClient;
     }
 
     function connect():bool
     {
-        if($this->config->isUseMysqli()){
-            if($this->mysqliHasConnected){
-                return true;
-            }
-            $this->mysqlClient = new mysqli();
-            $c = [
-                'hostname'=>$this->config->getHost(),
-                'username'=>$this->config->getUser(),
-                'password'=>$this->config->getPassword(),
-                'port'=>$this->config->getPort()
-            ];
-            $ret =  $this->mysqlClient->connect(...$c);
-            if($ret){
-                $this->mysqlClient->select_db($this->config->getDatabase());
-                $this->mysqlClient->set_charset($this->config->getCharset());
-                $this->mysqliHasConnected = true;
-            }
-            return $ret;
-        }else{
-            if(!$this->mysqlClient instanceof MySQL){
-                $this->mysqlClient = new MySQL();
-            }
-            if(!$this->mysqlClient->connected){
-                return (bool)$this->mysqlClient->connect($this->config->toArray());
-            }
+        if($this->mysqliHasConnected){
             return true;
         }
-
+        $this->mysqlClient = new mysqli();
+        $c = [
+            'hostname'=>$this->config->getHost(),
+            'username'=>$this->config->getUser(),
+            'password'=>$this->config->getPassword(),
+            'port'=>$this->config->getPort()
+        ];
+        $ret =  $this->mysqlClient->connect(...$c);
+        if($ret){
+            $this->mysqlClient->select_db($this->config->getDatabase());
+            $this->mysqlClient->set_charset($this->config->getCharset());
+            $this->mysqliHasConnected = true;
+        }
+        return $ret;
     }
 
     function close():bool
     {
-        if($this->mysqlClient instanceof MySQL){
-            if($this->mysqlClient->connected){
-                $this->mysqlClient->close();
-            }
-            $this->mysqlClient = null;
-        }else if($this->mysqlClient instanceof mysqli){
-            if($this->mysqliHasConnected){
-                $this->mysqlClient->close();
-                $this->mysqliHasConnected = false;
-            }
-            $this->mysqlClient = null;
+        if($this->mysqliHasConnected){
+            $this->mysqlClient->close();
+            $this->mysqliHasConnected = false;
         }
+        $this->mysqlClient = null;
+
         return true;
     }
 
@@ -196,20 +170,16 @@ class Client
             case 'NULL':
             case 'string':
                 return 's';
-                break;
 
             case 'boolean':
             case 'integer':
                 return 'i';
-                break;
 
             case 'blob':
                 return 'b';
-                break;
 
             case 'double':
                 return 'd';
-                break;
         }
         return '';
     }

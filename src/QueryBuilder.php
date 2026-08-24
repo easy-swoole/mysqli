@@ -34,6 +34,8 @@ class QueryBuilder
     //锁标记
     private $_lastTransactionOp = null;
 
+    private string|null $currentOpColumn = null;
+
 
     // 以下为查询条件容器
     private $_join = [];
@@ -57,7 +59,6 @@ class QueryBuilder
     private $_subQueryAlias = '';
     private $_limit = null;
     private $_field = '*';
-    private $_lastInsertId = null;
     /*
      * 查询构造结构
      */
@@ -575,12 +576,10 @@ class QueryBuilder
     /**
      * onDuplicate插入
      * @param $updateColumns
-     * @param null $lastInsertId
      * @return $this
      */
-    public function onDuplicate($updateColumns, $lastInsertId = null)
+    public function onDuplicate($updateColumns)
     {
-        $this->_lastInsertId = $lastInsertId;
         $this->_updateColumns = $updateColumns;
         return $this;
     }
@@ -1119,10 +1118,14 @@ class QueryBuilder
             $this->_bindParam($value);
             return ' ' . $operator . ' ? ';
         }
-        /** @var QueryBuilder $value */
-        $subQuery = $value->getSubQuery();
-        $this->_bindParams($subQuery['params']);
-        return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
+        if($value instanceof QueryBuilder){
+            $subQuery = $value->getSubQuery();
+            $this->_bindParams($subQuery['params']);
+            return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
+        }else{
+            $type = get_class($value);
+            throw new Exception("value for column {$this->currentOpColumn} cannot be {$type}");
+        }
     }
 
     /**
@@ -1276,7 +1279,9 @@ class QueryBuilder
         foreach ($conditions as $cond) {
             list ($concat, $varName, $operator, $val) = $cond;
 
-             if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false){
+            $this->currentOpColumn = $varName;
+
+            if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false){
                 // DBNULL是纯字符串条件，也不能有()函数调用
                 $varNameArray = explode('.', $varName);
                 $varName = "`{$varNameArray[0]}`.`{$varNameArray[1]}`";
@@ -1295,9 +1300,14 @@ class QueryBuilder
                     if (is_object($val)) {
                         $comparison .= $this->_buildPair("", $val);
                     } else {
-                        foreach ($val as $v) {
-                            $comparison .= ' ?,';
-                            $this->_bindParam($v);
+                        if(is_array($val)) {
+                            foreach ($val as $v) {
+                                $comparison .= ' ?,';
+                                $this->_bindParam($v);
+                            }
+                        }else{
+                            $type = gettype($val);
+                            throw new Exception("value for column {$this->currentOpColumn} must be array or object,{$type} given}");
                         }
                     }
                     $this->_query .= rtrim($comparison, ',') . ' ) ';

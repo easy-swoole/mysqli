@@ -23,6 +23,8 @@
     },
     "require": {
         "easyswoole/spl": "^2.0",
-        "php": ">=8.1"
+        "php": ">=8.1",
+        "ext-mysqli": "*",
+        "ext-swoole": ">=5.1"
     }
 }
