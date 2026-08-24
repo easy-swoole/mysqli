@@ -155,7 +155,7 @@ class QueryBuilder
         // from table names
         $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_%`\']*\.)/', '\1' . $this->prefix . '\2', $orderByField);
         if (empty($orderbyDirection) || !in_array($orderbyDirection, $allowedDirection)) {
-            throw new Exception('Wrong order direction: ' . $orderbyDirection);
+            throw new Exception("Wrong order direction: {$orderbyDirection} for column {$orderByField} in table {$this->_tableName}");
         }
         if (is_array($customFieldsOrRegExp)) {
             foreach ($customFieldsOrRegExp as $key => $value) {
@@ -165,7 +165,7 @@ class QueryBuilder
         } elseif (is_string($customFieldsOrRegExp)) {
             $orderByField = $orderByField . " REGEXP '" . $customFieldsOrRegExp . "'";
         } elseif ($customFieldsOrRegExp !== null) {
-            throw new Exception('Wrong custom field or Regular Expression: ' . $customFieldsOrRegExp);
+            throw new Exception("Wrong custom field or Regular Expression: {$customFieldsOrRegExp} for column {$orderByField} in table {$this->_tableName}");
         }
         $this->_orderBy[$orderByField] = $orderbyDirection;
         return $this;
@@ -336,7 +336,7 @@ class QueryBuilder
                 $this->_tableLockMethod = $method;
                 break;
             default:
-                throw new Exception("Bad lock type: Can be either READ or WRITE");
+                throw new Exception("Bad lock type: Can be either READ or WRITE for table {$this->_tableName}");
                 break;
         }
         return $this;
@@ -404,7 +404,7 @@ class QueryBuilder
         foreach ($options as $option) {
             $option = strtoupper($option);
             if (!in_array($option, $allowedOptions)) {
-                throw new Exception('Wrong query option: ' . $option);
+                throw new Exception('Wrong query option: ' . $option ." for table {$this->_tableName}");
             }
             if ($option == 'FOR UPDATE') {
                 $this->_forUpdate = true;
@@ -861,17 +861,13 @@ class QueryBuilder
             case 'NULL':
             case 'string':
                 return 's';
-                break;
             case 'boolean':
             case 'integer':
                 return 'i';
-                break;
             case 'blob':
                 return 'b';
-                break;
             case 'double':
                 return 'd';
-                break;
         }
         return '';
     }
@@ -1124,7 +1120,7 @@ class QueryBuilder
             return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
         }else{
             $type = get_class($value);
-            throw new Exception("value for column {$this->currentOpColumn} cannot be {$type}");
+            throw new Exception("value for column {$this->currentOpColumn} in table {$this->_tableName} cannot be {$type}");
         }
     }
 
@@ -1258,7 +1254,7 @@ class QueryBuilder
                     }
                     break;
                 default:
-                    throw new Exception("Wrong operation");
+                    throw new Exception("Wrong operation or value for column {$column} in table {$this->_tableName}");
             }
         }
         $this->_query = rtrim($this->_query, ', ');
@@ -1307,7 +1303,7 @@ class QueryBuilder
                             }
                         }else{
                             $type = gettype($val);
-                            throw new Exception("value for column {$this->currentOpColumn} must be array or object,{$type} given}");
+                            throw new Exception("value for column {$this->currentOpColumn} in table {$this->_tableName} must be array or object,{$type} given}");
                         }
                     }
                     $this->_query .= rtrim($comparison, ',') . ' ) ';
@@ -1322,6 +1318,9 @@ class QueryBuilder
                     $this->_query .= $operator . $this->_buildPair("", $val);
                     break;
                 default:
+                    if(in_array($operator, ['=','<=>','<>','!=','>','<' ,'>=', '<=']) && is_array($val)) {
+                        throw new Exception("value for column {$this->currentOpColumn} in table {$this->_tableName} can not be array");
+                    }
                     if (is_array($val)) {
                         $this->_bindParams($val);
                     } elseif ($val === null) {

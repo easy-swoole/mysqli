@@ -11,13 +11,13 @@ use Throwable;
 
 class Client
 {
-    protected $config;
+    protected Config $config;
 
     protected bool $mysqliHasConnected = false;
 
     protected mysqli|null $mysqlClient = null;
 
-    protected $onQuery;
+    protected mixed $onQuery = null;
 
     protected int|string|null $lastInsertId = null;
 
@@ -43,7 +43,12 @@ class Client
 
         $lastPrepareSql = $builder->getLastPrepareQuery();
 
-        $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
+        try {
+            $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
+        }catch (\Throwable $throwable) {
+            throw new Exception("prepare sql {$lastPrepareSql} error , {$throwable->getMessage()}");
+        }
+
         if(!$stmt){
             throw new Exception("mysqli prepare {$lastPrepareSql} fail");
         }
@@ -51,8 +56,6 @@ class Client
         foreach ($builder->getLastBindParams() as $item){
             $p .= $this->determineType($item);
         }
-
-        var_dump($builder->getLastQuery());
 
         try {
             if(!empty($p)){
@@ -63,7 +66,7 @@ class Client
                 $stmt->bind_param(...$p);
             }
         }catch (\Throwable $throwable){
-
+            throw new Exception("Sql {$lastPrepareSql} error {$throwable->getMessage()}");
         }
 
         $stmt->execute();
@@ -84,41 +87,32 @@ class Client
     }
 
 
-    function rawQuery(string $query,float|null $timeout = null)
+    function rawQuery(string $query)
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;
         $builder = new QueryBuilder();
         $builder->raw($query);
         $start = microtime(true);
-        if($timeout === null){
-            $timeout = $this->config->getTimeout();
-        }
-        try{
-            $this->connect();
-            if($this->config->isUseMysqli()){
-                $ret = $this->mysqlClient()->query($query);
-                if($ret instanceof mysqli_result){
-                    $ret = $ret->fetch_all(MYSQLI_ASSOC);
-                }
-                $this->lastInsertId = $this->mysqlClient()->insert_id;
-                $this->lastAffectRows = $this->mysqlClient()->affected_rows;
-            }else{
-                $ret = $this->mysqlClient()->query($query,$timeout);
-                $this->lastInsertId = $this->mysqlClient()->insert_id;
-                $this->lastAffectRows = $this->mysqlClient()->affected_rows;
-            }
-            if($this->onQuery){
-                call_user_func($this->onQuery,$ret,$this,$start);
-            }
-            if($ret === false && $this->mysqlClient()->errno){
-                throw new Exception($this->mysqlClient()->error);
-            }
-            return $ret;
-        }catch (Throwable $exception){
-            throw new Exception($exception->getMessage());
+        $this->connect();
+        try {
+            $ret = $this->mysqlClient()->query($query);
+        }catch (\Throwable $throwable){
+            throw new Exception("exec sql {$query} error , {$throwable->getMessage()}");
         }
 
+        if($ret instanceof mysqli_result){
+            $ret = $ret->fetch_all(MYSQLI_ASSOC);
+        }
+        $this->lastInsertId = $this->mysqlClient()->insert_id;
+        $this->lastAffectRows = $this->mysqlClient()->affected_rows;
+        if($this->onQuery){
+            call_user_func($this->onQuery,$ret,$this,$start);
+        }
+        if($ret === false && $this->mysqlClient()->errno){
+            throw new Exception($this->mysqlClient()->error);
+        }
+        return $ret;
     }
 
     function mysqlClient():mysqli|null
