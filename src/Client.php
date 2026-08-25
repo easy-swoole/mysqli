@@ -66,10 +66,15 @@ class Client
                 $stmt->bind_param(...$p);
             }
         }catch (\Throwable $throwable){
-            throw new Exception("Sql {$lastPrepareSql} error {$throwable->getMessage()}");
+
         }
 
-        $stmt->execute();
+        try {
+            $stmt->execute();
+        }catch (\Throwable $throwable){
+            throw new Exception("Sql {$lastPrepareSql} execute error {$throwable->getMessage()}");
+        }
+
         $ret = $stmt->get_result();
         if($ret instanceof mysqli_result){
             $ret = $ret->fetch_all(MYSQLI_ASSOC);
