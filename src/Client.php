@@ -43,6 +43,8 @@ class Client
 
         $lastPrepareSql = $builder->getLastPrepareQuery();
 
+        var_dump('ssss');
+
         try {
             $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
         }catch (\Throwable $throwable) {
@@ -137,11 +139,14 @@ class Client
             'password'=>$this->config->getPassword(),
             'port'=>$this->config->getPort()
         ];
-        $ret =  $this->mysqlClient->connect(...$c);
-        if($ret){
+        $this->mysqlClient->options(MYSQLI_OPT_CONNECT_TIMEOUT,$this->config->getMaxConnectTime());
+        try {
+            $ret =  $this->mysqlClient->connect(...$c);
             $this->mysqlClient->select_db($this->config->getDatabase());
             $this->mysqlClient->set_charset($this->config->getCharset());
             $this->mysqliHasConnected = true;
+        }catch (\Throwable $throwable){
+            throw new Exception("connect to {$this->config->getHost()}:{$this->config->getPort()} error,{$throwable->getMessage()}");
         }
         return $ret;
     }

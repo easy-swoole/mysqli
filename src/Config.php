@@ -8,18 +8,15 @@ use EasySwoole\Spl\SplBean;
 
 class Config extends SplBean
 {
-    protected $host;
-    protected $user;
-    protected $password;
-    protected $database;//数据库
-    protected $port = 3306;
-    protected $timeout = 30;
-    protected $charset = 'utf8mb4';
-    protected $strict_type =  false; //开启严格模式，返回的字段将自动转为数字类型
-    protected $fetch_mode = false;//开启fetch模式, 可与pdo一样使用fetch/fetchAll逐行
-    protected $maxReconnectTimes = 3;
+    protected string $host;
+    protected string $user;
+    protected string $password;
+    protected string $database;//数据库
+    protected int $port = 3306;
+    protected int $timeout = 3;
+    protected string $charset = 'utf8mb4';
+    protected int $maxConnectTime = 3;
 
-    protected $useMysqli = false;
 
     /**
      * @return mixed
@@ -32,7 +29,7 @@ class Config extends SplBean
     /**
      * @param mixed $host
      */
-    public function setHost($host): void
+    public function setHost(string $host): void
     {
         $this->host = $host;
     }
@@ -40,7 +37,7 @@ class Config extends SplBean
     /**
      * @return mixed
      */
-    public function getUser()
+    public function getUser(): string
     {
         return $this->user;
     }
@@ -48,7 +45,7 @@ class Config extends SplBean
     /**
      * @param mixed $user
      */
-    public function setUser($user): void
+    public function setUser(string $user): void
     {
         $this->user = $user;
     }
@@ -56,7 +53,7 @@ class Config extends SplBean
     /**
      * @return mixed
      */
-    public function getPassword()
+    public function getPassword():string
     {
         return $this->password;
     }
@@ -64,7 +61,7 @@ class Config extends SplBean
     /**
      * @param mixed $password
      */
-    public function setPassword($password): void
+    public function setPassword(string $password): void
     {
         $this->password = $password;
     }
@@ -72,7 +69,7 @@ class Config extends SplBean
     /**
      * @return mixed
      */
-    public function getDatabase()
+    public function getDatabase():string
     {
         return $this->database;
     }
@@ -80,7 +77,7 @@ class Config extends SplBean
     /**
      * @param mixed $database
      */
-    public function setDatabase($database): void
+    public function setDatabase(string $database): void
     {
         $this->database = $database;
     }
@@ -101,10 +98,8 @@ class Config extends SplBean
         $this->port = $port;
     }
 
-    /**
-     * @return float
-     */
-    public function getTimeout(): float
+
+    public function getTimeout(): int
     {
         return $this->timeout;
     }
@@ -134,60 +129,18 @@ class Config extends SplBean
     }
 
     /**
-     * @return bool
-     */
-    public function isStrictType(): bool
-    {
-        return $this->strict_type;
-    }
-
-    /**
-     * @param bool $strict_type
-     */
-    public function setStrictType(bool $strict_type): void
-    {
-        $this->strict_type = $strict_type;
-    }
-
-    /**
-     * @return bool
-     */
-    public function isFetchMode(): bool
-    {
-        return $this->fetch_mode;
-    }
-
-    /**
-     * @param bool $fetch_mode
-     */
-    public function setFetchMode(bool $fetch_mode): void
-    {
-        $this->fetch_mode = $fetch_mode;
-    }
-
-    /**
      * @return int
      */
-    public function getMaxReconnectTimes(): int
+    public function getMaxConnectTime(): int
     {
-        return $this->maxReconnectTimes;
+        return $this->maxConnectTime;
     }
 
     /**
-     * @param int $maxReconnectTimes
+     * @param int $maxConnectTime
      */
-    public function setMaxReconnectTimes(int $maxReconnectTimes): void
+    public function setMaxConnectTime(int $maxConnectTime): void
     {
-        $this->maxReconnectTimes = $maxReconnectTimes;
-    }
-
-    public function isUseMysqli(): bool
-    {
-        return $this->useMysqli;
-    }
-
-    public function setUseMysqli(bool $useMysqli): void
-    {
-        $this->useMysqli = $useMysqli;
+        $this->maxConnectTime = $maxConnectTime;
     }
 }
