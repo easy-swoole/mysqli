@@ -43,8 +43,6 @@ class Client
 
         $lastPrepareSql = $builder->getLastPrepareQuery();
 
-        var_dump('ssss');
-
         try {
             $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
         }catch (\Throwable $throwable) {
@@ -141,7 +139,7 @@ class Client
         ];
         $this->mysqlClient->options(MYSQLI_OPT_CONNECT_TIMEOUT,$this->config->getMaxConnectTime());
         try {
-            $ret =  $this->mysqlClient->connect(...$c);
+            $ret = $this->mysqlClient->connect(...$c);
             $this->mysqlClient->select_db($this->config->getDatabase());
             $this->mysqlClient->set_charset($this->config->getCharset());
             $this->mysqliHasConnected = true;
@@ -154,7 +152,7 @@ class Client
     function close():bool
     {
         if($this->mysqliHasConnected){
-            $this->mysqlClient->close();
+            $this->mysqlClient()->close();
             $this->mysqliHasConnected = false;
         }
         $this->mysqlClient = null;
@@ -167,6 +165,15 @@ class Client
         $this->close();
     }
 
+    function ping():bool
+    {
+        try{
+            $this->mysqlClient()->query('select 1');
+            return true;
+        }catch (\Throwable){
+            return false;
+        }
+    }
 
     protected function determineType($item)
     {
