@@ -46,47 +46,47 @@ class Client
         try {
             $stmt = $this->mysqlClient()->prepare($lastPrepareSql);
         }catch (\Throwable $throwable) {
-            throw new Exception("prepare sql {$lastPrepareSql} error , {$throwable->getMessage()}");
+            throw new Exception("prepare sql {$lastPrepareSql} error , {$throwable->getMessage()}", (int)$throwable->getCode(), $throwable);
         }
 
         if(!$stmt){
-            throw new Exception("mysqli prepare {$lastPrepareSql} fail");
+            throw new Exception("mysqli prepare {$lastPrepareSql} fail: {$this->mysqlClient()->error}", $this->mysqlClient()->errno);
         }
-        $p = '';
-        foreach ($builder->getLastBindParams() as $item){
-            $p .= $this->determineType($item);
-        }
-
         try {
-            if(!empty($p)){
-                $p = [$p];
-                foreach ($builder->getLastBindParams() as $param){
-                    $p[] = $param;
+            $params = $builder->getLastBindParams();
+            $types = '';
+            foreach ($params as $param) {
+                $type = $this->determineType($param);
+                if ($type === '') {
+                    throw new Exception('Unsupported bind parameter type: ' . get_debug_type($param));
                 }
-                $stmt->bind_param(...$p);
+                $types .= $type;
             }
-        }catch (\Throwable $throwable){
-
+            if ($types !== '' && !$stmt->bind_param($types, ...$params)) {
+                throw new Exception($stmt->error, $stmt->errno);
+            }
+            if (!$stmt->execute()) {
+                throw new Exception($stmt->error, $stmt->errno);
+            }
+            $ret = $stmt->get_result();
+            if ($ret instanceof mysqli_result) {
+                $result = $ret;
+                $ret = $result->fetch_all(MYSQLI_ASSOC);
+                $result->free();
+            } elseif ($stmt->errno) {
+                throw new Exception($stmt->error, $stmt->errno);
+            } elseif ($stmt->field_count === 0) {
+                $ret = true;
+            }
+            $this->lastInsertId = $stmt->insert_id;
+            $this->lastAffectRows = $stmt->affected_rows;
+        } catch (\Throwable $throwable) {
+            throw new Exception("Sql {$lastPrepareSql} execute error {$throwable->getMessage()}", (int)$throwable->getCode(), $throwable);
+        } finally {
+            $stmt->close();
         }
-
-        try {
-            $stmt->execute();
-        }catch (\Throwable $throwable){
-            throw new Exception("Sql {$lastPrepareSql} execute error {$throwable->getMessage()}");
-        }
-
-        $ret = $stmt->get_result();
-        if($ret instanceof mysqli_result){
-            $ret = $ret->fetch_all(MYSQLI_ASSOC);
-        }
-        $this->lastInsertId = $stmt->insert_id;
-        $this->lastAffectRows = $stmt->affected_rows;
-        $stmt->close();
-        if($this->onQuery){
-            call_user_func($this->onQuery,$ret,$this,$start);
-        }
-        if($ret === false && $this->mysqlClient()->errno){
-            throw new Exception($this->mysqlClient()->error);
+        if ($this->onQuery) {
+            call_user_func($this->onQuery, $ret, $this, $start);
         }
         return $ret;
     }
@@ -96,26 +96,26 @@ class Client
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;
-        $builder = new QueryBuilder();
-        $builder->raw($query);
         $start = microtime(true);
         $this->connect();
         try {
             $ret = $this->mysqlClient()->query($query);
         }catch (\Throwable $throwable){
-            throw new Exception("exec sql {$query} error , {$throwable->getMessage()}");
+            throw new Exception("exec sql {$query} error , {$throwable->getMessage()}", (int)$throwable->getCode(), $throwable);
         }
 
         if($ret instanceof mysqli_result){
-            $ret = $ret->fetch_all(MYSQLI_ASSOC);
+            $result = $ret;
+            $ret = $result->fetch_all(MYSQLI_ASSOC);
+            $result->free();
+        }
+        if ($ret === false) {
+            throw new Exception($this->mysqlClient()->error, $this->mysqlClient()->errno);
         }
         $this->lastInsertId = $this->mysqlClient()->insert_id;
         $this->lastAffectRows = $this->mysqlClient()->affected_rows;
         if($this->onQuery){
             call_user_func($this->onQuery,$ret,$this,$start);
-        }
-        if($ret === false && $this->mysqlClient()->errno){
-            throw new Exception($this->mysqlClient()->error);
         }
         return $ret;
     }
@@ -140,11 +140,13 @@ class Client
         $this->mysqlClient->options(MYSQLI_OPT_CONNECT_TIMEOUT,$this->config->getMaxConnectTime());
         try {
             $ret = $this->mysqlClient->connect(...$c);
-            $this->mysqlClient->select_db($this->config->getDatabase());
-            $this->mysqlClient->set_charset($this->config->getCharset());
+            if (!$ret || !$this->mysqlClient->select_db($this->config->getDatabase()) ||
+                !$this->mysqlClient->set_charset($this->config->getCharset())) {
+                throw new Exception($this->mysqlClient->error, $this->mysqlClient->errno);
+            }
             $this->mysqliHasConnected = true;
         }catch (\Throwable $throwable){
-            throw new Exception("connect to {$this->config->getHost()}:{$this->config->getPort()} error,{$throwable->getMessage()}");
+            throw new Exception("connect to {$this->config->getHost()}:{$this->config->getPort()} error,{$throwable->getMessage()}", (int)$throwable->getCode(), $throwable);
         }
         return $ret;
     }
@@ -168,8 +170,12 @@ class Client
     function ping():bool
     {
         try{
-            $this->mysqlClient()->query('select 1');
-            return true;
+            $result = $this->mysqlClient()->query('select 1');
+            if ($result instanceof mysqli_result) {
+                $result->free();
+                return true;
+            }
+            return false;
         }catch (\Throwable){
             return false;
         }

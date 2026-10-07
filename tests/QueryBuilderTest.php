@@ -7,16 +7,16 @@ namespace EasySwoole\Mysqli\Tests;
 use EasySwoole\Mysqli\QueryBuilder;
 use PHPUnit\Framework\TestCase;
 
-class QueryBuilderTest extends TestCase
+final class QueryBuilderTest extends TestCase
 {
-    protected $builder;
-    public function __construct($name = null, array $data = [], $dataName = '')
+    private QueryBuilder $builder;
+
+    protected function setUp(): void
     {
         $this->builder = new QueryBuilder();
-        parent::__construct($name, $data, $dataName);
     }
 
-    function testGet()
+    public function testGet(): void
     {
         $this->builder->get('get');
         $this->assertEquals('SELECT  * FROM `get`',$this->builder->getLastPrepareQuery());
@@ -55,7 +55,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
-    function testGetOne()
+    public function testGetOne(): void
     {
         $this->builder->getOne('get');
         $this->assertEquals('SELECT  * FROM `get` LIMIT 1',$this->builder->getLastPrepareQuery());
@@ -63,7 +63,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
-    function testGetColumn()
+    public function testGetColumn(): void
     {
         $this->builder->getColumn('get');
         $this->assertEquals('SELECT  * FROM `get`',$this->builder->getLastPrepareQuery());
@@ -101,7 +101,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
-    function testGetScalar()
+    public function testGetScalar(): void
     {
         $this->builder->getScalar('get', 'testscalar');
         $this->assertEquals('SELECT  testscalar FROM `get` LIMIT 1',$this->builder->getLastPrepareQuery());
@@ -124,7 +124,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
-    function testWhereGet()
+    public function testWhereGet(): void
     {
         $this->builder->where('col1',2)->get('whereGet');
         $this->assertEquals('SELECT  * FROM `whereGet` WHERE  `col1` = ? ',$this->builder->getLastPrepareQuery());
@@ -157,7 +157,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals('SELECT  * FROM `whereGet` WHERE  (id = 1 or id = 3)', $this->builder->getLastQuery());
     }
 
-    function testJoinGet()
+    public function testJoinGet(): void
     {
         $this->builder->join('table2','table2.col1 = getTable.col2')->get('getTable');
         $this->assertEquals('SELECT  * FROM `getTable`  JOIN table2 on table2.col1 = getTable.col2',$this->builder->getLastPrepareQuery());
@@ -170,7 +170,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
-    function testGroup()
+    public function testGroup(): void
     {
         $this->builder->groupBy("user_id")->get("test_table");
         $this->assertEquals('SELECT  * FROM `test_table` GROUP BY user_id ',$this->builder->getLastPrepareQuery());
@@ -187,7 +187,7 @@ class QueryBuilderTest extends TestCase
 
     }
 
-    function testJoinWhereGet()
+    public function testJoinWhereGet(): void
     {
         $this->builder->join('table2','table2.col1 = getTable.col2')->where('table2.col1',2)->get('getTable');
         $this->assertEquals('SELECT  * FROM `getTable`  JOIN table2 on table2.col1 = getTable.col2 WHERE  `table2`.`col1` = ? ',$this->builder->getLastPrepareQuery());
@@ -195,7 +195,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([2],$this->builder->getLastBindParams());
     }
 
-    function testUpdate()
+    public function testUpdate(): void
     {
         $this->builder->update('updateTable', ['a' => 1]);
         $this->assertEquals('UPDATE `updateTable` SET `a` = ?', $this->builder->getLastPrepareQuery());
@@ -203,7 +203,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1], $this->builder->getLastBindParams());
     }
 
-    function testLimitUpdate()
+    public function testLimitUpdate(): void
     {
         $this->builder->update('updateTable', ['a' => 1], 5);
         $this->assertEquals('UPDATE `updateTable` SET `a` = ? LIMIT 5', $this->builder->getLastPrepareQuery());
@@ -211,7 +211,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1], $this->builder->getLastBindParams());
     }
 
-    function testWhereUpdate()
+    public function testWhereUpdate(): void
     {
         $this->builder->where('whereUpdate', 'whereValue')->update('updateTable', ['a' => 1]);
         $this->assertEquals('UPDATE `updateTable` SET `a` = ? WHERE  `whereUpdate` = ? ', $this->builder->getLastPrepareQuery());
@@ -222,7 +222,7 @@ class QueryBuilderTest extends TestCase
     /**
      * @throws \Exception
      */
-    function testLockWhereLimitUpdate()
+    public function testLockWhereLimitUpdate(): void
     {
         $this->builder->setQueryOption("FOR UPDATE")->where('whereUpdate', 'whereValue')->update('updateTable', ['a' => 1], 2);
         $this->assertEquals('UPDATE `updateTable` SET `a` = ? WHERE  `whereUpdate` = ?  LIMIT 2 FOR UPDATE', $this->builder->getLastPrepareQuery());
@@ -230,7 +230,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([1, 'whereValue'], $this->builder->getLastBindParams());
     }
 
-    function testForUpdate()
+    public function testForUpdate(): void
     {
         $this->builder->selectForUpdate(true)->where('name',1)->get('test');
         $this->assertEquals('SELECT  * FROM `test` WHERE  `name` = ?  FOR UPDATE', $this->builder->getLastPrepareQuery());
@@ -250,7 +250,7 @@ class QueryBuilderTest extends TestCase
     }
 
 
-    function testDelete()
+    public function testDelete(): void
     {
         $this->builder->delete('deleteTable');
         $this->assertEquals('DELETE FROM `deleteTable`', $this->builder->getLastPrepareQuery());
@@ -258,7 +258,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([], $this->builder->getLastBindParams());
     }
 
-    function testLimitDelete()
+    public function testLimitDelete(): void
     {
         $this->builder->delete('deleteTable', 1);
         $this->assertEquals('DELETE FROM `deleteTable` LIMIT 1', $this->builder->getLastPrepareQuery());
@@ -266,7 +266,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals([], $this->builder->getLastBindParams());
     }
 
-    function testWhereDelete()
+    public function testWhereDelete(): void
     {
         $this->builder->where('whereDelete', 'whereValue')->delete('deleteTable');
         $this->assertEquals('DELETE FROM `deleteTable` WHERE  `whereDelete` = ? ', $this->builder->getLastPrepareQuery());
@@ -274,7 +274,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals(['whereValue'], $this->builder->getLastBindParams());
     }
 
-    function testInsert()
+    public function testInsert(): void
     {
         $this->builder->insert('insertTable', ['a' => 1, 'b' => "b"]);
         $this->assertEquals('INSERT  INTO `insertTable` (`a`, `b`)  VALUES (?, ?)', $this->builder->getLastPrepareQuery());
@@ -287,7 +287,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals(["Don't worry"], $this->builder->getLastBindParams());
     }
 
-    function testInsertAll()
+    public function testInsertAll(): void
     {
         $this->builder->insertAll('insertTable', [
             ['a' => 1, 'b' => "a"],
@@ -297,7 +297,7 @@ class QueryBuilderTest extends TestCase
         $this->assertEquals("INSERT  INTO `insertTable` (`a`, `b`)  VALUES (1, 'a'),(2, 'b')", $this->builder->getLastQuery());
     }
 
-    function testSubQuery()
+    public function testSubQuery(): void
     {
         $sub = $this->builder::subQuery();
         $sub->where ("qty", 2, ">");
@@ -343,7 +343,7 @@ class QueryBuilderTest extends TestCase
 
     }
 
-    public function testUnion()
+    public function testUnion(): void
     {
         $this->builder->union((new QueryBuilder)->where('userName', 'user')->get('user'))->where('adminUserName', 'admin')->get('admin');
         $this->assertEquals('SELECT  * FROM `admin` WHERE  `adminUserName` = ?  UNION SELECT  * FROM `user` WHERE  `userName` = ? ', $this->builder->getLastPrepareQuery());
@@ -352,7 +352,7 @@ class QueryBuilderTest extends TestCase
     }
 
 
-    public function testRaw()
+    public function testRaw(): void
     {
         $this->builder->raw("SELECT * FROM `siam` ");
         $this->assertEquals("SELECT * FROM `siam` ", $this->builder->getLastQuery());

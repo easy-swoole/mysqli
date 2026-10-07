@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/13.4/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         recordTestRunHistory="false"
+         failOnWarning="true"
+         failOnRisky="true"
+         failOnPhpunitDeprecation="true"
+         failOnPhpunitNotice="true">
+    <testsuites>
+        <testsuite name="unit">
+            <file>tests/QueryBuilderTest.php</file>
+            <file>tests/QueryBuilderRegressionTest.php</file>
+        </testsuite>
+        <testsuite name="integration">
+            <file>tests/ClientTest.php</file>
+        </testsuite>
+    </testsuites>
+</phpunit>

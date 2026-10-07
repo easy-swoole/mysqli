@@ -1,8 +1,22 @@
 # Mysqli
 本Mysqli构造器基于 https://github.com/ThingEngineer/PHP-MySQLi-Database-Class 移植实现的协程安全版本。
 ## 单元测试
-```php
-./vendor/bin/co-phpunit tests
+测试使用 PHPUnit 13.4，需要 PHP 8.4 或以上版本及 Swoole 扩展。
+安装开发依赖后运行 `composer test`；单独运行构造器测试可用 `composer test:unit`。
+
+```sh
+# 不依赖数据库的构造器测试
+php tests/run.php --testsuite unit
+
+# 使用专用测试库验证（凭据通过环境变量传入）
+export MYSQLI_TEST_HOST=127.0.0.1
+export MYSQLI_TEST_PORT=3306
+export MYSQLI_TEST_USER=test
+export MYSQLI_TEST_PASSWORD='your-test-password'
+export MYSQLI_TEST_DATABASE=test
+php tests/run.php
+# 也兼容 FAST_DB_TEST_* 环境变量。
+# 集成测试只操作随机命名的 mysqli_regression_* 表，结束后自动删除。
 ```
 
 ## 安装
@@ -26,9 +40,10 @@ $client = new \EasySwoole\Mysqli\Client($config);
 
 go(function ()use($client){
     //构建sql
-    $client->queryBuilder()->get('user_list');
+    $builder = new \EasySwoole\Mysqli\QueryBuilder();
+    $builder->get('user_list');
     //执行sql
-    var_dump($client->execBuilder());
+    var_dump($client->query($builder));
 });
 ```
 ## 查询构造器
@@ -81,8 +96,15 @@ $builder->getOne('getTable')
 // offset 1, limit 10
 $builder->get('getTable',[1, 10])
 
-// 去重查询。
-$builder->get('getTable', [2,10], ['distinct col1','col2']);
+// 去重查询：对所选列的组合去重，仅影响本次查询。
+$builder->distinct()->get('getTable', [2,10], ['col1', 'col2']);
+$builder->distinct(true)->fields('col1')->get('getTable');
+
+// 在构建查询前关闭去重。
+$builder->distinct()->distinct(false)->get('getTable');
+
+// 仍兼容原有查询选项写法。
+$builder->setQueryOption('DISTINCT')->get('getTable', null, ['col1', 'col2']);
 
 // where查询
 $builder->where('col1', 2)->get('getTable');

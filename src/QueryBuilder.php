@@ -6,7 +6,6 @@ use EasySwoole\Mysqli\Exception\Exception;
 
 /**
  * 查询构造器
- * TODO 支持使用distinct(true)筛选唯一结果
  * Class QueryBuilder
  * @package EasySwoole\Mysqli
  */
@@ -78,6 +77,22 @@ class QueryBuilder
             $this->_limit = [$one, $two];
         } else {
             $this->_limit = $one;
+        }
+        return $this;
+    }
+
+    /**
+     * 对所选列的组合去重，仅影响下一次构建的查询。
+     */
+    public function distinct(bool $isDistinct = true): QueryBuilder
+    {
+        $removeOption = $isDistinct ? 'ALL' : 'DISTINCT';
+        $this->_queryOptions = array_values(array_filter(
+            $this->_queryOptions,
+            static fn($option) => $option !== $removeOption
+        ));
+        if ($isDistinct) {
+            $this->setQueryOption('DISTINCT');
         }
         return $this;
     }
@@ -213,7 +228,7 @@ class QueryBuilder
      * @param null $operator
      * @return QueryBuilder
      */
-    public function orHaving($havingProp, $havingValue = null, $operator = null)
+    public function orHaving($havingProp, $havingValue = 'DBNULL', $operator = '=')
     {
         return $this->having($havingProp, $havingValue, $operator, 'OR');
     }
@@ -297,7 +312,7 @@ class QueryBuilder
         if ($isLock) {
             $this->setQueryOption(['LOCK IN SHARE MODE']);
         } else {
-            unset($this->_queryOptions['LOCK IN SHARE MODE']);
+            $this->_lockInShareMode = false;
         }
         return $this;
     }
@@ -317,7 +332,7 @@ class QueryBuilder
                 $this->_selectLockOption = $option;
             }
         } else {
-            unset($this->_queryOptions['FOR UPDATE']);
+            $this->_forUpdate = false;
             $this->_selectLockOption = false;
         }
         return $this;
@@ -332,8 +347,9 @@ class QueryBuilder
     public function setLockTableMode($method)
     {
         switch (strtoupper($method)) {
-            case "READ" || "WRITE":
-                $this->_tableLockMethod = $method;
+            case "READ":
+            case "WRITE":
+                $this->_tableLockMethod = strtoupper($method);
                 break;
             default:
                 throw new Exception("Bad lock type: Can be either READ or WRITE for table {$this->_tableName}");
@@ -606,7 +622,7 @@ class QueryBuilder
                 }
             }
         }
-        $this->_buildQuery($numRows, $tableData);
+        $this->_buildQuery($numRows ?? $this->_limit, $tableData);
         $this->reset();
         return $this;
     }
@@ -629,7 +645,7 @@ class QueryBuilder
         } else {
             $this->_query = "DELETE FROM " . $table;
         }
-        $this->_buildQuery($numRows);
+        $this->_buildQuery($numRows ?? $this->_limit);
         $this->reset();
         return $this;
     }
@@ -652,6 +668,7 @@ class QueryBuilder
 
         $this->_limit = null;
         $this->_field = '*';
+        $this->_union = [];
         $this->_where = [];
         $this->_having = [];
         $this->_join = [];
@@ -802,7 +819,6 @@ class QueryBuilder
             'params' => $this->lastBindParams,
             'alias'  => $this->_subQueryAlias
         ];
-        $this->reset();
         return $val;
     }
 
@@ -974,28 +990,26 @@ class QueryBuilder
     private function replacePlaceHolders($str, $vals)
     {
         $i = 1;
-        $newStr = "";
-        if (empty($vals)) {
-            return $str;
-        }
-        while ($pos = strpos($str, "?")) {
-            $val = $vals[$i++];
-            if (is_object($val)) {
-                $val = '[object]';
+        // Match quoted literals and comments before matching actual placeholders.
+        $pattern = <<<'REGEX'
+~'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
+REGEX;
+        return preg_replace_callback($pattern, static function ($match) use ($vals, &$i) {
+            if ($match[0] !== '?' || !array_key_exists($i, $vals)) {
+                return $match[0];
             }
+            $val = $vals[$i++];
             if ($val === null) {
-                $val = 'NULL';
+                return 'NULL';
+            }
+            if (is_bool($val)) {
+                return (string)(int)$val;
             }
             if (is_int($val) || is_float($val)) {
-                $newStr .= substr($str, 0, $pos) . $val;
-            } else {
-                $newStr .= substr($str, 0, $pos) . "'" . addslashes($val) . "'";
+                return (string)$val;
             }
-
-            $str = substr($str, $pos + 1);
-        }
-        $newStr .= $str;
-        return $newStr;
+            return "'" . addslashes(is_object($val) ? '[object]' : $val) . "'";
+        }, $str);
     }
 
     /**
@@ -1277,13 +1291,13 @@ class QueryBuilder
 
             $this->currentOpColumn = $varName;
 
-            if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false){
+            if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false && strpos($varName, '?') === false){
                 // DBNULL是纯字符串条件，也不能有()函数调用
                 $varNameArray = explode('.', $varName);
                 $varName = "`{$varNameArray[0]}`.`{$varNameArray[1]}`";
             }else{
                 // 不是字符串条件，也没有包含()函数调用
-                if ($val !== 'DBNULL' && strpos($varName, '(') === false){
+                if ($val !== 'DBNULL' && strpos($varName, '(') === false && strpos($varName, '?') === false){
                     $varName = "`{$varName}`";
                 }
             }
@@ -1318,7 +1332,7 @@ class QueryBuilder
                     $this->_query .= $operator . $this->_buildPair("", $val);
                     break;
                 default:
-                    if(in_array($operator, ['=','<=>','<>','!=','>','<' ,'>=', '<=']) && is_array($val)) {
+                    if(in_array($operator, ['=','<=>','<>','!=','>','<' ,'>=', '<=']) && is_array($val) && strpos($varName, '?') === false) {
                         throw new Exception("value for column {$this->currentOpColumn} in table {$this->_tableName} can not be array");
                     }
                     if (is_array($val)) {
@@ -1365,6 +1379,6 @@ class QueryBuilder
             return $this->_tableName;
         }
 
-        return "`{$this->_tableName}`";
+        return '`' . str_replace('.', '`.`', $this->_tableName) . '`';
     }
 }
