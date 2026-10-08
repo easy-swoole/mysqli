@@ -43,7 +43,7 @@ final class ConfigTest extends TestCase
     {
         $config = new Config(['timeout' => 0.25, 'maxConnectTim' => 0.5]);
         self::assertSame(0.25, $config->getTimeout());
-        self::assertSame(3.0, $config->getMaxConnectTime());
+        self::assertSame(1.0, $config->getMaxConnectTime());
         self::assertArrayNotHasKey('maxConnectTim', $config->toArray());
 
         $config = new Config(['maxConnectTime' => 0.75]);
@@ -109,7 +109,7 @@ final class ConfigTest extends TestCase
         self::assertSame('db', $config->getHost());
         self::assertSame(3307, $config->getPort());
         self::assertSame(0.25, $config->getTimeout());
-        self::assertSame(3.0, $config->getMaxConnectTime());
+        self::assertSame(1.0, $config->getMaxConnectTime());
         self::assertTrue($config->isCompress());
         self::assertTrue($config->toArray()['compress']);
     }
@@ -124,7 +124,7 @@ final class ConfigTest extends TestCase
             'port' => 3306,
             'timeout' => 3.0,
             'charset' => 'utf8mb4',
-            'maxConnectTime' => 3.0,
+            'maxConnectTime' => 1.0,
             'compress' => false,
         ], (new Config())->toArray());
     }

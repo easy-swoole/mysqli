@@ -44,7 +44,7 @@ final class FastDbApiCompatibilityTest extends TestCase
         ]);
         self::assertSame('127.0.0.1', $config->getHost());
         self::assertSame(2.0, $config->getTimeout());
-        self::assertSame(3.0, $config->getMaxConnectTime());
+        self::assertSame(1.0, $config->getMaxConnectTime());
         self::assertArrayNotHasKey('autoPing', $config->toArray());
         self::assertArrayNotHasKey('useMysqli', $config->toArray());
         self::assertArrayNotHasKey('maxObjectNum', $config->toArray());
