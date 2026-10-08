@@ -79,7 +79,9 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 - 接受 FastDb 风格的配置数组。
 - 验证主机、端口、超时和最大连接时间。
 - 验证 `compress` 压缩配置及 `toArray()` 输出。
-- 拒绝零值或负数超时。
+- 验证查询超时与连接超时独立赋值，未知字段（含旧别名 `maxConnectTim`）被忽略。
+- 验证默认值、getter/setter、`restore()`、SplBean 序列化及过滤行为。
+- Config 仅存储超时值，包括零值和负数；相关测试不再断言 Config 会拒绝这些值。
 
 ### FastDb API 兼容
 
