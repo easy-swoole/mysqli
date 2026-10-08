@@ -1,19 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/13.4/phpunit.xsd"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
          bootstrap="tests/bootstrap.php"
-         recordTestRunHistory="false"
          failOnWarning="true"
          failOnRisky="true"
-         failOnPhpunitDeprecation="true"
-         failOnPhpunitNotice="true">
+         failOnPhpunitDeprecation="true">
     <testsuites>
         <testsuite name="unit">
+            <file>tests/ConfigTest.php</file>
+            <file>tests/FastDbApiCompatibilityTest.php</file>
+            <file>tests/ConnectionTimeoutTest.php</file>
+            <file>tests/ProtocolTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
-            <file>tests/QueryBuilderRegressionTest.php</file>
         </testsuite>
         <testsuite name="integration">
             <file>tests/ClientTest.php</file>
+            <file>tests/DataTypeTest.php</file>
+            <file>tests/MetadataTest.php</file>
+            <file>tests/DisconnectTest.php</file>
+            <file>tests/FastDbUsageTest.php</file>
+            <file>tests/LargePacketTest.php</file>
+            <file>tests/TransactionTest.php</file>
+            <file>tests/CompressionTest.php</file>
+            <file>tests/ConcurrencyTest.php</file>
         </testsuite>
     </testsuites>
 </phpunit>

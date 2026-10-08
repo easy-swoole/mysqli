@@ -1,146 +1,76 @@
 <?php
 
+declare(strict_types=1);
 
 namespace EasySwoole\Mysqli;
 
-
-use EasySwoole\Spl\SplBean;
-
-class Config extends SplBean
+final class Config
 {
-    protected string $host;
-    protected string $user;
-    protected string $password;
-    protected string $database;//数据库
-    protected int $port = 3306;
-    protected int $timeout = 3;
-    protected string $charset = 'utf8mb4';
-    protected int $maxConnectTime = 3;
+    private string $host = '127.0.0.1';
+    private string $user = '';
+    private string $password = '';
+    private string $database = '';
+    private int $port = 3306;
+    private float $timeout = 3.0;
+    private string $charset = 'utf8mb4';
+    private float $maxConnectTime = 3.0;
+    private bool $compress = false;
 
-
-    /**
-     * @return mixed
-     */
-    public function getHost()
+    public function __construct(array $config = [])
     {
-        return $this->host;
+        foreach ($config as $name => $value) {
+            $setter = 'set' . ucfirst((string) $name);
+            if (method_exists($this, $setter)) {
+                $this->{$setter}($value);
+            }
+        }
+        if (isset($config['timeout']) && !isset($config['maxConnectTime'])) {
+            $this->maxConnectTime = (float) $config['timeout'];
+        }
+        if (isset($config['maxConnectTim']) && !isset($config['maxConnectTime'])) {
+            $this->maxConnectTime = (float) $config['maxConnectTim'];
+        }
     }
 
-    /**
-     * @param mixed $host
-     */
-    public function setHost(string $host): void
+    public function getHost(): string { return $this->host; }
+    public function setHost(string $host): void { $this->host = $host; }
+    public function getUser(): string { return $this->user; }
+    public function setUser(string $user): void { $this->user = $user; }
+    public function getPassword(): string { return $this->password; }
+    public function setPassword(string $password): void { $this->password = $password; }
+    public function getDatabase(): string { return $this->database; }
+    public function setDatabase(string $database): void { $this->database = $database; }
+    public function getPort(): int { return $this->port; }
+    public function setPort(int $port): void { $this->port = $port; }
+    public function getTimeout(): float { return $this->timeout; }
+    public function setTimeout(float $timeout): void { $this->timeout = $this->positive($timeout, 'timeout'); }
+    public function getCharset(): string { return $this->charset; }
+    public function setCharset(string $charset): void { $this->charset = $charset; }
+    public function getMaxConnectTime(): float { return $this->maxConnectTime; }
+    public function setMaxConnectTime(float $timeout): void { $this->maxConnectTime = $this->positive($timeout, 'maxConnectTime'); }
+    public function isCompress(): bool { return $this->compress; }
+    public function setCompress(bool $compress): void { $this->compress = $compress; }
+
+    public function toArray(): array
     {
-        $this->host = $host;
+        return [
+            'host' => $this->host,
+            'user' => $this->user,
+            'password' => $this->password,
+            'database' => $this->database,
+            'port' => $this->port,
+            'timeout' => $this->timeout,
+            'charset' => $this->charset,
+            'maxConnectTime' => $this->maxConnectTime,
+            'compress' => $this->compress,
+        ];
     }
 
-    /**
-     * @return mixed
-     */
-    public function getUser(): string
+    private function positive(float $value, string $name): float
     {
-        return $this->user;
-    }
-
-    /**
-     * @param mixed $user
-     */
-    public function setUser(string $user): void
-    {
-        $this->user = $user;
-    }
-
-    /**
-     * @return mixed
-     */
-    public function getPassword():string
-    {
-        return $this->password;
-    }
-
-    /**
-     * @param mixed $password
-     */
-    public function setPassword(string $password): void
-    {
-        $this->password = $password;
-    }
-
-    /**
-     * @return mixed
-     */
-    public function getDatabase():string
-    {
-        return $this->database;
-    }
-
-    /**
-     * @param mixed $database
-     */
-    public function setDatabase(string $database): void
-    {
-        $this->database = $database;
-    }
-
-    /**
-     * @return int
-     */
-    public function getPort(): int
-    {
-        return $this->port;
-    }
-
-    /**
-     * @param int $port
-     */
-    public function setPort(int $port): void
-    {
-        $this->port = $port;
-    }
-
-
-    public function getTimeout(): int
-    {
-        return $this->timeout;
-    }
-
-    /**
-     * @param float $timeout
-     */
-    public function setTimeout(float $timeout): void
-    {
-        $this->timeout = $timeout;
-    }
-
-    /**
-     * @return string
-     */
-    public function getCharset(): string
-    {
-        return $this->charset;
-    }
-
-    /**
-     * @param string $charset
-     */
-    public function setCharset(string $charset): void
-    {
-        $this->charset = $charset;
-    }
-
-    /**
-     * @return int
-     */
-    public function getMaxConnectTime(): int
-    {
-        return $this->maxConnectTime;
-    }
-
-    /**
-     * @param int $maxConnectTime
-     */
-    public function setMaxConnectTime(int $maxConnectTime): void
-    {
-        $this->maxConnectTime = $maxConnectTime;
+        if ($value <= 0) {
+            throw new \InvalidArgumentException("{$name} must be greater than zero");
+        }
+        return $value;
     }
 }

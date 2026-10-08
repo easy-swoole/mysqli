@@ -4,6 +4,6 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Exception;
 
-class Exception extends \RuntimeException
+final class TimeoutException extends Exception
 {
 }

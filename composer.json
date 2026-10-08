@@ -1,19 +1,31 @@
 {
     "name": "easyswoole/mysqli",
     "type": "library",
-    "description": "An efficient swoole framework",
-    "keywords" : ["swoole", "framework", "async","easyswoole"],
-    "homepage" : "https://www.easyswoole.com/",
-    "license" : "Apache-2.0",
+    "description": "php stander lib",
+    "keywords": [
+        "swoole",
+        "framework",
+        "async",
+        "easyswoole"
+    ],
+    "homepage": "https://www.easyswoole.com/",
+    "license": "Apache-2.0",
     "authors": [
         {
             "name": "YF",
             "email": "291323003@qq.com"
         }
     ],
+    "require": {
+        "ext-openssl": "*",
+        "ext-zlib": "*",
+        "ext-swoole": ">=5.1",
+        "php": ">=8.1",
+        "ext-sockets": "*"
+    },
     "require-dev": {
-        "easyswoole/swoole-ide-helper": "^1.3",
-        "phpunit/phpunit": "^13.4"
+        "easyswoole/swoole-ide-helper": "^1.0",
+        "phpunit/phpunit": "^10.5"
     },
     "autoload": {
         "psr-4": {
@@ -21,15 +33,20 @@
             "EasySwoole\\Mysqli\\Tests\\": "tests/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "EasySwoole\\Mysqli\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.1.0"
+        },
+        "sort-packages": true
+    },
     "scripts": {
         "test": "@php tests/run.php",
         "test:unit": "@php tests/run.php --testsuite unit",
         "test:integration": "@php tests/run.php --testsuite integration"
-    },
-    "require": {
-        "easyswoole/spl": "^2.1",
-        "php": ">=8.1",
-        "ext-mysqli": "*",
-        "ext-swoole": ">=5.1"
     }
 }

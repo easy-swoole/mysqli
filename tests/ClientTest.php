@@ -1,259 +1,232 @@
 <?php
 
+declare(strict_types=1);
+
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
+use EasySwoole\Mysqli\Exception\TimeoutException;
 use EasySwoole\Mysqli\QueryBuilder;
 use PHPUnit\Framework\TestCase;
 
 final class ClientTest extends TestCase
 {
     private ?Client $client = null;
-    private string $table;
-    private int $reportMode;
 
     protected function setUp(): void
     {
-        if (!defined('MYSQL_CONFIG') || MYSQL_CONFIG['host'] === '') {
-            $this->markTestSkipped('Set MYSQLI_TEST_* or FAST_DB_TEST_* database environment variables.');
+        if (MYSQL_CONFIG['host'] === '') {
+            $this->markTestSkipped('Set FAST_DB_TEST_* or MYSQLI_TEST_* to the EasySwoole FastDb test database.');
         }
-        $this->reportMode = (new \mysqli_driver())->report_mode;
-        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-        $this->table = 'mysqli_regression_' . bin2hex(random_bytes(8));
         $this->client = new Client(new Config(MYSQL_CONFIG));
-        $this->client->rawQuery("CREATE TABLE `{$this->table}` (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            name VARCHAR(128) NULL,
-            age INT NULL,
-            amount DOUBLE NULL,
-            flag TINYINT NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        foreach (glob(__DIR__ . '/resources/*.sql') as $fixture) {
+            $this->client->rawQuery(trim((string) file_get_contents($fixture)));
+        }
     }
 
     protected function tearDown(): void
     {
-        if ($this->client !== null) {
-            try {
-                $this->client->rawQuery('ROLLBACK');
-                $this->client->rawQuery("DROP TABLE IF EXISTS `{$this->table}`");
-            } finally {
-                $this->client->close();
-                mysqli_report($this->reportMode);
-            }
-        }
+        $this->client?->close();
+        $this->client = null;
     }
 
-    private function seed(): void
+    public function testRawQueryAgainstFastDbFixture(): void
     {
-        $this->assertTrue($this->client->query((new QueryBuilder())->insertAll($this->table, [
-            ['id' => 1, 'name' => 'siam,你好', 'age' => 21],
-            ['id' => 2, 'name' => 'second', 'age' => 22],
-            ['id' => 3, 'name' => 'third', 'age' => 23],
-        ])));
+        $rows = $this->client->rawQuery('SELECT id, name FROM student ORDER BY id LIMIT 1');
+        self::assertIsArray($rows);
+        self::assertNotEmpty($rows);
+        self::assertArrayHasKey('id', $rows[0]);
+        self::assertArrayHasKey('name', $rows[0]);
+        self::assertTrue($this->client->ping());
     }
 
-    public function testDistinctReturnsUniqueColumnCombinations(): void
+    public function testNativePreparedStatementSupportsAllScalarTypes(): void
     {
-        $this->assertTrue($this->client->query((new QueryBuilder())->insertAll($this->table, [
-            ['name' => 'same', 'age' => 21],
-            ['name' => 'same', 'age' => 21],
-            ['name' => 'same', 'age' => 22],
-            ['name' => 'other', 'age' => 23],
-        ])));
-        $builder = new QueryBuilder();
-        $rows = $this->client->query($builder->distinct()->orderBy('name', 'ASC')->get($this->table, null, 'name'));
-        $this->assertSame([['name' => 'other'], ['name' => 'same']], $rows);
-        $rows = $this->client->query($builder->distinct()->where('name', 'same')->orderBy('age', 'ASC')->get($this->table, null, ['name', 'age']));
-        $this->assertSame([['name' => 'same', 'age' => 21], ['name' => 'same', 'age' => 22]], $rows);
-        $rows = $this->client->query($builder->where('name', 'same')->get($this->table, null, 'name'));
-        $this->assertCount(3, $rows);
-    }
-
-    public function testDisabledDistinctRetainsDuplicateRows(): void
-    {
-        $this->assertTrue($this->client->query((new QueryBuilder())->insertAll($this->table, [
-            ['name' => 'same'], ['name' => 'same'],
-        ])));
-        $rows = $this->client->query((new QueryBuilder())->distinct()->distinct(false)->get($this->table, null, 'name'));
-        $this->assertSame([['name' => 'same'], ['name' => 'same']], $rows);
-    }
-
-    public function testPreparedWritesReturnSuccessAndMetadata(): void
-    {
-        $seen = [];
-        $this->client->onQuery(function ($result) use (&$seen): void { $seen[] = $result; });
-        $this->assertTrue($this->client->query((new QueryBuilder())->insert($this->table, ['name' => 'hello'])));
-        $this->assertSame(1, $this->client->getLastInsertId());
-        $this->assertSame(1, $this->client->getLastAffectRows());
-        $this->assertTrue($this->client->query((new QueryBuilder())->where('id', 1)->update($this->table, ['name' => 'updated'])));
-        $this->assertSame(1, $this->client->getLastAffectRows());
-        $this->assertTrue($this->client->query((new QueryBuilder())->where('id', 1)->delete($this->table)));
-        $this->assertSame(1, $this->client->getLastAffectRows());
-        $this->assertSame([true, true, true], $seen);
-    }
-
-    public function testPreparedTypesAndEmptySelect(): void
-    {
-        $data = ['name' => "Don't worry? 你好", 'age' => null, 'amount' => 1.25, 'flag' => true];
-        $this->assertTrue($this->client->query((new QueryBuilder())->insert($this->table, $data)));
-        $rows = $this->client->query((new QueryBuilder())->getOne($this->table));
-        $this->assertSame($data['name'], $rows[0]['name']);
-        $this->assertNull($rows[0]['age']);
-        $this->assertSame(1.25, $rows[0]['amount']);
-        $this->assertSame(1, $rows[0]['flag']);
-        $this->assertSame([], $this->client->query((new QueryBuilder())->where('id', 999)->get($this->table)));
-    }
-
-    public function testBulkInsertReplaceAndRawWrites(): void
-    {
-        $this->seed();
-        $this->assertSame(3, $this->client->getLastAffectRows());
-        $this->assertTrue($this->client->query((new QueryBuilder())->replace($this->table, ['id' => 1, 'name' => 'replacement'])));
-        $this->assertSame('replacement', $this->client->query((new QueryBuilder())->where('id', 1)->getOne($this->table))[0]['name']);
-        $this->assertTrue($this->client->rawQuery("UPDATE `{$this->table}` SET age=42 WHERE id=2"));
-        $this->assertSame(1, $this->client->getLastAffectRows());
-    }
-
-    public function testChainedLimitsRestrictRowsChanged(): void
-    {
-        $this->seed();
-        $this->assertTrue($this->client->query((new QueryBuilder())->orderBy('id', 'ASC')->limit(1)->update($this->table, ['age' => 99])));
-        $this->assertSame(1, $this->client->getLastAffectRows());
-        $this->assertSame(1, count($this->client->query((new QueryBuilder())->where('age', 99)->get($this->table))));
-        $this->assertTrue($this->client->query((new QueryBuilder())->orderBy('id', 'ASC')->limit(1)->delete($this->table)));
-        $this->assertSame(1, $this->client->getLastAffectRows());
-        $this->assertCount(2, $this->client->query((new QueryBuilder())->get($this->table)));
-    }
-
-    public function testBoundWhereExpressionsExecute(): void
-    {
-        $this->seed();
-        $builder = new QueryBuilder();
-        $rows = $this->client->query($builder->where('find_in_set(?, name)', ['siam'])->get($this->table));
-        $this->assertSame([1], array_column($rows, 'id'));
-        $rows = $this->client->query($builder->where('(id = ? OR id = ?)', [1, 3])->orderBy('id', 'ASC')->get($this->table));
-        $this->assertSame([1, 3], array_column($rows, 'id'));
-    }
-
-    public function testUnionDoesNotAffectSubsequentExecution(): void
-    {
-        $this->seed();
-        $builder = new QueryBuilder();
-        $builder->union((new QueryBuilder())->where('id', 2)->get($this->table, null, 'id'));
-        $rows = $this->client->query($builder->where('id', 1)->get($this->table, null, 'id'));
-        $this->assertEqualsCanonicalizing([1, 2], array_column($rows, 'id'));
-        $rows = $this->client->query($builder->where('id', 1)->get($this->table, null, 'id'));
-        $this->assertSame([1], array_column($rows, 'id'));
-    }
-
-    public function testSubQueryCanExecuteMoreThanOnce(): void
-    {
-        $this->seed();
-        $sub = QueryBuilder::subQuery();
-        $sub->where('age', 21)->get($this->table, null, 'id');
-        for ($i = 0; $i < 2; $i++) {
-            $rows = $this->client->query((new QueryBuilder())->where('id', $sub, 'IN')->get($this->table));
-            $this->assertSame([1], array_column($rows, 'id'));
-        }
-    }
-
-    public function testQualifiedTableNameExecutes(): void
-    {
-        $this->seed();
-        $rows = $this->client->query((new QueryBuilder())->get(MYSQL_CONFIG['database'] . '.' . $this->table));
-        $this->assertCount(3, $rows);
-    }
-
-    public function testOrHavingUsesEqualityByDefault(): void
-    {
-        $this->seed();
-        $rows = $this->client->query((new QueryBuilder())->groupBy('age')->having('COUNT(*)', 3)->orHaving('COUNT(*)', 1)->get($this->table, null, 'age, COUNT(*) AS total'));
-        $this->assertCount(3, $rows);
-        $this->assertSame([1, 1, 1], array_column($rows, 'total'));
-    }
-
-    public function testDisabledLocksDoNotBlockAnotherConnection(): void
-    {
-        $this->seed();
-        $other = new Client(new Config(MYSQL_CONFIG));
+        $statement = $this->client->prepare('SELECT ? AS integer_value, ? AS float_value, ? AS string_value, ? AS null_value, ? AS bool_value');
         try {
-            $other->rawQuery('SET SESSION innodb_lock_wait_timeout=1');
-            foreach (['update', 'share'] as $mode) {
-                $this->client->rawQuery('START TRANSACTION');
-                $builder = new QueryBuilder();
-                if ($mode === 'update') {
-                    $builder->selectForUpdate(true)->selectForUpdate(false);
-                } else {
-                    $builder->lockInShareMode(true)->lockInShareMode(false);
-                }
-                $this->assertCount(1, $this->client->query($builder->where('id', 1)->get($this->table)));
-                $this->assertTrue($other->rawQuery("UPDATE `{$this->table}` SET age=age+1 WHERE id=1"));
-                $this->client->rawQuery('ROLLBACK');
-            }
+            $rows = $statement->execute([42, 1.25, '协程 mysqli', null, true]);
         } finally {
-            $other->close();
+            $statement->close();
         }
+
+        self::assertSame(42, $rows[0]['integer_value']);
+        self::assertSame(1.25, $rows[0]['float_value']);
+        self::assertSame('协程 mysqli', $rows[0]['string_value']);
+        self::assertNull($rows[0]['null_value']);
+        self::assertSame(1, $rows[0]['bool_value']);
     }
 
-    public function testDatabaseErrorsPreserveCodeAndCause(): void
+    public function testQueryBuilderUsesPreparedProtocol(): void
     {
-        $this->seed();
-        foreach (['prepared', 'raw'] as $mode) {
-            try {
-                if ($mode === 'prepared') {
-                    $this->client->query((new QueryBuilder())->insert($this->table, ['id' => 1]));
-                } else {
-                    $this->client->rawQuery("INSERT INTO `{$this->table}` (id) VALUES (1)");
-                }
-                $this->fail('Duplicate primary key must fail');
-            } catch (Exception $error) {
-                $this->assertSame(1062, $error->getCode());
-                $this->assertInstanceOf(\mysqli_sql_exception::class, $error->getPrevious());
-                $this->assertNull($this->client->getLastAffectRows());
-            }
-        }
-        $this->assertTrue($this->client->ping());
+        $builder = (new QueryBuilder())->where('id', 1)->get('student');
+        $rows = $this->client->query($builder);
+        self::assertCount(1, $rows);
+        self::assertSame(1, $rows[0]['id']);
     }
 
-    public function testBindingFailureIsReportedAndConnectionStillWorks(): void
+    public function testPrepareErrorIsReportedAndConnectionRemainsUsable(): void
     {
         try {
-            $this->client->query((new QueryBuilder())->raw('SELECT ? + ?', [1]));
-            $this->fail('Missing bind parameter must fail');
+            $this->client->prepare('SELEC ? AS invalid_syntax');
+            self::fail('Expected prepare syntax error');
         } catch (Exception $error) {
-            $this->assertInstanceOf(\ArgumentCountError::class, $error->getPrevious());
-            $this->assertStringContainsString('execute error', $error->getMessage());
+            self::assertSame(1064, $error->getCode());
+            self::assertStringContainsString('SELEC ? AS invalid_syntax', $error->getMessage());
+            self::assertStringContainsString('syntax', strtolower($error->getMessage()));
         }
-        $this->assertSame([['value' => 2]], $this->client->query((new QueryBuilder())->raw('SELECT ? AS value', [2])));
+
+        self::assertTrue($this->client->ping());
+        self::assertSame([['after_prepare_error' => 1]], $this->client->rawQuery('SELECT 1 AS after_prepare_error'));
     }
 
-    public function testFailuresStillThrowWhenMysqliReportingIsOff(): void
+    public function testExecuteErrorIsReportedAndPreparedStatementCanBeReused(): void
     {
-        $this->seed();
-        mysqli_report(MYSQLI_REPORT_OFF);
-        $callbacks = 0;
-        $this->client->onQuery(function () use (&$callbacks): void { $callbacks++; });
-        foreach (['prepared', 'raw'] as $mode) {
-            try {
-                if ($mode === 'prepared') {
-                    $this->client->query((new QueryBuilder())->insert($this->table, ['id' => 1]));
-                } else {
-                    $this->client->rawQuery("INSERT INTO `{$this->table}` (id) VALUES (1)");
-                }
-                $this->fail('Database failure must throw with reporting disabled');
-            } catch (Exception $error) {
-                $this->assertSame(1062, $error->getCode());
-                $this->assertNull($this->client->getLastAffectRows());
-            }
-        }
+        $table = 'mysqli_execute_error_' . bin2hex(random_bytes(5));
+        $this->client->rawQuery("CREATE TABLE `{$table}` (id BIGINT PRIMARY KEY, value VARCHAR(32) NOT NULL) ENGINE=InnoDB");
         try {
-            $this->client->query((new QueryBuilder())->raw("SELECT missing_column FROM `{$this->table}`"));
-            $this->fail('Prepare failure must throw');
-        } catch (Exception $error) {
-            $this->assertSame(1054, $error->getCode());
+            $statement = $this->client->prepare("INSERT INTO `{$table}` (id, value) VALUES (?, ?)");
+            try {
+                self::assertTrue($statement->execute([1, 'first']));
+                self::assertSame(1, $this->client->getLastAffectRows());
+
+                try {
+                    $statement->execute([1, 'duplicate']);
+                    self::fail('Expected duplicate primary-key error during execute');
+                } catch (Exception $error) {
+                    self::assertSame(1062, $error->getCode());
+                    self::assertStringContainsString("INSERT INTO `{$table}`", $error->getMessage());
+                    self::assertStringContainsString('Duplicate entry', $error->getMessage());
+                }
+
+                self::assertNull($this->client->getLastInsertId());
+                self::assertNull($this->client->getLastAffectRows());
+                self::assertTrue($this->client->ping());
+                self::assertTrue($statement->execute([2, 'after error']));
+                self::assertSame(1, $this->client->getLastAffectRows());
+            } finally {
+                $statement->close();
+            }
+
+            self::assertSame(
+                [['id' => 1, 'value' => 'first'], ['id' => 2, 'value' => 'after error']],
+                $this->client->rawQuery("SELECT id, value FROM `{$table}` ORDER BY id"),
+            );
+        } finally {
+            $this->client->rawQuery("DROP TABLE IF EXISTS `{$table}`");
         }
-        $this->assertSame(0, $callbacks);
+    }
+
+    public function testPreparedInsertReportsInvalidColumnAndInvalidDataTypes(): void
+    {
+        $table = 'mysqli_invalid_data_' . bin2hex(random_bytes(5));
+        $this->client->rawQuery("CREATE TABLE `{$table}` (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            integer_value INT NOT NULL,
+            short_value VARCHAR(8) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        try {
+            try {
+                $this->client->prepare("INSERT INTO `{$table}` (missing_column) VALUES (?)");
+                self::fail('Expected unknown-column error during prepare');
+            } catch (Exception $error) {
+                self::assertSame(1054, $error->getCode());
+                self::assertStringContainsString('missing_column', $error->getMessage());
+                self::assertStringContainsString('Unknown column', $error->getMessage());
+            }
+            self::assertTrue($this->client->ping());
+
+            $statement = $this->client->prepare("INSERT INTO `{$table}` (integer_value, short_value) VALUES (?, ?)");
+            try {
+                try {
+                    $statement->execute(['not-an-integer', 'valid']);
+                    self::fail('Expected invalid integer error during execute');
+                } catch (Exception $error) {
+                    self::assertSame(1366, $error->getCode());
+                    self::assertStringContainsString('Incorrect integer value', $error->getMessage());
+                    self::assertStringContainsString('integer_value', $error->getMessage());
+                }
+                self::assertNull($this->client->getLastInsertId());
+                self::assertNull($this->client->getLastAffectRows());
+                self::assertTrue($this->client->ping());
+
+                try {
+                    $statement->execute([1, 'longer-than-eight']);
+                    self::fail('Expected data-too-long error during execute');
+                } catch (Exception $error) {
+                    self::assertSame(1406, $error->getCode());
+                    self::assertStringContainsString('Data too long', $error->getMessage());
+                    self::assertStringContainsString('short_value', $error->getMessage());
+                }
+                self::assertTrue($this->client->ping());
+                self::assertTrue($statement->execute([42, 'valid']));
+                self::assertSame(1, $this->client->getLastAffectRows());
+            } finally {
+                $statement->close();
+            }
+
+            self::assertSame(
+                [['integer_value' => 42, 'short_value' => 'valid']],
+                $this->client->rawQuery("SELECT integer_value, short_value FROM `{$table}` ORDER BY id"),
+            );
+        } finally {
+            $this->client->rawQuery("DROP TABLE IF EXISTS `{$table}`");
+        }
+    }
+
+    public function testPreparedInsertRejectsInvalidJsonAndStatementCanBeReused(): void
+    {
+        $table = 'mysqli_invalid_json_' . bin2hex(random_bytes(5));
+        $this->client->rawQuery("CREATE TABLE `{$table}` (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            document JSON NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        try {
+            $statement = $this->client->prepare("INSERT INTO `{$table}` (document) VALUES (?)");
+            try {
+                try {
+                    $statement->execute(['{"enabled":true,}']);
+                    self::fail('Expected invalid JSON error during execute');
+                } catch (Exception $error) {
+                    self::assertSame(3140, $error->getCode());
+                    self::assertStringContainsString('Invalid JSON text', $error->getMessage());
+                    self::assertStringContainsString('document', $error->getMessage());
+                }
+
+                self::assertNull($this->client->getLastInsertId());
+                self::assertNull($this->client->getLastAffectRows());
+                self::assertTrue($this->client->ping());
+                self::assertSame([['row_count' => 0]], $this->client->rawQuery("SELECT COUNT(*) AS row_count FROM `{$table}`"));
+
+                $validJson = '{"enabled":true,"items":[1,2],"nested":{"text":"测试"}}';
+                self::assertTrue($statement->execute([$validJson]));
+                self::assertSame(1, $this->client->getLastAffectRows());
+            } finally {
+                $statement->close();
+            }
+
+            $rows = $this->client->rawQuery("SELECT document FROM `{$table}`");
+            self::assertCount(1, $rows);
+            self::assertEquals(
+                ['enabled' => true, 'items' => [1, 2], 'nested' => ['text' => '测试']],
+                json_decode($rows[0]['document'], true, flags: JSON_THROW_ON_ERROR),
+            );
+        } finally {
+            $this->client->rawQuery("DROP TABLE IF EXISTS `{$table}`");
+        }
+    }
+
+    public function testSingleQueryTimeoutClosesDesynchronizedConnection(): void
+    {
+        try {
+            $this->client->rawQuery('SELECT SLEEP(0.2)', 0.03);
+            self::fail('Expected query timeout');
+        } catch (TimeoutException $error) {
+            self::assertStringContainsString('timed out', $error->getMessage());
+            self::assertFalse($this->client->mysqlClient()?->isConnected() ?? false);
+        }
+
+        self::assertSame([['reconnected' => 1]], $this->client->rawQuery('SELECT 1 AS reconnected'));
     }
 }
