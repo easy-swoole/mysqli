@@ -43,3 +43,5 @@ Coroutine\run(function (): void {
 A timed-out query closes its connection because unread MySQL packets make that protocol stream unsafe to reuse. The next query reconnects automatically.
 
 See [tests/README.md](tests/README.md) for unit and FastDb integration test commands.
+
+QueryBuilder usage: [queryBuilder.md](queryBuilder.md).
