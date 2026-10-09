@@ -390,6 +390,42 @@ final class ProtocolTest extends TestCase
         $client->close();
     }
 
+    public function testExplicitConnectTimeoutSharesHandshakeAndAuthenticationBudget(): void
+    {
+        $this->assertTotalTimeout('connect-explicit');
+    }
+
+    public function testExplicitConnectTimeoutDoesNotChangeConfigurationAndRetryUsesDefaults(): void
+    {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::assertSame('', $peer->recvAll(1, 1.0));
+            $peer->close();
+            $peer = $listener->accept(1.0);
+            // Longer than the first explicit timeout, but within configured maxConnectTime.
+            Coroutine::sleep(0.06);
+            self::acceptSession($peer);
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        try {
+            $client->connect(0.03);
+            self::fail('Expected the first connection to time out');
+        } catch (TimeoutException $error) {
+            self::assertNull($client->mysqlClient());
+        }
+        self::assertTrue($client->connect());
+        self::assertTrue($client->mysqlClient()->isConnected());
+        self::assertSame(0.5, $config->getMaxConnectTime());
+        self::assertSame(0.5, $config->getTimeout());
+        $connection = $client->mysqlClient();
+        self::assertTrue($client->connect(0.1));
+        self::assertSame($connection, $client->mysqlClient());
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
     private function assertTotalTimeout(string $operation): void
     {
         [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
@@ -404,6 +440,7 @@ final class ProtocolTest extends TestCase
         $started = microtime(true);
         try {
             if ($operation === 'connect') { $client->connect(); }
+            elseif ($operation === 'connect-explicit') { $client->connect(0.1); }
             elseif ($operation === 'raw') { $client->rawQuery('SELECT 1', 0.1); }
             elseif ($operation === 'prepare') { $client->prepare('SELECT 1', 0.1); }
             else { $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1); }

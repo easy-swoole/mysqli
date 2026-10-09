@@ -17,6 +17,15 @@ final class FastDbApiCompatibilityTest extends TestCase
         $connection = new FastDbStyleConnection(new Config());
         self::assertInstanceOf(Client::class, $connection);
 
+        $connect = new \ReflectionMethod($connection, 'connect');
+        self::assertSame(1, $connect->getNumberOfParameters());
+        self::assertSame(0, $connect->getNumberOfRequiredParameters());
+        $timeout = $connect->getParameters()[0];
+        self::assertSame('timeout', $timeout->getName());
+        self::assertSame('?float', (string) $timeout->getType());
+        self::assertNull($timeout->getDefaultValue());
+        self::assertSame('bool', (string) $connect->getReturnType());
+
         $query = new \ReflectionMethod($connection, 'query');
         $rawQuery = new \ReflectionMethod($connection, 'rawQuery');
         self::assertSame(1, $query->getNumberOfParameters());

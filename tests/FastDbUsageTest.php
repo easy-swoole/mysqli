@@ -53,7 +53,7 @@ final class FastDbUsageTest extends TestCase
 
     public function testDirectMysqlClientTransactionCalls(): void
     {
-        $this->connection->connect(MYSQL_CONFIG);
+        self::assertTrue($this->connection->connect());
         self::assertTrue($this->connection->begin(3));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('rollback')"));
         self::assertTrue($this->connection->rollback(3));

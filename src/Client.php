@@ -26,20 +26,22 @@ class Client
         return $this;
     }
 
-    public function connect(?array $config = null): bool
+    public function connect(?float $timeout = null): bool
+    {
+        return $this->connectWithTimeout($timeout);
+    }
+
+    private function connectWithTimeout(?float $timeout): bool
     {
         if ($this->mysqlClient?->isBusy()) {
             throw new Exception('Concurrent operations on one MySQL connection are not allowed');
-        }
-        if ($config !== null) {
-            $this->config = new Config($config);
         }
         if ($this->mysqlClient?->isConnected()) {
             return true;
         }
         $this->mysqlClient = new Connection($this->config);
         try {
-            return $this->mysqlClient->connect(func_get_args()[1] ?? null);
+            return $this->mysqlClient->connect($timeout);
         } catch (\Throwable $error) {
             $this->mysqlClient = null;
             throw $error;
@@ -54,7 +56,7 @@ class Client
         $start = microtime(true);
         $deadline = $this->queryDeadline($timeout);
         $this->resetMetadata();
-        $this->connect(null, $this->remaining($deadline));
+        $this->connectWithTimeout($this->remaining($deadline));
         $statement = null;
         try {
             $statement = $this->prepare($sql, $this->remaining($deadline));
@@ -76,7 +78,7 @@ class Client
         $start = microtime(true);
         $deadline = $this->queryDeadline($timeout);
         $this->resetMetadata();
-        $this->connect(null, $this->remaining($deadline));
+        $this->connectWithTimeout($this->remaining($deadline));
         try {
             $result = $this->mysqlClient->query($query, $this->remaining($deadline));
             $this->captureMetadata();
@@ -92,7 +94,7 @@ class Client
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         $deadline = $this->queryDeadline($timeout);
-        $this->connect(null, $this->remaining($deadline));
+        $this->connectWithTimeout($this->remaining($deadline));
         return $this->mysqlClient->prepare($sql, $this->remaining($deadline))->setExecutionCallbacks(
             fn() => $this->resetMetadata(),
             fn() => $this->captureMetadata(),
