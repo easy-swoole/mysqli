@@ -56,12 +56,12 @@ final class FastDbUsageTest extends TestCase
         self::assertTrue($this->connection->connect());
         self::assertTrue($this->connection->begin(3));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('rollback')"));
-        self::assertTrue($this->connection->rollback(3));
+        self::assertTrue($this->connection->rollback(2));
         self::assertSame([['total' => 0]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
 
         self::assertTrue($this->connection->begin(3));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('commit')"));
-        self::assertTrue($this->connection->commit(3));
+        self::assertTrue($this->connection->commit(2));
         self::assertSame([['total' => 1]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
     }
 }

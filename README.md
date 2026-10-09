@@ -55,11 +55,21 @@ Coroutine\run(function (): void {
 
 继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写 `query()` 时还需要声明兼容的返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
 
-查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。下一次查询会自动重新连接。
+查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。未处于事务时，下一次查询会自动重新连接。
 
 ## 会话安全与超时
 
-预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新 Prepare。关闭已失效的 Statement 不会关闭新会话中的语句。
+预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新 Prepare；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
+
+连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
+
+事务期间断线或查询超时，首次操作仍抛出原始连接/超时异常；后续查询、Prepare、旧 Statement 执行、Connect、Commit 和 Rollback 会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`，阻止透明重连后继续执行。此标记在显式 `close()` 前一直保留，关闭 Statement 不会解除保护。
+
+恢复时先调用 `$client->close()`，再连接并开启新的事务，由业务决定是否重试整个事务。如果在 Commit 响应到达前断线，提交结果可能无法确认，不能仅凭此异常自动重放写入。
+
+`begin_transaction($flags)` 支持 mysqli 的一致性快照（1）、读写（2）和只读（4）标记，可用位或组合快照与访问模式。`commit($flags)`、`rollback($flags)` 支持 AND CHAIN（1）、AND NO CHAIN（2）、RELEASE（4）、NO RELEASE（8）。CHAIN 后连接仍处于新事务，RELEASE 成功后本地连接同步关闭。未知标记、同时指定只读与读写、CHAIN 与 NO CHAIN 或 RELEASE 与 NO RELEASE 会抛出 `InvalidArgumentException`。标记含义参照 [PHP mysqli 文档](https://www.php.net/manual/en/mysqli.constants.php)。
+
+文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 
 同一个连接同时只允许一个操作，包括建立连接、关闭 Statement 和关闭连接。并发调用会抛出异常，正在进行的操作仍可继续完成。可以在当前操作结束后重试关闭 Statement；需要并发查询时，应使用不同的客户端连接。
 

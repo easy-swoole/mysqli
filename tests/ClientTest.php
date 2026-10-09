@@ -24,6 +24,9 @@ final class ClientTest extends TestCase
         foreach (glob(__DIR__ . '/resources/*.sql') as $fixture) {
             $this->client->rawQuery(trim((string) file_get_contents($fixture)));
         }
+        // SQL 夹具只创建表；使用会话临时表提供固定数据，不依赖测试库已有记录。
+        $this->client->rawQuery('CREATE TEMPORARY TABLE student (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+        $this->client->rawQuery("INSERT INTO student (id, name) VALUES (1, 'mysqli-fixture')");
     }
 
     protected function tearDown(): void
@@ -120,6 +123,8 @@ final class ClientTest extends TestCase
 
     public function testPreparedInsertReportsInvalidColumnAndInvalidDataTypes(): void
     {
+        // 此场景验证严格模式的数据错误，仅设置当前测试连接，不修改服务端全局配置。
+        $this->client->rawQuery("SET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), 'STRICT_ALL_TABLES')");
         $table = 'mysqli_invalid_data_' . bin2hex(random_bytes(5));
         $this->client->rawQuery("CREATE TABLE `{$table}` (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

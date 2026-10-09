@@ -30,6 +30,7 @@ final class Column
         public readonly string $name,
         public readonly int $type,
         public readonly int $flags,
+        public readonly int $decimals = 0,
     ) {
     }
 

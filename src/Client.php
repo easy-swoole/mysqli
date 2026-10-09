@@ -48,6 +48,7 @@ class Client
         if ($this->mysqlClient?->isBusy()) {
             throw new Exception('Concurrent operations on one MySQL connection are not allowed');
         }
+        $this->mysqlClient?->assertTransactionUsable();
         if ($this->mysqlClient?->isConnected()) {
             return true;
         }

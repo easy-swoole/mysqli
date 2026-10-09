@@ -177,6 +177,186 @@ final class TransactionTest extends TestCase
         self::assertTrue($this->admin->ping());
     }
 
+    public function testKilledTransactionBlocksAllExecutionPathsUntilExplicitClose(): void
+    {
+        $writer = $this->newClient();
+        try {
+            $connection = $writer->mysqlClient();
+            $statement = $writer->prepare("UPDATE `{$this->table}` SET value = ? WHERE id = 2");
+            $writer->rawQuery('BEGIN');
+            self::assertTrue($connection->inTransaction());
+            $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
+            $id = $writer->rawQuery('SELECT CONNECTION_ID() AS id')[0]['id'];
+            $this->admin->rawQuery("KILL CONNECTION {$id}");
+            try {
+                $writer->rawQuery('SELECT 1');
+                self::fail('Expected disconnected transaction');
+            } catch (Exception) {
+                self::assertTrue($connection->isTransactionLost());
+            }
+            $builder = new \EasySwoole\Mysqli\QueryBuilder();
+            $builder->raw("UPDATE `{$this->table}` SET value = ? WHERE id = 2", [20]);
+            foreach ([fn() => $writer->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 2"),
+                fn() => $writer->query($builder), fn() => $writer->prepare('SELECT 1'),
+                fn() => $writer->connect(), fn() => $connection->connect(),
+                fn() => $connection->query('SELECT 1'), fn() => $connection->prepare('SELECT 1'),
+                fn() => $connection->commit(), fn() => $connection->rollback(),
+                fn() => $statement->execute([20])] as $operation) {
+                try {
+                    $operation();
+                    self::fail('Lost transaction must block execution');
+                } catch (\EasySwoole\Mysqli\Exception\TransactionLostException) {
+                    self::assertFalse($connection->isConnected());
+                }
+            }
+            $statement->close();
+            self::assertTrue($connection->isTransactionLost());
+            self::assertSame(0, $this->value($this->admin, 1));
+            self::assertSame(0, $this->value($this->admin, 2));
+            $writer->close();
+            $writer->connect();
+            $writer->mysqlClient()->begin_transaction();
+            $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
+            $writer->mysqlClient()->commit();
+            self::assertSame(30, $this->value($this->admin, 2));
+        } finally {
+            $writer->close();
+        }
+    }
+
+    public function testTimeoutInsideImplicitTransactionBlocksFollowingWrites(): void
+    {
+        $writer = $this->newClient();
+        try {
+            $writer->rawQuery('SET autocommit = 0');
+            self::assertFalse($writer->mysqlClient()->inTransaction());
+            $statement = $writer->prepare("SELECT value FROM `{$this->table}` WHERE id = ?");
+            $statement->execute([1]);
+            self::assertTrue($writer->mysqlClient()->inTransaction());
+            $statement->close();
+            $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
+            try {
+                $writer->rawQuery('SELECT SLEEP(0.2)', 0.03);
+                self::fail('Expected transaction timeout');
+            } catch (\EasySwoole\Mysqli\Exception\TimeoutException) {
+                self::assertTrue($writer->mysqlClient()->isTransactionLost());
+            }
+            try {
+                $writer->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 2");
+                self::fail('Expected blocked write');
+            } catch (\EasySwoole\Mysqli\Exception\TransactionLostException) {
+                self::assertSame(0, $this->value($this->admin, 1));
+                self::assertSame(0, $this->value($this->admin, 2));
+            }
+        } finally {
+            $writer->close();
+        }
+    }
+
+    public function testCompletedTransactionsAllowReconnectAndDdlClearsStatus(): void
+    {
+        $writer = $this->newClient();
+        try {
+            foreach (['commit', 'rollback'] as $finish) {
+                $writer->mysqlClient()->begin_transaction();
+                self::assertTrue($writer->mysqlClient()->inTransaction());
+                $writer->mysqlClient()->{$finish}();
+                self::assertFalse($writer->mysqlClient()->inTransaction());
+                $id = $writer->rawQuery('SELECT CONNECTION_ID() AS id')[0]['id'];
+                $this->admin->rawQuery("KILL CONNECTION {$id}");
+                try {
+                    $writer->rawQuery('SELECT 1');
+                    self::fail('Expected disconnected connection');
+                } catch (Exception) {
+                    self::assertFalse($writer->mysqlClient()->isTransactionLost());
+                }
+                self::assertSame([['value' => 0]], $writer->rawQuery("SELECT value FROM `{$this->table}` WHERE id = 1"));
+            }
+            $writer->rawQuery('START TRANSACTION');
+            $writer->rawQuery("ALTER TABLE `{$this->table}` COMMENT = 'implicit commit test'");
+            self::assertFalse($writer->mysqlClient()->inTransaction());
+        } finally {
+            $writer->close();
+        }
+    }
+
+    public function testReadOnlyReadWriteAndConsistentSnapshotFlags(): void
+    {
+        $writer = $this->newClient();
+        try {
+            $connection = $writer->mysqlClient();
+            $connection->begin_transaction(4); // MYSQLI_TRANS_START_READ_ONLY。
+            try {
+                $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
+                self::fail('Read-only transaction must reject writes');
+            } catch (Exception $error) {
+                self::assertSame(1792, $error->getCode());
+            }
+            self::assertTrue($connection->inTransaction());
+            $connection->rollback();
+            $writer->rawQuery('SET SESSION TRANSACTION READ ONLY');
+            $connection->begin_transaction(2); // 显式 READ WRITE 覆盖会话默认只读。
+            self::assertTrue($writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1"));
+            $connection->commit();
+            self::assertSame(10, $this->value($this->admin, 1));
+            $writer->rawQuery('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            $connection->begin_transaction(1 | 4); // 快照在开始时建立，尚未 SELECT。
+            $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 1");
+            self::assertSame(10, $this->value($writer, 1));
+            $connection->rollback();
+            self::assertSame(20, $this->value($writer, 1));
+        } finally {
+            $writer->close();
+        }
+    }
+
+    public function testCommitAndRollbackChainFlagsMaintainNewTransaction(): void
+    {
+        $writer = $this->newClient();
+        try {
+            $connection = $writer->mysqlClient();
+            $connection->begin_transaction();
+            $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
+            $connection->commit(1 | 8); // AND CHAIN NO RELEASE。
+            self::assertTrue($connection->inTransaction());
+            self::assertSame(10, $this->value($this->admin, 1));
+            $writer->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 2");
+            $connection->rollback(1);
+            self::assertTrue($connection->inTransaction());
+            self::assertSame(0, $this->value($this->admin, 2));
+            $writer->rawQuery('SET SESSION completion_type = 1');
+            $connection->commit(2 | 8); // AND NO CHAIN 覆盖默认链式事务。
+            self::assertFalse($connection->inTransaction());
+            $connection->begin_transaction();
+            $connection->rollback(2 | 8);
+            self::assertFalse($connection->inTransaction());
+        } finally {
+            $writer->close();
+        }
+    }
+
+    public function testReleaseFlagsActuallyCloseServerSession(): void
+    {
+        foreach (['commit', 'rollback'] as $method) {
+            $writer = $this->newClient();
+            try {
+                $connection = $writer->mysqlClient();
+                $connection->begin_transaction();
+                $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
+                self::assertTrue($connection->{$method}(4));
+                self::assertFalse($connection->isConnected());
+                self::assertFalse($connection->inTransaction());
+                self::assertFalse($writer->ping());
+                self::assertFalse($connection->isTransactionLost());
+                self::assertSame($method === 'commit' ? 30 : 0, $this->value($this->admin, 2));
+                $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
+                self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
+            } finally {
+                $writer->close();
+            }
+        }
+    }
+
     private function newClient(): Client
     {
         $config = MYSQL_CONFIG;

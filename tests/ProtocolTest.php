@@ -485,6 +485,170 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
+    public function testTransactionStatusFromOkAndResultEofPreventsReconnectAfterTimeout(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, self::ok(0), 1); // SET autocommit=0 尚未开始事务。
+            self::receivePacket($peer);
+            self::sendResultHeader($peer, 'value', 3, false);
+            self::sendPacket($peer, "\x01" . '1', 4);
+            self::sendPacket($peer, self::eof(1), 5); // SELECT 在手动提交模式下开始事务。
+            self::receivePacket($peer);
+            Coroutine::sleep(0.1);
+            $peer->close();
+            // 显式关闭后才允许建立第二个会话。
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, self::ok(), 1);
+            self::receivePacket($peer);
+            $peer->close();
+        });
+        $client->rawQuery('SET autocommit = 0');
+        $connection = $client->mysqlClient();
+        self::assertFalse($connection->inTransaction());
+        self::assertSame([['value' => 1]], $client->rawQuery('SELECT value FROM t'));
+        self::assertTrue($connection->inTransaction());
+        try {
+            $client->rawQuery('SELECT SLEEP(1)', 0.02);
+            self::fail('Expected timeout');
+        } catch (TimeoutException) {
+            self::assertTrue($connection->isTransactionLost());
+        }
+        foreach ([fn() => $client->connect(), fn() => $client->rawQuery('UPDATE t SET value = 2'),
+            fn() => $client->prepare('UPDATE t SET value = ?'), fn() => $connection->connect(),
+            fn() => $connection->commit(), fn() => $connection->rollback()] as $operation) {
+            try {
+                $operation();
+                self::fail('Lost transaction must prevent reconnect');
+            } catch (\EasySwoole\Mysqli\Exception\TransactionLostException) {
+                self::assertSame($connection, $client->mysqlClient());
+            }
+        }
+        $client->close();
+        self::assertFalse($connection->isTransactionLost());
+        self::assertTrue($client->rawQuery('UPDATE t SET value = 3'));
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testTransactionStatusTracksBeginErrorsSavepointsAndCommit(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            foreach ([self::ok(3), "\xff" . pack('v', 1064) . '#42000bad SQL', self::ok(3), self::ok(2)] as $response) {
+                self::receivePacket($peer);
+                self::sendPacket($peer, $response, 1);
+            }
+            self::receivePacket($peer);
+            $peer->close();
+        });
+        $client->rawQuery('BEGIN');
+        $connection = $client->mysqlClient();
+        self::assertTrue($connection->inTransaction());
+        try {
+            $client->rawQuery('bad SQL');
+            self::fail('Expected SQL error');
+        } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+            self::assertSame(1064, $error->getCode());
+        }
+        self::assertTrue($connection->inTransaction());
+        self::assertFalse($connection->isTransactionLost());
+        $client->rawQuery('ROLLBACK TO SAVEPOINT s');
+        self::assertTrue($connection->inTransaction());
+        $connection->commit();
+        self::assertFalse($connection->inTransaction());
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testTransactionFlagsGenerateExpectedCommandsAndRejectConflicts(): void
+    {
+        $commands = [
+            ['begin_transaction', 1, 'START TRANSACTION WITH CONSISTENT SNAPSHOT'],
+            ['begin_transaction', 2, 'START TRANSACTION READ WRITE'],
+            ['begin_transaction', 4, 'START TRANSACTION READ ONLY'],
+            ['begin_transaction', 3, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ WRITE'],
+            ['begin_transaction', 5, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY'],
+        ];
+        foreach (['commit' => 'COMMIT', 'rollback' => 'ROLLBACK'] as $method => $sql) {
+            foreach ([1 => ' AND CHAIN', 2 => ' AND NO CHAIN', 4 => ' RELEASE', 8 => ' NO RELEASE',
+                9 => ' AND CHAIN NO RELEASE', 6 => ' AND NO CHAIN RELEASE'] as $flags => $suffix) {
+                $commands[] = [$method, $flags, $sql . $suffix];
+            }
+        }
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($commands): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            foreach ($commands as [$method, $flags, $sql]) {
+                [, $packet] = self::receivePacket($peer);
+                self::assertSame("\x03" . $sql, $packet);
+                self::sendPacket($peer, self::ok(), 1);
+                if ($method !== 'begin_transaction' && ($flags & 4)) {
+                    $peer->close();
+                    $peer = $listener->accept(1.0);
+                    self::acceptSession($peer);
+                }
+            }
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        $client->connect();
+        foreach ($commands as [$method, $flags]) {
+            $client->connect();
+            self::assertTrue($client->mysqlClient()->{$method}($flags));
+        }
+        $client->connect();
+        foreach (['begin_transaction' => [6, 7, 8, -1], 'commit' => [3, 12, 16, -1],
+            'rollback' => [3, 12, 16, -1]] as $method => $invalidFlags) {
+            foreach ($invalidFlags as $flags) {
+                try {
+                    $client->mysqlClient()->{$method}($flags);
+                    self::fail('Invalid transaction flags must not be sent');
+                } catch (\InvalidArgumentException) {
+                    self::assertTrue($client->mysqlClient()->isConnected());
+                }
+            }
+        }
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testBinaryTemporalLengthsAndPrecisionPreserveValueAndOffset(): void
+    {
+        $connection = new \EasySwoole\Mysqli\Protocol\Connection(new Config());
+        $decode = new \ReflectionMethod($connection, 'decodeBinaryValue');
+        for ($precision = 0; $precision <= 6; $precision++) {
+            $zero = $precision ? '.' . str_repeat('0', $precision) : '';
+            $fraction = $precision ? '.' . substr('123456', 0, $precision) : '';
+            $date = pack('vCC', 2024, 2, 29);
+            foreach ([7, 12] as $type) { // TIMESTAMP 和 DATETIME。
+                foreach (["\0" => '0000-00-00 00:00:00' . $zero,
+                    "\x04" . $date => '2024-02-29 00:00:00' . $zero,
+                    "\x07" . $date . "\x17\x3b\x3a" => '2024-02-29 23:59:58' . $zero,
+                    "\x0b" . $date . "\x17\x3b\x3a" . pack('V', 123456) => '2024-02-29 23:59:58' . $fraction] as $value => $expected) {
+                    $offset = 1;
+                    $column = new \EasySwoole\Mysqli\Protocol\Column('v', $type, 0, $precision);
+                    self::assertSame($expected, $decode->invokeArgs($connection, ['x' . $value . 'tail', &$offset, $column]));
+                    self::assertSame(strlen($value) + 1, $offset);
+                }
+            }
+            foreach (["\0" => '00:00:00' . $zero,
+                "\x08\x01" . pack('V', 2) . "\x01\x02\x03" => '-49:02:03' . $zero,
+                "\x0c\x01" . pack('V', 2) . "\x01\x02\x03" . pack('V', 123456) => '-49:02:03' . $fraction] as $value => $expected) {
+                $offset = 1;
+                $column = new \EasySwoole\Mysqli\Protocol\Column('v', 11, 0, $precision);
+                self::assertSame($expected, $decode->invokeArgs($connection, ['x' . $value . 'tail', &$offset, $column]));
+                self::assertSame(strlen($value) + 1, $offset);
+            }
+        }
+    }
+
     private function assertTotalTimeout(string $operation): void
     {
         [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
@@ -572,14 +736,14 @@ final class ProtocolTest extends TestCase
             . "mysql_native_password\0";
     }
 
-    private static function ok(): string
+    private static function ok(int $status = 2): string
     {
-        return "\0\0\0\x02\0\0\0";
+        return "\0\0\0" . pack('v', $status) . "\0\0";
     }
 
-    private static function eof(): string
+    private static function eof(int $status = 2): string
     {
-        return "\xfe\0\0\x02\0";
+        return "\xfe\0\0" . pack('v', $status);
     }
 
     private static function column(string $name, int $type): string

@@ -2,7 +2,7 @@
 
 本项目使用 PHPUnit 10，并通过 `tests/run.php` 在 Swoole 协程环境中运行。测试分为不依赖数据库的单元测试，以及连接真实 MySQL 服务端的集成测试。
 
-当前测试套件包含 146 个测试。此前在 PHP 8.4.24 和 Swoole 环境下，使用指定远程测试数据库执行完整测试，128 个测试、896 个断言全部通过；新增超大整数 UPDATE 及 FLOAT、DOUBLE、DECIMAL 测试的专项验证结果见文末。
+当前测试套件包含 146 个测试。最新一次在 PHP 8.4.24 和 Swoole 环境下，使用 PolarDB 测试库执行完整测试，146 个测试、1436 个断言全部通过；兼容性验证结果见文末。
 
 ## 环境要求
 
@@ -247,10 +247,10 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 使用真实 MySQL 测试服务器执行：
 
 ```text
-Tests: 128
-Assertions: 896
+Tests: 146
+Assertions: 1436
 Result: OK
-Time: 28.917 seconds
+Time: 55.920 seconds
 Peak memory: 124.34 MB
 ```
 
@@ -336,3 +336,37 @@ DataTypeTest 新增 9 个真实数据库 UPDATE 场景：将 BIGINT UNSIGNED 字
 每次写入验证自增 ID、影响行数，并分别通过文本与二进制协议读回。FLOAT 按文本相对误差 5e-6、二进制相对误差 2e-7 校验；DOUBLE 按相对误差 2e-15 校验，同时要求结果为有限浮点数。使用实际值与期望值的比值校验误差，避免在 DOUBLE 上限附近计算绝对差导致溢出。DECIMAL 和服务端 CAST AS CHAR 的结果均逐位严格比较字符串，保留完整精度及小数末尾零。
 
 指定远程数据库专项验证：9 个测试、450 个断言全部通过，无错误、失败或跳过，耗时 2.171 秒。每个测试结束后删除随机测试表。PHP 语法检查及 git diff --check 通过。本次只新增测试和文档，未重复运行全套测试。
+
+## 2026-10-09 PolarDB 兼容性验证
+
+使用提供的 PolarDB MySQL 兼容测试库执行验证。服务端返回版本为 8.0.13，version_comment 为 Source distribution，max_allowed_packet 为 1073741824（1 GiB），默认 sql_mode 为空。连接使用 TCP 3306、utf8mb4；凭据仅通过测试进程环境变量传入，不写入项目文件。
+
+首轮 146 个测试中有 3 个失败：两个测试依赖 student 表的已有记录，而 SQL 夹具只建表；另一个测试在非严格模式下预期非法整数和过长字符串报错。这些失败来自测试前置条件，不需要修改客户端协议实现。
+
+ClientTest 现使用当前连接的临时 student 表初始化固定记录，避免依赖或更改已存在的 student 数据。临时表直接定义结构，不使用服务端拒绝的同名 CREATE TEMPORARY TABLE ... LIKE 写法。数据错误测试仅对自己的连接启用 STRICT_ALL_TABLES，不修改全局 sql_mode。
+
+最终完整验证：146 个测试、1436 个断言全部通过，无失败、错误或跳过；耗时 55.920 秒，峰值内存 124.34 MB。单元测试 87 个，真实数据库集成测试 59 个。
+
+验证覆盖连接认证、文本查询、原生预处理、QueryBuilder、数据类型、超过 PHP_INT_MAX 的插入和更新、自增 ID 元数据、超大 FLOAT/DOUBLE/DECIMAL、查询超时与重连、主动断线、事务提交和回滚、保存点、锁等待和死锁、独立连接协程并发、普通协议大包及已实际协商启用的 zlib 压缩。大包测试未被跳过。
+
+本次未修改客户端实现，只调整测试前置条件和验证文档。PHP 语法及 git diff --check 检查通过。
+
+## 2026-10-09 事务丢失与透明重连保护
+
+通过服务端 OK 和结果集 EOF 包的 SERVER_STATUS_IN_TRANS 标记跟踪事务。连接在事务内断开或超时关闭时保留失效标记；Client 替换连接前及协议连接的执行入口均检查该标记，后续操作抛出 TransactionLostException。首次失败保留原始异常，只有显式 close() 才能清除保护并建立新会话。
+
+新增 2 个模拟服务端单元测试，验证 OK/EOF 状态、autocommit=0 的隐式事务、SQL 错误保留事务、保存点与提交状态、超时后各入口禁止重连以及显式关闭后恢复。新增 3 个 PolarDB 集成测试，验证真实 KILL CONNECTION 后普通 SQL、QueryBuilder、Prepare、Statement、Connect、Commit 和 Rollback 全部被拦截；事务内超时后两个测试记录仍为原值；显式关闭后新事务正常提交；正常提交、回滚后断线仍可透明重连，DDL 隐式提交清除状态。测试使用随机 InnoDB 表并在结束后删除。
+
+验证结果：单元测试 89 个、564 个断言通过；PolarDB 事务专项 8 个、70 个断言通过；最终完整回归 151 个测试、1490 个断言全部通过，无错误、失败或跳过，耗时 61.197 秒，峰值内存 124.34 MB。PHP 语法检查及 git diff --check 通过。数据库凭据只通过环境变量传入。
+
+恢复流程及提交响应丢失时的结果不确定性已写入 README。状态解析参照 [MySQL OK 包](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html) 和 [EOF 包](https://dev.mysql.com/doc/dev/mysql-server/8.4.10/page_protocol_basic_eof_packet.html) 的协议定义。
+
+## 2026-10-09 日期时间格式、小数精度及事务 flags
+
+字段元数据现在保存 decimals；二进制日期时间解码依据字段类型补全零值及午夜时分秒，并根据精度保留 0～6 位小数，包括全零小数。TIME 同样保留负号和跨天小时数。修复了 DATETIME/TIMESTAMP 的长度 0/4 包只返回日期、TIME 小数统一输出六位或丢失零小数等问题。字段元数据及时间包格式参考 [MySQL 二进制结果协议](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_binary_resultset.html)。
+
+新增二进制解码单元测试，覆盖 TIMESTAMP/DATETIME 的 0、4、7、11 字节编码及 TIME 的 0、8、12 字节编码，验证值和读取偏移。新增 TemporalTest 的 7 个精度场景，通过预处理 INSERT/UPDATE、文本 SELECT、原生预处理 SELECT 和 QueryBuilder 严格比较 DATE、TIME、DATETIME、TIMESTAMP；覆盖零日期、午夜、部分零日期、NULL、负 TIME、838 小时边界及非零小数。使用临时表并固定测试会话时区，零日期测试仅修改自身会话 sql_mode。
+
+begin_transaction 支持 WITH CONSISTENT SNAPSHOT、READ WRITE、READ ONLY；commit/rollback 支持 AND CHAIN、AND NO CHAIN、RELEASE、NO RELEASE，RELEASE 成功后同步关闭本地连接。未知及相互矛盾的位标记抛出 InvalidArgumentException。标记语义参考 [mysqli 常量](https://www.php.net/manual/en/mysqli.constants.php) 及 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。新增模拟服务端测试验证 SQL 及参数校验；新增 3 个真实事务测试验证只读拒绝写入、显式读写覆盖默认只读、一致性快照在开始时建立、提交/回滚链式事务、NO CHAIN 覆盖会话 completion_type、RELEASE 释放会话及后续重连。旧 FastDb 用例的 commit(3)/rollback(3) 同时指定 CHAIN 和 NO CHAIN，现改用明确的 NO CHAIN（2），begin(3) 仍保留合法的快照加读写组合。
+
+PolarDB 最终全套回归：163 个测试、1769 个断言全部通过，无失败、错误或跳过，耗时 70.114 秒，峰值内存 124.34 MB。本次新增 12 个测试场景，原有事务丢失保护等回归均通过。PHP 语法和 git diff --check 检查通过。凭据仅由进程环境变量传入。

@@ -7,6 +7,7 @@ namespace EasySwoole\Mysqli\Protocol;
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Exception\TimeoutException;
+use EasySwoole\Mysqli\Exception\TransactionLostException;
 use Swoole\Coroutine\Socket;
 
 final class Connection
@@ -19,6 +20,7 @@ final class Connection
     private const CLIENT_TRANSACTIONS = 0x00002000;
     private const CLIENT_SECURE_CONNECTION = 0x00008000;
     private const CLIENT_PLUGIN_AUTH = 0x00080000;
+    private const SERVER_STATUS_IN_TRANS = 0x0001;
     private const COM_QUIT = 0x01;
     private const COM_QUERY = 0x03;
     private const COM_PING = 0x0e;
@@ -29,6 +31,8 @@ final class Connection
 
     private ?Socket $socket = null;
     private bool $connected = false;
+    private bool $inTransaction = false;
+    private bool $transactionLost = false;
     private int $sequence = 0;
     private int $serverCapabilities = 0;
     private int $compressedSequence = 0;
@@ -66,6 +70,7 @@ final class Connection
      */
     private function connectInternal(float $deadline): bool
     {
+        $this->assertTransactionUsable();
         if ($this->isConnected()) {
             return true;
         }
@@ -206,6 +211,7 @@ final class Connection
      */
     private function assertStatementGeneration(int $generation): void
     {
+        $this->assertTransactionUsable();
         if (!$this->isConnected() || $generation !== $this->generation) {
             throw new \LogicException('The prepared statement belongs to an expired MySQL session');
         }
@@ -239,27 +245,54 @@ final class Connection
     }
 
     /**
-     * 开始数据库事务。
+     * 开始数据库事务，flags 支持一致性快照、只读或读写模式。
      */
     public function begin_transaction(int $flags = 0): bool
     {
-        return $this->query('START TRANSACTION') === true;
+        if (($flags & ~7) !== 0 || ($flags & 6) === 6) {
+            throw new \InvalidArgumentException('Invalid or conflicting transaction start flags');
+        }
+        $options = [];
+        if ($flags & 1) { $options[] = 'WITH CONSISTENT SNAPSHOT'; }
+        if ($flags & 2) { $options[] = 'READ WRITE'; }
+        if ($flags & 4) { $options[] = 'READ ONLY'; }
+        return $this->query('START TRANSACTION' . ($options ? ' ' . implode(', ', $options) : '')) === true;
     }
 
     /**
-     * 提交当前事务。
+     * 提交当前事务，flags 支持 CHAIN、NO CHAIN、RELEASE 和 NO RELEASE。
      */
     public function commit(int $flags = 0): bool
     {
-        return $this->query('COMMIT') === true;
+        return $this->finishTransaction('COMMIT', $flags);
     }
 
     /**
-     * 回滚当前事务。
+     * 回滚当前事务，flags 支持 CHAIN、NO CHAIN、RELEASE 和 NO RELEASE。
      */
     public function rollback(int $flags = 0): bool
     {
-        return $this->query('ROLLBACK') === true;
+        return $this->finishTransaction('ROLLBACK', $flags);
+    }
+
+    /**
+     * 按 mysqli flags 提交或回滚，支持链式事务及释放连接，拒绝冲突标记。
+     */
+    private function finishTransaction(string $command, int $flags): bool
+    {
+        if (($flags & ~15) !== 0 || ($flags & 3) === 3 || ($flags & 12) === 12) {
+            throw new \InvalidArgumentException('Invalid or conflicting transaction completion flags');
+        }
+        if ($flags & 1) { $command .= ' AND CHAIN'; }
+        if ($flags & 2) { $command .= ' AND NO CHAIN'; }
+        if ($flags & 4) { $command .= ' RELEASE'; }
+        if ($flags & 8) { $command .= ' NO RELEASE'; }
+        $result = $this->query($command) === true;
+        if ($result && ($flags & 4)) {
+            // RELEASE 成功后服务端已释放会话，立即同步本地连接状态。
+            $this->closeSocket();
+        }
+        return $result;
     }
 
     /**
@@ -304,6 +337,8 @@ final class Connection
             }
         }
         $this->closeSocket();
+        $this->inTransaction = false;
+        $this->transactionLost = false;
         return true;
     }
 
@@ -353,11 +388,18 @@ final class Connection
             throw new Exception('Malformed result-set column terminator');
         }
 
+        if ($this->isEof($terminator)) {
+            $this->parseEofStatus($terminator);
+        } else {
+            $this->parseOk($terminator);
+        }
+
         $rows = [];
         while (true) {
             $row = $this->readPacket($this->remaining($deadline), 'result row');
             $this->throwIfError($row, $sql);
             if ($this->isEof($row)) {
+                $this->parseEofStatus($row);
                 break;
             }
             $rows[] = $binary ? $this->parseBinaryRow($row, $columns) : $this->parseTextRow($row, $columns);
@@ -526,7 +568,7 @@ final class Connection
         Codec::int4($packet, $offset);
         $type = Codec::int1($packet, $offset);
         $flags = Codec::int2($packet, $offset);
-        return new Column($name, $type, $flags);
+        return new Column($name, $type, $flags, Codec::int1($packet, $offset));
     }
 
     /**
@@ -602,7 +644,7 @@ final class Connection
             Column::TYPE_TIMESTAMP,
             Column::TYPE_DATE,
             Column::TYPE_TIME,
-            Column::TYPE_DATETIME => $this->unpackTemporal($packet, $offset, $column->type),
+            Column::TYPE_DATETIME => $this->unpackTemporal($packet, $offset, $column),
             default => Codec::lenencString($packet, $offset),
         };
     }
@@ -646,38 +688,53 @@ final class Connection
     }
 
     /**
-     * 将二进制日期或时间转换为字符串。
+     * 将二进制日期时间按字段精度转换为与文本协议一致的字符串。
      */
-    private function unpackTemporal(string $packet, int &$offset, int $type): string
+    private function unpackTemporal(string $packet, int &$offset, Column $column): string
     {
         $length = Codec::int1($packet, $offset);
-        if ($length === 0) {
-            return $type === Column::TYPE_TIME ? '00:00:00' : '0000-00-00';
+        $type = $column->type;
+        $validLengths = $type === Column::TYPE_TIME ? [0, 8, 12] : [0, 4, 7, 11];
+        if (!in_array($length, $validLengths, true) || strlen($packet) - $offset < $length) {
+            throw new Exception('Malformed binary temporal value');
         }
         $start = $offset;
+        $microseconds = 0;
         if ($type === Column::TYPE_TIME) {
-            $negative = Codec::int1($packet, $offset) === 1;
-            $days = Codec::int4($packet, $offset);
-            $hours = Codec::int1($packet, $offset) + ($days * 24);
-            $minutes = Codec::int1($packet, $offset);
-            $seconds = Codec::int1($packet, $offset);
-            $microseconds = $length > 8 ? Codec::int4($packet, $offset) : 0;
-            return sprintf('%s%02d:%02d:%02d%s', $negative ? '-' : '', $hours, $minutes, $seconds, $microseconds ? sprintf('.%06d', $microseconds) : '');
-        }
-        $year = Codec::int2($packet, $offset);
-        $month = Codec::int1($packet, $offset);
-        $day = Codec::int1($packet, $offset);
-        $value = sprintf('%04d-%02d-%02d', $year, $month, $day);
-        if ($length > 4) {
-            $hour = Codec::int1($packet, $offset);
-            $minute = Codec::int1($packet, $offset);
-            $second = Codec::int1($packet, $offset);
-            $value .= sprintf(' %02d:%02d:%02d', $hour, $minute, $second);
-            if ($length > 7) {
-                $value .= sprintf('.%06d', Codec::int4($packet, $offset));
+            $negative = false;
+            $hours = $minutes = $seconds = 0;
+            if ($length !== 0) {
+                $negative = Codec::int1($packet, $offset) === 1;
+                $days = Codec::int4($packet, $offset);
+                $hours = Codec::int1($packet, $offset) + ($days * 24);
+                $minutes = Codec::int1($packet, $offset);
+                $seconds = Codec::int1($packet, $offset);
+                $microseconds = $length === 12 ? Codec::int4($packet, $offset) : 0;
+            }
+            $value = sprintf('%s%02d:%02d:%02d', $negative ? '-' : '', $hours, $minutes, $seconds);
+        } else {
+            $year = $month = $day = $hour = $minute = $second = 0;
+            if ($length !== 0) {
+                $year = Codec::int2($packet, $offset);
+                $month = Codec::int1($packet, $offset);
+                $day = Codec::int1($packet, $offset);
+                if ($length >= 7) {
+                    $hour = Codec::int1($packet, $offset);
+                    $minute = Codec::int1($packet, $offset);
+                    $second = Codec::int1($packet, $offset);
+                }
+                $microseconds = $length === 11 ? Codec::int4($packet, $offset) : 0;
+            }
+            $value = sprintf('%04d-%02d-%02d', $year, $month, $day);
+            if ($type !== Column::TYPE_DATE) {
+                $value .= sprintf(' %02d:%02d:%02d', $hour, $minute, $second);
             }
         }
         $offset = $start + $length;
+        // 精度来自字段元数据，零小数也保留对应位数，避免随二进制包长度变化。
+        if ($type !== Column::TYPE_DATE && $column->decimals > 0 && $column->decimals <= 6) {
+            $value .= '.' . substr(sprintf('%06d', $microseconds), 0, $column->decimals);
+        }
         return $value;
     }
 
@@ -714,13 +771,52 @@ final class Connection
     }
 
     /**
-     * 读取成功响应中的影响行数和插入 ID。
+     * 读取成功响应中的影响行数、插入 ID 及事务状态。
      */
     private function parseOk(string $packet): void
     {
         $offset = 1;
         $this->affected_rows = Codec::lenencInt($packet, $offset) ?? 0;
         $this->insert_id = Codec::lenencInt($packet, $offset) ?? 0;
+        $this->inTransaction = (Codec::int2($packet, $offset) & self::SERVER_STATUS_IN_TRANS) !== 0;
+    }
+
+    /**
+     * 从结果集结束包读取服务端事务状态。
+     */
+    private function parseEofStatus(string $packet): void
+    {
+        $offset = 3;
+        $this->inTransaction = (Codec::int2($packet, $offset) & self::SERVER_STATUS_IN_TRANS) !== 0;
+    }
+
+    /**
+     * 返回服务端最近确认的事务是否仍在当前连接中。
+     */
+    public function inTransaction(): bool
+    {
+        return $this->inTransaction && $this->isConnected();
+    }
+
+    /**
+     * 判断事务是否因连接丢失而失效，显式关闭前保持失效状态。
+     */
+    public function isTransactionLost(): bool
+    {
+        if ($this->inTransaction && !$this->isConnected()) {
+            $this->transactionLost = true;
+        }
+        return $this->transactionLost;
+    }
+
+    /**
+     * 阻止丢失事务后自动建立新会话继续执行，需先显式关闭连接。
+     */
+    public function assertTransactionUsable(): void
+    {
+        if ($this->isTransactionLost()) {
+            throw new TransactionLostException('MySQL transaction was lost; explicitly close the connection before starting a new session');
+        }
     }
 
     /**
@@ -946,6 +1042,7 @@ final class Connection
      */
     private function ensureConnected(float $deadline): void
     {
+        $this->assertTransactionUsable();
         if (!$this->isConnected()) {
             $this->connectInternal($deadline);
         }
@@ -988,10 +1085,13 @@ final class Connection
     }
 
     /**
-     * 关闭底层连接并重置连接及压缩状态。
+     * 关闭底层连接、重置压缩状态，并保留事务丢失标记。
      */
     private function closeSocket(): void
     {
+        if ($this->inTransaction) {
+            $this->transactionLost = true;
+        }
         $this->connected = false;
         $this->compressionEnabled = false;
         $this->decompressedBuffer = '';
