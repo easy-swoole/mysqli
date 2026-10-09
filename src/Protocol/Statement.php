@@ -17,6 +17,7 @@ final class Statement
         private readonly int $parameterCount,
         private readonly int $columnCount,
         private readonly int $warningCount,
+        private readonly int $generation = 0,
     ) {
     }
 
@@ -42,14 +43,15 @@ final class Statement
         return $this;
     }
 
-    public function close(): void
+    public function close(?float $timeout = null): void
     {
         if (!$this->closed) {
-            $this->connection->closeStatement($this->id);
+            $this->connection->closeStatement($this->id, $this->generation, $timeout);
             $this->closed = true;
         }
     }
 
+    public function getGeneration(): int { return $this->generation; }
     public function getId(): int { return $this->id; }
     public function getSql(): string { return $this->sql; }
     public function getParameterCount(): int { return $this->parameterCount; }

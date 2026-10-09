@@ -2,7 +2,7 @@
 
 本项目使用 PHPUnit 10，并通过 `tests/run.php` 在 Swoole 协程环境中运行。测试分为不依赖数据库的单元测试，以及连接真实 MySQL 服务端的集成测试。
 
-当前测试套件包含 59 个测试。最近一次在 PHP 8.4.23、Swoole 及 MySQL 8.0.46 测试服务器上执行完整测试，共完成 460 个断言，全部通过。
+当前测试套件包含 77 个测试。本次在 PHP 8.4.24 和 Swoole 环境下，使用恢复后的指定远程测试数据库执行完整测试，共完成 596 个断言，全部通过。
 
 ## 环境要求
 
@@ -247,10 +247,28 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 使用真实 MySQL 测试服务器执行：
 
 ```text
-Tests: 59
-Assertions: 460
+Tests: 77
+Assertions: 596
 Result: OK
+Time: 25.624 seconds
 Peak memory: 124.34 MB
 ```
 
 完整测试同时覆盖配置、协议、QueryBuilder、字段类型、Prepare/Execute 错误、超时、断线、大包、压缩协议、写操作元数据和真实事务并发场景。
+
+## 2026-10-09 回归修复验证
+
+新增 10 个不依赖真实数据库的协议回归测试，覆盖：
+
+- 断线及同一 Connection 重连后拒绝旧 Statement，旧 Statement 关闭不会误关新会话中复用相同 ID 的语句。
+- 查询等待期间拒绝 Statement 关闭、连接关闭、连接建立及其他查询，原查询和随后重试关闭均正常完成。
+- Client 握手期间并发 connect 不会替换正在建立的连接。
+- 完整连接过程共享 maxConnectTime，rawQuery、QueryBuilder 和 prepare 的超时包含连接及认证。
+- rawQuery 的连接与结果读取、QueryBuilder 的连接与 Prepare/Execute 共用一个查询预算。
+- Statement 清理预算耗尽时直接丢弃连接，不再发送命令。
+
+本次单元测试：48 个测试，325 个断言，全部通过。PHP 语法检查和 git diff --check 通过。
+
+首次远程验证因数据库服务异常出现 17 个超时错误。服务恢复后，使用相同代码、测试配置和超时预算重新执行全套测试：77 个测试、596 个断言全部通过，无错误、失败或跳过，耗时 25.624 秒，峰值内存 124.34 MB。此前的 17 个超时错误均未复现。
+
+独立连接并发测试改为先完成建连，再计时两条 SQL 的并发执行，仍保留小于 7 秒的断言，避免远程握手耗时影响该断言。

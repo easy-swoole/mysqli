@@ -18,14 +18,25 @@ final class ConcurrencyTest extends TestCase
             self::markTestSkipped('Set MYSQLI_TEST_* environment variables for integration tests');
         }
 
-        $results = new Channel(2);
-        $startedAt = microtime(true);
-        foreach ([5, 3] as $seconds) {
-            Coroutine::create(static function () use ($seconds, $results): void {
+        $clients = [];
+        try {
+            foreach ([5, 3] as $seconds) {
                 $config = MYSQL_CONFIG;
                 $config['timeout'] = 8.0;
                 $config['maxConnectTime'] = 3.0;
-                $client = new Client(new Config($config));
+                $clients[$seconds] = new Client(new Config($config));
+                $clients[$seconds]->connect();
+            }
+        } catch (\Throwable $error) {
+            foreach ($clients as $client) { $client->close(); }
+            throw $error;
+        }
+
+        // Measure query concurrency independently of remote handshake latency.
+        $results = new Channel(2);
+        $startedAt = microtime(true);
+        foreach ($clients as $seconds => $client) {
+            Coroutine::create(static function () use ($seconds, $client, $results): void {
                 $queryStartedAt = microtime(true);
                 try {
                     $rows = $client->rawQuery("SELECT SLEEP({$seconds}) AS slept, {$seconds} AS requested_seconds");

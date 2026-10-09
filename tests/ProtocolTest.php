@@ -193,6 +193,261 @@ final class ProtocolTest extends TestCase
         self::assertTrue($serverResult);
     }
 
+    public function testStatementsExpireAcrossReconnectWithoutClosingReusedIds(): void
+    {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+            for ($session = 0; $session < 2; $session++) {
+                $peer = $listener->accept(1.0);
+                self::acceptSession($peer);
+                [, $prepare] = self::receivePacket($peer);
+                self::assertSame("\x16SELECT 1", $prepare);
+                self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
+                [, $command] = self::receivePacket($peer);
+                if ($session === 0) {
+                    self::assertSame("\x01", $command);
+                } else {
+                    // Neither execute nor close from the old Statement may reach this session.
+                    self::assertSame(0x17, ord($command[0]));
+                    self::sendPacket($peer, self::ok(), 1);
+                    [, $command] = self::receivePacket($peer);
+                    self::assertSame("\x19" . pack('V', 7), $command);
+                }
+                $peer->close();
+            }
+        });
+        $connection = new \EasySwoole\Mysqli\Protocol\Connection($config);
+        $old = $connection->prepare('SELECT 1');
+        $connection->close();
+        try {
+            $old->execute();
+            self::fail('Disconnected statements must expire without reconnecting');
+        } catch (\LogicException $error) {
+            self::assertStringContainsString('expired', $error->getMessage());
+        }
+        $new = $connection->prepare('SELECT 1');
+        try {
+            $old->execute();
+            self::fail('Statements from the old generation must expire');
+        } catch (\LogicException $error) {
+            self::assertStringContainsString('expired', $error->getMessage());
+        }
+        $old->close();
+        self::assertTrue($new->execute());
+        $new->close();
+        $this->assertServerCompleted($completed);
+        $connection->close();
+    }
+
+    public function testConcurrentCloseAndConnectCannotInterruptPendingQuery(): void
+    {
+        $received = new Channel(1);
+        $release = new Channel(1);
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($received, $release): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
+            [, $query] = self::receivePacket($peer);
+            self::assertSame("\x03SELECT 1", $query);
+            $received->push(true);
+            $release->pop(1.0);
+            self::sendPacket($peer, self::ok(), 1);
+            [, $close] = self::receivePacket($peer);
+            self::assertSame("\x19" . pack('V', 7), $close);
+            $peer->close();
+        });
+        $statement = $client->prepare('SELECT 1');
+        $result = new Channel(1);
+        Coroutine::create(static function () use ($client, $result): void {
+            try { $result->push($client->rawQuery('SELECT 1')); }
+            catch (\Throwable $error) { $result->push($error); }
+        });
+        self::assertTrue($received->pop(1.0));
+        $connection = $client->mysqlClient();
+        foreach ([fn() => $statement->close(), fn() => $client->close(),
+            fn() => $client->connect(), fn() => $connection->connect(),
+            fn() => $connection->prepare('SELECT 2'), fn() => $connection->query('SELECT 2')] as $operation) {
+            try { $operation(); self::fail('Concurrent command should be rejected'); }
+            catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                self::assertStringContainsString('Concurrent', $error->getMessage());
+            }
+        }
+        self::assertSame($connection, $client->mysqlClient());
+        self::assertTrue($connection->isConnected());
+        $release->push(true);
+        self::assertTrue($result->pop(1.0));
+        $statement->close(); // Retry after a rejected close must still send COM_STMT_CLOSE.
+        $this->assertServerCompleted($completed);
+        $client->close();
+    }
+
+    public function testConnectionTimeoutIsSharedAcrossHandshakeAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('connect');
+    }
+
+    public function testRawQueryTimeoutIncludesConnectionAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('raw');
+    }
+
+    public function testBuilderQueryTimeoutIncludesConnectionAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('builder');
+    }
+
+    public function testPrepareTimeoutIncludesConnectionAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('prepare');
+    }
+
+    public function testRawQuerySharesBudgetBetweenConnectionAndResult(): void
+    {
+        $this->assertQueryPhasesShareTimeout(false);
+    }
+
+    public function testBuilderSharesBudgetBetweenConnectionPrepareAndExecute(): void
+    {
+        $this->assertQueryPhasesShareTimeout(true);
+    }
+
+    private function assertQueryPhasesShareTimeout(bool $prepared): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($prepared): void {
+            $peer = $listener->accept(1.0);
+            Coroutine::sleep(0.04);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            if ($prepared) {
+                Coroutine::sleep(0.04);
+                self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
+                self::receivePacket($peer);
+            }
+            Coroutine::sleep(0.09);
+            $peer->close();
+        });
+        $started = microtime(true);
+        try {
+            if ($prepared) {
+                $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1);
+            } else {
+                $client->rawQuery('SELECT 1', 0.1);
+            }
+            self::fail('Every phase must consume the same query budget');
+        } catch (TimeoutException $error) {
+            self::assertLessThan(0.2, microtime(true) - $started);
+            self::assertFalse($client->mysqlClient()?->isConnected() ?? false);
+        }
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testConcurrentClientConnectDoesNotReplacePendingHandshake(): void
+    {
+        $received = new Channel(1);
+        $release = new Channel(1);
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($received, $release): void {
+            $peer = $listener->accept(1.0);
+            $received->push(true);
+            $release->pop(1.0);
+            self::acceptSession($peer);
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        $result = new Channel(1);
+        Coroutine::create(static function () use ($client, $result): void {
+            try { $result->push($client->connect()); }
+            catch (\Throwable $error) { $result->push($error); }
+        });
+        self::assertTrue($received->pop(1.0));
+        $connection = $client->mysqlClient();
+        try { $client->connect(); self::fail('Concurrent connection must be rejected'); }
+        catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+            self::assertStringContainsString('Concurrent', $error->getMessage());
+        }
+        self::assertSame($connection, $client->mysqlClient());
+        $release->push(true);
+        self::assertTrue($result->pop(1.0));
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testExpiredStatementCleanupBudgetDiscardsConnection(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
+            // An exhausted cleanup budget must close the stream without another command.
+            self::assertSame('', $peer->recvAll(4, 1.0));
+            $peer->close();
+        });
+        $statement = $client->prepare('SELECT 1');
+        $statement->close(0.0);
+        self::assertFalse($client->mysqlClient()->isConnected());
+        $this->assertServerCompleted($completed);
+        $client->close();
+    }
+
+    private function assertTotalTimeout(string $operation): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            Coroutine::sleep(0.06);
+            self::sendPacket($peer, self::handshake(), 0);
+            self::receivePacket($peer);
+            // Each individual wait fits 0.1s, but their combined duration does not.
+            Coroutine::sleep(0.07);
+            $peer->close();
+        }, $operation === 'connect' ? 0.1 : 0.5);
+        $started = microtime(true);
+        try {
+            if ($operation === 'connect') { $client->connect(); }
+            elseif ($operation === 'raw') { $client->rawQuery('SELECT 1', 0.1); }
+            elseif ($operation === 'prepare') { $client->prepare('SELECT 1', 0.1); }
+            else { $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1); }
+            self::fail('Expected a total operation timeout');
+        } catch (TimeoutException $error) {
+            self::assertGreaterThan(0.08, microtime(true) - $started);
+            self::assertLessThan(0.2, microtime(true) - $started);
+            self::assertNull($client->mysqlClient());
+        }
+        $this->assertServerCompleted($completed);
+    }
+
+    private function fakeServer(callable $serve, float $connectTimeout = 0.5): array
+    {
+        $listener = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        self::assertTrue($listener->bind('127.0.0.1', 0));
+        self::assertTrue($listener->listen());
+        $config = new Config(['host' => '127.0.0.1', 'port' => $listener->getsockname()['port'],
+            'user' => 'test', 'timeout' => 0.5, 'maxConnectTime' => $connectTimeout]);
+        $completed = new Channel(1);
+        Coroutine::create(static function () use ($listener, $serve, $completed): void {
+            try { $serve($listener); $completed->push(true); }
+            catch (\Throwable $error) { $completed->push($error); }
+            finally { $listener->close(); }
+        });
+        return [new Client($config), $completed, $config];
+    }
+
+    private static function acceptSession(Socket $peer): void
+    {
+        self::sendPacket($peer, self::handshake(), 0);
+        self::receivePacket($peer);
+        self::sendPacket($peer, self::ok(), 2);
+        self::receivePacket($peer);
+        self::sendPacket($peer, self::ok(), 1);
+    }
+
+    private function assertServerCompleted(Channel $completed): void
+    {
+        $result = $completed->pop(1.0);
+        if ($result instanceof \Throwable) { throw $result; }
+        self::assertTrue($result);
+    }
+
     private static function handshake(bool $compress = false): string
     {
         $capabilities = 0x00000001 | 0x00000004 | 0x00000200 | 0x00002000 | 0x00008000 | 0x00080000;

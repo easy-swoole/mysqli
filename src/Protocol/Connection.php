@@ -36,6 +36,7 @@ final class Connection
     private string $decompressedBuffer = '';
     private float $timeout;
     private bool $busy = false;
+    private int $generation = 0;
 
     public string $connect_error = '';
     public int $connect_errno = 0;
@@ -49,7 +50,12 @@ final class Connection
         $this->timeout = $config->getTimeout();
     }
 
-    public function connect(): bool
+    public function connect(?float $timeout = null): bool
+    {
+        return $this->guard(fn(): bool => $this->connectInternal($this->deadline($timeout ?? $this->config->getMaxConnectTime())));
+    }
+
+    private function connectInternal(float $deadline): bool
     {
         if ($this->isConnected()) {
             return true;
@@ -63,8 +69,9 @@ final class Connection
 
         $this->connect_error = '';
         $this->connect_errno = 0;
+        $deadline = min($deadline, $this->deadline($this->config->getMaxConnectTime()));
         $socket = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-        if (!$socket->connect($this->config->getHost(), $this->config->getPort(), $this->config->getMaxConnectTime())) {
+        if (!$socket->connect($this->config->getHost(), $this->config->getPort(), $this->remaining($deadline))) {
             $this->connect_errno = $socket->errCode;
             $this->connect_error = $socket->errMsg ?: 'connection failed';
             $socket->close();
@@ -74,10 +81,17 @@ final class Connection
 
         try {
             $this->sequence = 0;
-            $handshake = $this->readPacket($this->config->getMaxConnectTime(), 'handshake');
-            $this->authenticate($handshake);
+            $handshake = $this->readPacket($this->remaining($deadline), 'handshake');
+            $this->authenticate($handshake, $deadline);
             $this->connected = true;
-            $this->set_charset($this->config->getCharset(), $this->config->getMaxConnectTime());
+            $charset = $this->config->getCharset();
+            if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
+                throw new \InvalidArgumentException('Invalid MySQL charset');
+            }
+            $this->beginCommand();
+            $this->writePacket(chr(self::COM_QUERY) . "SET NAMES {$charset}", $this->remaining($deadline), 'charset');
+            $this->readResponse($deadline, false, 'SET NAMES');
+            $this->generation++;
             $this->timeout = $this->config->getTimeout();
             return true;
         } catch (\Throwable $error) {
@@ -93,6 +107,11 @@ final class Connection
         return $this->connected && $this->socket !== null && !$this->socket->isClosed();
     }
 
+    public function isBusy(): bool
+    {
+        return $this->busy;
+    }
+
     public function isCompressionEnabled(): bool
     {
         return $this->compressionEnabled;
@@ -106,8 +125,8 @@ final class Connection
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         return $this->guard(function () use ($sql, $timeout): Statement {
-            $this->ensureConnected();
             $deadline = $this->deadline($timeout);
+            $this->ensureConnected($deadline);
             $this->beginCommand();
             $this->writePacket(chr(self::COM_STMT_PREPARE) . $sql, $this->remaining($deadline), 'prepare');
             $packet = $this->readPacket($this->remaining($deadline), 'prepare');
@@ -124,7 +143,7 @@ final class Connection
 
             $this->consumeDefinitions($parameterCount, $deadline);
             $this->consumeDefinitions($columnCount, $deadline);
-            return new Statement($this, $statementId, $sql, $parameterCount, $columnCount, $warningCount);
+            return new Statement($this, $statementId, $sql, $parameterCount, $columnCount, $warningCount, $this->generation);
         });
     }
 
@@ -139,7 +158,7 @@ final class Connection
         }
 
         return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
-            $this->ensureConnected();
+            $this->assertStatementGeneration($statement->getGeneration());
             $deadline = $this->deadline($timeout);
             [$nullBitmap, $types, $values] = $this->encodeParameters($parameters);
             $payload = chr(self::COM_STMT_EXECUTE)
@@ -155,13 +174,27 @@ final class Connection
         });
     }
 
-    public function closeStatement(int $statementId): void
+    private function assertStatementGeneration(int $generation): void
     {
-        if (!$this->isConnected()) {
+        if (!$this->isConnected() || $generation !== $this->generation) {
+            throw new \LogicException('The prepared statement belongs to an expired MySQL session');
+        }
+    }
+
+    public function closeStatement(int $statementId, ?int $generation = null, ?float $timeout = null): void
+    {
+        // A stale statement must never send its ID to another server session.
+        if (!$this->isConnected() || ($generation !== null && $generation !== $this->generation)) {
             return;
         }
-        $this->beginCommand();
-        $this->writePacket(chr(self::COM_STMT_CLOSE) . pack('V', $statementId), $this->timeout, 'close statement');
+        $this->guard(function () use ($statementId, $timeout): void {
+            if ($timeout !== null && $timeout <= 0) {
+                $this->closeSocket();
+                return;
+            }
+            $this->beginCommand();
+            $this->writePacket(chr(self::COM_STMT_CLOSE) . pack('V', $statementId), $timeout ?? $this->timeout, 'close statement');
+        });
     }
 
     public function ping(): bool
@@ -201,6 +234,11 @@ final class Connection
 
     public function close(): bool
     {
+        return $this->guard(fn(): bool => $this->closeInternal());
+    }
+
+    private function closeInternal(): bool
+    {
         if ($this->isConnected()) {
             try {
                 $this->beginCommand();
@@ -215,8 +253,8 @@ final class Connection
     private function command(int $command, string $payload, ?float $timeout, bool $binary): array|bool
     {
         return $this->guard(function () use ($command, $payload, $timeout, $binary): array|bool {
-            $this->ensureConnected();
             $deadline = $this->deadline($timeout);
+            $this->ensureConnected($deadline);
             $this->resetMetadata();
             $this->beginCommand();
             $this->writePacket(chr($command) . $payload, $this->remaining($deadline), 'query');
@@ -265,7 +303,7 @@ final class Connection
         return $rows;
     }
 
-    private function authenticate(string $handshake): void
+    private function authenticate(string $handshake, float $deadline): void
     {
         $offset = 0;
         $protocol = Codec::int1($handshake, $offset);
@@ -327,17 +365,17 @@ final class Connection
         if (($capabilities & self::CLIENT_PLUGIN_AUTH) !== 0) {
             $payload .= $plugin . "\0";
         }
-        $this->writePacket($payload, $this->config->getMaxConnectTime(), 'authentication');
-        $this->completeAuthentication($plugin, $scramble);
+        $this->writePacket($payload, $this->remaining($deadline), 'authentication');
+        $this->completeAuthentication($plugin, $scramble, $deadline);
         $this->compressionEnabled = $useCompression;
         $this->compressedSequence = 0;
         $this->decompressedBuffer = '';
     }
 
-    private function completeAuthentication(string $plugin, string $scramble): void
+    private function completeAuthentication(string $plugin, string $scramble, float $deadline): void
     {
         while (true) {
-            $packet = $this->readPacket($this->config->getMaxConnectTime(), 'authentication');
+            $packet = $this->readPacket($this->remaining($deadline), 'authentication');
             $this->throwIfError($packet, 'authentication');
             $header = ord($packet[0]);
             if ($header === 0x00) {
@@ -348,7 +386,7 @@ final class Connection
                 $offset = 1;
                 $plugin = Codec::nullTerminated($packet, $offset);
                 $scramble = rtrim(substr($packet, $offset), "\0");
-                $this->writePacket($this->authToken($plugin, $this->config->getPassword(), $scramble), $this->config->getMaxConnectTime(), 'authentication switch');
+                $this->writePacket($this->authToken($plugin, $this->config->getPassword(), $scramble), $this->remaining($deadline), 'authentication switch');
                 continue;
             }
             if ($header === 0x01 && ($packet[1] ?? '') === "\x03") {
@@ -356,17 +394,17 @@ final class Connection
             }
             if ($header === 0x01 && ($packet[1] ?? '') === "\x04" && $plugin === 'caching_sha2_password') {
                 if ($this->config->getPassword() === '') {
-                    $this->writePacket("\0", $this->config->getMaxConnectTime(), 'full authentication');
+                    $this->writePacket("\0", $this->remaining($deadline), 'full authentication');
                     continue;
                 }
-                $this->writePacket("\x02", $this->config->getMaxConnectTime(), 'public key request');
-                $keyPacket = $this->readPacket($this->config->getMaxConnectTime(), 'public key');
+                $this->writePacket("\x02", $this->remaining($deadline), 'public key request');
+                $keyPacket = $this->readPacket($this->remaining($deadline), 'public key');
                 $publicKey = $keyPacket[0] === "\x01" ? substr($keyPacket, 1) : $keyPacket;
                 $plain = Codec::xorBytes($this->config->getPassword() . "\0", $scramble);
                 if (!openssl_public_encrypt($plain, $encrypted, $publicKey, OPENSSL_PKCS1_OAEP_PADDING)) {
                     throw new Exception('Unable to encrypt caching_sha2_password credentials');
                 }
-                $this->writePacket($encrypted, $this->config->getMaxConnectTime(), 'full authentication');
+                $this->writePacket($encrypted, $this->remaining($deadline), 'full authentication');
                 continue;
             }
             throw new Exception('Unsupported MySQL authentication response');
@@ -762,10 +800,10 @@ final class Connection
         }
     }
 
-    private function ensureConnected(): void
+    private function ensureConnected(float $deadline): void
     {
         if (!$this->isConnected()) {
-            $this->connect();
+            $this->connectInternal($deadline);
         }
     }
 
