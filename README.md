@@ -9,6 +9,8 @@
 - OpenSSL、Sockets 和 zlib 扩展。
 - **MySQL 服务端需要 8.0。**
 
+**当前暂不支持 TLS/SSL 加密连接，数据库通信使用未加密的 TCP。** 无法连接要求 TLS/SSL 的 MySQL 服务端或账号；OpenSSL 扩展用于认证相关的加密操作，不代表连接已启用 TLS。
+
 ## 使用示例
 
 `Client::connect(?float $timeout = null)` 始终使用构造函数传入的 `Config` 建立连接，不接受配置数组。可选参数仅指定本次建连的总超时（秒），不会修改配置；省略或传入 `null` 时使用 `maxConnectTime`。显式超时仍受 `maxConnectTime` 上限约束，以先到期的截止时间为准。查询方法会在需要时自动建连，也可以主动调用 `connect()`。
