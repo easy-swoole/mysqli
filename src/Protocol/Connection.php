@@ -43,7 +43,7 @@ final class Connection
     public string $error = '';
     public int $errno = 0;
     public int|string $insert_id = 0;
-    public int $affected_rows = 0;
+    public int|string $affected_rows = 0;
 
     public function __construct(private readonly Config $config)
     {
@@ -277,7 +277,7 @@ final class Connection
 
         $offset = 0;
         $columnCount = Codec::lenencInt($packet, $offset);
-        if ($columnCount === null) {
+        if (!is_int($columnCount)) {
             throw new Exception('Malformed result-set header');
         }
         $columns = [];

@@ -9,6 +9,7 @@ use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\QueryBuilder;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class MetadataTest extends TestCase
 {
@@ -83,6 +84,44 @@ final class MetadataTest extends TestCase
 
         self::assertTrue($this->client->rawQuery("DELETE FROM `{$this->table}` WHERE id = {$id}"));
         self::assertSame(0, $this->client->getLastAffectRows());
+    }
+
+    #[DataProvider('largeAutoIncrementIds')]
+    public function testLargeAutoIncrementIdRemainsExact(string $id, string $mode): void
+    {
+        self::assertTrue($this->client->rawQuery("ALTER TABLE `{$this->table}` AUTO_INCREMENT = {$id}"));
+        if ($mode === 'raw') {
+            self::assertTrue($this->client->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('large-id')"));
+        } elseif ($mode === 'prepared') {
+            $statement = $this->client->prepare("INSERT INTO `{$this->table}` (value) VALUES (?)");
+            try {
+                self::assertTrue($statement->execute(['large-id']));
+            } finally {
+                $statement->close();
+            }
+        } else {
+            self::assertTrue($this->client->query((new QueryBuilder())->insert($this->table, ['value' => 'large-id'])));
+        }
+        $max = (string) PHP_INT_MAX;
+        $expected = strlen($id) < strlen($max) || (strlen($id) === strlen($max) && strcmp($id, $max) <= 0)
+            ? (int) $id : $id;
+        self::assertSame($expected, $this->client->getLastInsertId());
+        self::assertSame($expected, $this->client->mysqlClient()->insert_id);
+        self::assertSame(1, $this->client->getLastAffectRows());
+        self::assertSame(1, $this->client->mysqlClient()->affected_rows);
+        // CAST verifies the exact decimal value independently of the client integer decoder.
+        self::assertSame([['id' => $id]], $this->client->rawQuery("SELECT CAST(id AS CHAR) AS id FROM `{$this->table}`"));
+    }
+
+    public static function largeAutoIncrementIds(): array
+    {
+        $cases = [];
+        foreach (['9007199254740993', '9223372036854775807', '9223372036854775808', '18446744073709551614'] as $id) {
+            foreach (['raw', 'prepared', 'builder'] as $mode) {
+                $cases["{$mode}-{$id}"] = [$id, $mode];
+            }
+        }
+        return $cases;
     }
 
     public function testFailedStatementClearsPreviousMetadata(): void

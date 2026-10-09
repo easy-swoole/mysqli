@@ -6,6 +6,8 @@ namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\QueryBuilder;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class DataTypeTest extends TestCase
@@ -97,6 +99,50 @@ final class DataTypeTest extends TestCase
         }
         self::assertSame(1, $this->client->mysqlClient()?->affected_rows);
         self::assertSame([['nullable_value' => 'now set']], $this->client->rawQuery("SELECT nullable_value FROM `{$this->table}` WHERE id = 1"));
+    }
+
+    #[DataProvider('largeUnsignedUpdates')]
+    public function testUpdatePreservesLargeUnsignedValue(string $value, string $mode): void
+    {
+        // 先设为小值，确保更新最大无符号值时也确实改变了数据。
+        self::assertTrue($this->client->rawQuery("UPDATE `{$this->table}` SET bigint_unsigned = 1 WHERE id = 1"));
+        if ($mode === 'raw') {
+            self::assertTrue($this->client->rawQuery("UPDATE `{$this->table}` SET bigint_unsigned = {$value} WHERE id = 1"));
+        } elseif ($mode === 'prepared') {
+            $statement = $this->client->prepare("UPDATE `{$this->table}` SET bigint_unsigned = ? WHERE id = ?");
+            try {
+                self::assertTrue($statement->execute([$value, 1]));
+            } finally {
+                $statement->close();
+            }
+        } else {
+            self::assertTrue($this->client->query((new QueryBuilder())->where('id', 1)
+                ->update($this->table, ['bigint_unsigned' => $value])));
+        }
+        self::assertSame(1, $this->client->getLastAffectRows());
+        self::assertSame(0, $this->client->getLastInsertId());
+        self::assertSame(1, $this->client->mysqlClient()->affected_rows);
+        $expected = [['bigint_unsigned' => $value, 'decimal_value' => $value]];
+        $sql = "SELECT bigint_unsigned, CAST(bigint_unsigned AS CHAR) AS decimal_value FROM `{$this->table}` WHERE id = 1";
+        // 分别校验文本和二进制结果协议；CAST 提供服务端的精确十进制值。
+        self::assertSame($expected, $this->client->rawQuery($sql));
+        $statement = $this->client->prepare($sql);
+        try {
+            self::assertSame($expected, $statement->execute());
+        } finally {
+            $statement->close();
+        }
+    }
+
+    public static function largeUnsignedUpdates(): array
+    {
+        $cases = [];
+        foreach (['9223372036854775808', '18446744073709551614', '18446744073709551615'] as $value) {
+            foreach (['raw', 'prepared', 'builder'] as $mode) {
+                $cases["{$mode}-{$value}"] = [$value, $mode];
+            }
+        }
+        return $cases;
     }
 
     private function insertFixture(): void

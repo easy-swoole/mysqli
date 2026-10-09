@@ -463,6 +463,28 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
+    public function testOkPacketPreservesFullUnsignedMetadataRange(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $query] = self::receivePacket($peer);
+            self::assertSame("\x03UPDATE huge_table SET value = 1", $query);
+            $maximum = "\xfe" . str_repeat("\xff", 8);
+            self::sendPacket($peer, "\0" . $maximum . $maximum . "\x02\0\0\0", 1);
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        self::assertTrue($client->rawQuery('UPDATE huge_table SET value = 1'));
+        self::assertSame('18446744073709551615', $client->getLastInsertId());
+        self::assertSame('18446744073709551615', $client->getLastAffectRows());
+        self::assertSame('18446744073709551615', $client->mysqlClient()->insert_id);
+        self::assertSame('18446744073709551615', $client->mysqlClient()->affected_rows);
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
     private function assertTotalTimeout(string $operation): void
     {
         [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {

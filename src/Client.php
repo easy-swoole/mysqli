@@ -120,7 +120,17 @@ class Client
         return $result;
     }
 
+    /**
+     * 获取最近一次查询的自增 ID；尚未查询或查询失败时返回 null。
+     * MySQL 的无符号 64 位 ID 超过 PHP_INT_MAX 时返回十进制字符串，避免整数溢出或浮点精度丢失。
+     */
     public function getLastInsertId(): int|string|null { return $this->lastInsertId; }
+
+    /**
+     * 获取最近一次查询的影响行数；尚未查询或查询失败时返回 null。
+     * MySQL 协议使用无符号整数表示影响行数，超过 PHP_INT_MAX 时返回十进制字符串以保留精确值。
+     * 普通查询通常返回 int；SELECT 返回当前客户端读取到的结果行数。
+     */
     public function getLastAffectRows(): int|string|null { return $this->lastAffectRows; }
 
     public function __destruct()

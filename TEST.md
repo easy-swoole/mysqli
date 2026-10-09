@@ -2,7 +2,7 @@
 
 本项目使用 PHPUnit 10，并通过 `tests/run.php` 在 Swoole 协程环境中运行。测试分为不依赖数据库的单元测试，以及连接真实 MySQL 服务端的集成测试。
 
-当前测试套件包含 89 个测试。本次在 PHP 8.4.24 和 Swoole 环境下，使用指定远程测试数据库执行完整测试，共完成 719 个断言，全部通过。
+当前测试套件包含 137 个测试。此前在 PHP 8.4.24 和 Swoole 环境下，使用指定远程测试数据库执行完整测试，128 个测试、896 个断言全部通过；新增超大值 UPDATE 测试的专项验证结果见文末。
 
 ## 环境要求
 
@@ -247,10 +247,10 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 使用真实 MySQL 测试服务器执行：
 
 ```text
-Tests: 89
-Assertions: 719
+Tests: 128
+Assertions: 896
 Result: OK
-Time: 27.065 seconds
+Time: 28.917 seconds
 Peak memory: 124.34 MB
 ```
 
@@ -297,3 +297,27 @@ query 和 rawQuery 显式声明可选超时参数，query 返回类型为 bool|a
 
 本次单元测试：60 个测试、447 个断言，全部通过。
 指定远程数据库全套测试：89 个测试、719 个断言，全部通过，无错误、失败或跳过；耗时 27.065 秒，峰值内存 124.34 MB。PHP 语法检查及 git diff --check 通过。
+
+## 无符号 64 位元数据兼容验证
+
+Codec::int8() 和 lenencInt() 在数值不超过 PHP_INT_MAX 时返回 int，超过时返回精确的十进制字符串。解析不经过浮点转换，不依赖 BCMath/GMP。affected_rows 同步允许 int|string，超范围的字符串长度及字段数量不会直接用于内存或循环操作。
+
+新增 CodecTest 覆盖零值、32 位边界、超过浮点精确整数范围的值、64 位有符号边界及完整无符号上限 18446744073709551615；同时验证读取偏移、长度编码、截断数据和非法长度。模拟服务端测试验证 OK 包中的超大插入 ID 与影响行数能完整传递给 Client。
+
+真实数据库新增 12 个自增 ID 场景：9007199254740993、9223372036854775807、9223372036854775808、18446744073709551614，分别通过普通查询、原生预处理和 QueryBuilder 插入。对照 SELECT CAST(id AS CHAR) 验证精确十进制值，并验证 getLastInsertId() 的类型和普通影响行数。
+
+Codec 整数返回类型按 PHP_INT_MAX 判定，本次实际运行环境为 64 位 PHP，未在 32 位 PHP 环境运行验证。
+
+已为 Codec 的整数解析函数、getLastInsertId() 和 getLastAffectRows() 增加中文函数注释，说明返回字符串的原因。
+
+单元测试：87 个测试、540 个断言，全部通过。
+专项验证：43 个测试、203 个断言，全部通过。
+指定远程数据库全套测试：128 个测试、896 个断言，全部通过，无错误、失败或跳过；耗时 28.917 秒，峰值内存 124.34 MB。PHP 语法检查及 git diff --check 通过。
+
+## 超过 PHP_INT_MAX 的 UPDATE 验证
+
+DataTypeTest 新增 9 个真实数据库 UPDATE 场景：将 BIGINT UNSIGNED 字段分别更新为 9223372036854775808、18446744073709551614 和 18446744073709551615，每个值覆盖普通 SQL、原生预处理和 QueryBuilder 三种入口。PHP 中均以十进制字符串保存测试值，预处理和 QueryBuilder 以字符串绑定参数。
+
+每个场景先将字段重置为 1，确保 UPDATE 确实修改数据；验证影响行数为 1、插入 ID 为 0，并通过文本和二进制结果协议读回，严格比较完整字符串。SELECT CAST(bigint_unsigned AS CHAR) 同时提供服务端十进制值用于交叉校验。
+
+指定远程测试数据库专项验证：DataTypeTest 共 12 个测试、164 个断言全部通过，无错误、失败或跳过，耗时 2.490 秒。新增用例沿用随机临时表及 tearDown 清理。PHP 语法检查和 git diff --check 通过。本次只修改测试和验证文档，未重复运行全套测试。

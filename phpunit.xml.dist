@@ -11,6 +11,7 @@
             <file>tests/FastDbApiCompatibilityTest.php</file>
             <file>tests/ConnectionTimeoutTest.php</file>
             <file>tests/ProtocolTest.php</file>
+            <file>tests/CodecTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
         </testsuite>
         <testsuite name="integration">
