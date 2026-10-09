@@ -8,20 +8,20 @@ use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\QueryBuilder;
 
 /**
- * Captures the public calls made by EasySwoole FastDb without depending on it.
+ * Exercises FastDb-style calls with subclasses adapted to the current Client API.
  */
 final class FastDbStyleConnection extends Client
 {
     public bool $isInTransaction = false;
 
-    public function query(QueryBuilder $builder)
+    public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
     {
-        return parent::query($builder);
+        return parent::query($builder, $timeout);
     }
 
-    public function rawQuery(string $query)
+    public function rawQuery(string $query, ?float $timeout = null)
     {
-        return parent::rawQuery($query);
+        return parent::rawQuery($query, $timeout);
     }
 
     public function begin(int $flags = 0): bool

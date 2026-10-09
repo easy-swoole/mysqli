@@ -6,6 +6,7 @@ namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Protocol\Connection;
 use EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection;
 use PHPUnit\Framework\TestCase;
@@ -26,20 +27,37 @@ final class FastDbApiCompatibilityTest extends TestCase
         self::assertNull($timeout->getDefaultValue());
         self::assertSame('bool', (string) $connect->getReturnType());
 
-        $query = new \ReflectionMethod($connection, 'query');
-        $rawQuery = new \ReflectionMethod($connection, 'rawQuery');
-        self::assertSame(1, $query->getNumberOfParameters());
-        self::assertSame(1, $rawQuery->getNumberOfParameters());
-        self::assertFalse($query->hasReturnType());
-        self::assertFalse($rawQuery->hasReturnType());
+        foreach ([Client::class, FastDbStyleConnection::class] as $class) {
+            foreach (['query', 'rawQuery'] as $method) {
+                $reflection = new \ReflectionMethod($class, $method);
+                self::assertSame(2, $reflection->getNumberOfParameters());
+                self::assertSame(1, $reflection->getNumberOfRequiredParameters());
+                $parameters = $reflection->getParameters();
+                self::assertSame($method === 'query' ? 'builder' : 'query', $parameters[0]->getName());
+                self::assertSame($method === 'query' ? QueryBuilder::class : 'string', (string) $parameters[0]->getType());
+                self::assertSame('timeout', $parameters[1]->getName());
+                self::assertSame('?float', (string) $parameters[1]->getType());
+                self::assertNull($parameters[1]->getDefaultValue());
+                if ($method === 'query') {
+                    $returnType = $reflection->getReturnType();
+                    self::assertInstanceOf(\ReflectionUnionType::class, $returnType);
+                    $types = array_map(static fn($type): string => $type->getName(), $returnType->getTypes());
+                    sort($types);
+                    self::assertSame(['array', 'bool'], $types);
+                } else {
+                    self::assertFalse($reflection->hasReturnType());
+                }
+            }
+        }
     }
 
-    public function testMysqlClientReturnTypeRetainsMysqliMockCompatibility(): void
+    public function testMysqlClientReturnTypeIsNullableProtocolConnection(): void
     {
-        $type = (string) (new \ReflectionMethod(Client::class, 'mysqlClient'))->getReturnType();
-        self::assertStringContainsString(Connection::class, $type);
-        self::assertStringContainsString('mysqli', $type);
-        self::assertStringContainsString('null', $type);
+        $type = (new \ReflectionMethod(Client::class, 'mysqlClient'))->getReturnType();
+        self::assertInstanceOf(\ReflectionNamedType::class, $type);
+        self::assertSame(Connection::class, $type->getName());
+        self::assertTrue($type->allowsNull());
+        self::assertNull((new Client(new Config()))->mysqlClient());
     }
 
     public function testFastDbConfigurationExtrasRemainIgnored(): void

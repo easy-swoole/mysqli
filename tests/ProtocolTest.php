@@ -426,9 +426,46 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
-    private function assertTotalTimeout(string $operation): void
+    public function testRawQueryNamedTimeoutIncludesConnectionAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('raw-named');
+    }
+
+    public function testBuilderQueryNamedTimeoutIncludesConnectionAndAuthentication(): void
+    {
+        $this->assertTotalTimeout('builder-named');
+    }
+
+    public function testAdaptedSubclassForwardsRawQueryTimeout(): void
+    {
+        $this->assertTotalTimeout('subclass-raw');
+    }
+
+    public function testAdaptedSubclassForwardsBuilderQueryTimeout(): void
+    {
+        $this->assertTotalTimeout('subclass-builder');
+    }
+
+    public function testMysqlClientReturnsProtocolConnectionOnlyWhileClientOwnsIt(): void
     {
         [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        self::assertNull($client->mysqlClient());
+        self::assertTrue($client->connect());
+        self::assertInstanceOf(\EasySwoole\Mysqli\Protocol\Connection::class, $client->mysqlClient());
+        self::assertTrue($client->close());
+        self::assertNull($client->mysqlClient());
+        $this->assertServerCompleted($completed);
+    }
+
+    private function assertTotalTimeout(string $operation): void
+    {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             Coroutine::sleep(0.06);
             self::sendPacket($peer, self::handshake(), 0);
@@ -437,10 +474,19 @@ final class ProtocolTest extends TestCase
             Coroutine::sleep(0.07);
             $peer->close();
         }, $operation === 'connect' ? 0.1 : 0.5);
+        if (str_starts_with($operation, 'subclass-')) {
+            $client = new \EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection($config);
+        }
         $started = microtime(true);
         try {
             if ($operation === 'connect') { $client->connect(); }
             elseif ($operation === 'connect-explicit') { $client->connect(0.1); }
+            elseif (in_array($operation, ['raw-named', 'subclass-raw'], true)) {
+                $client->rawQuery(query: 'SELECT 1', timeout: 0.1);
+            }
+            elseif (in_array($operation, ['builder-named', 'subclass-builder'], true)) {
+                $client->query(builder: (new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), timeout: 0.1);
+            }
             elseif ($operation === 'raw') { $client->rawQuery('SELECT 1', 0.1); }
             elseif ($operation === 'prepare') { $client->prepare('SELECT 1', 0.1); }
             else { $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1); }

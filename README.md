@@ -1,6 +1,6 @@
 # EasySwoole 协程 MySQLi
 
-基于 `Swoole\Coroutine\Socket` 实现的 MySQL 协议客户端，支持连接超时、单次查询的总超时、文本查询、原生服务端预处理语句，并兼容 `easyswoole/fast-db` 使用的公共 API。
+基于 `Swoole\Coroutine\Socket` 实现的 MySQL 协议客户端，支持连接超时、单次查询的总超时、文本查询、原生服务端预处理语句，并提供 FastDb 风格的查询及事务接口；继承接口的适配要求见下文。
 
 ## 环境要求
 
@@ -51,7 +51,9 @@ Coroutine\run(function (): void {
 
 `compress` 默认为 `false`。启用后，客户端通过 `CLIENT_COMPRESS` 协商压缩；如果服务端支持，则在认证成功后启用 zlib 压缩。如果服务端不支持，连接仍以未压缩方式继续使用。可以通过 `$client->mysqlClient()->isCompressionEnabled()` 查看实际协商结果。
 
-`Client::query($builder, $timeout)` 自动使用服务端预处理协议。为了保持 `EasySwoole\FastDb\Mysql\Connection` 的继承兼容性，方法声明保留 4.x 的单参数签名 `query(QueryBuilder $builder)`，可选超时参数在运行时读取。
+`Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 自动使用服务端预处理协议；`rawQuery(string $query, ?float $timeout = null)` 使用文本查询协议。两者显式声明可选超时参数，支持 `timeout: 0.5` 这样的命名参数。
+
+继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写 `query()` 时还需要声明兼容的返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
 
 查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。下一次查询会自动重新连接。
 

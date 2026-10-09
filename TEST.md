@@ -2,7 +2,7 @@
 
 本项目使用 PHPUnit 10，并通过 `tests/run.php` 在 Swoole 协程环境中运行。测试分为不依赖数据库的单元测试，以及连接真实 MySQL 服务端的集成测试。
 
-当前测试套件包含 84 个测试。本次在 PHP 8.4.24 和 Swoole 环境下，使用指定远程测试数据库执行完整测试，共完成 655 个断言，全部通过。
+当前测试套件包含 89 个测试。本次在 PHP 8.4.24 和 Swoole 环境下，使用指定远程测试数据库执行完整测试，共完成 719 个断言，全部通过。
 
 ## 环境要求
 
@@ -87,8 +87,8 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 
 文件：`tests/FastDbApiCompatibilityTest.php`
 
-- 验证 FastDb 风格的 Connection 类可以继承当前 Client。
-- 保留 `mysqlClient()` 与 mysqli mock 的类型兼容性。
+- 验证按当前方法签名适配的 FastDb 风格 Connection 类可以继承 Client，并检查显式可选超时参数和 query 的 bool|array 返回类型。
+- 验证 `mysqlClient()` 返回类型仅为协议 Connection 或 null。
 - FastDb 中存在但当前客户端不使用的额外配置不会造成异常。
 - 该测试不依赖 `easyswoole/fast-db` 包。
 
@@ -247,10 +247,10 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 使用真实 MySQL 测试服务器执行：
 
 ```text
-Tests: 84
-Assertions: 655
+Tests: 89
+Assertions: 719
 Result: OK
-Time: 26.217 seconds
+Time: 27.065 seconds
 Peak memory: 124.34 MB
 ```
 
@@ -288,3 +288,12 @@ Peak memory: 124.34 MB
 
 单元测试：55 个测试、383 个断言，全部通过。
 指定远程数据库全套测试：84 个测试、655 个断言，全部通过，无错误、失败或跳过；耗时 26.217 秒，峰值内存 124.34 MB。
+
+## 查询方法显式签名验证
+
+query 和 rawQuery 显式声明可选超时参数，query 返回类型为 bool|array，mysqlClient 返回类型收窄为 Connection|null。旧单参数子类签名不再兼容，需要同步参数和返回类型；测试中的 FastDb 风格子类已经按新接口适配，不代表未修改的旧版 FastDb 连接类仍然兼容。
+
+新增 5 个行为测试，覆盖 query/rawQuery 的命名超时参数、适配后子类对两种查询的超时转发，以及 mysqlClient 在建连前、建连后和关闭后的返回值。保留原有查询结果数组、写操作布尔结果及超时回归测试。
+
+本次单元测试：60 个测试、447 个断言，全部通过。
+指定远程数据库全套测试：89 个测试、719 个断言，全部通过，无错误、失败或跳过；耗时 27.065 秒，峰值内存 124.34 MB。PHP 语法检查及 git diff --check 通过。

@@ -48,9 +48,8 @@ class Client
         }
     }
 
-    public function query(QueryBuilder $builder)
+    public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
-        $timeout = func_get_args()[1] ?? null;
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
         $start = microtime(true);
@@ -72,9 +71,8 @@ class Client
         return $result;
     }
 
-    public function rawQuery(string $query)
+    public function rawQuery(string $query,?float $timeout = null)
     {
-        $timeout = func_get_args()[1] ?? null;
         $start = microtime(true);
         $deadline = $this->queryDeadline($timeout);
         $this->resetMetadata();
@@ -101,7 +99,7 @@ class Client
         );
     }
 
-    public function mysqlClient(): Connection|\mysqli|null
+    public function mysqlClient(): Connection|null
     {
         return $this->mysqlClient;
     }
