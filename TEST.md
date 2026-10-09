@@ -370,3 +370,13 @@ ClientTest 现使用当前连接的临时 student 表初始化固定记录，避
 begin_transaction 支持 WITH CONSISTENT SNAPSHOT、READ WRITE、READ ONLY；commit/rollback 支持 AND CHAIN、AND NO CHAIN、RELEASE、NO RELEASE，RELEASE 成功后同步关闭本地连接。未知及相互矛盾的位标记抛出 InvalidArgumentException。标记语义参考 [mysqli 常量](https://www.php.net/manual/en/mysqli.constants.php) 及 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。新增模拟服务端测试验证 SQL 及参数校验；新增 3 个真实事务测试验证只读拒绝写入、显式读写覆盖默认只读、一致性快照在开始时建立、提交/回滚链式事务、NO CHAIN 覆盖会话 completion_type、RELEASE 释放会话及后续重连。旧 FastDb 用例的 commit(3)/rollback(3) 同时指定 CHAIN 和 NO CHAIN，现改用明确的 NO CHAIN（2），begin(3) 仍保留合法的快照加读写组合。
 
 PolarDB 最终全套回归：163 个测试、1769 个断言全部通过，无失败、错误或跳过，耗时 70.114 秒，峰值内存 124.34 MB。本次新增 12 个测试场景，原有事务丢失保护等回归均通过。PHP 语法和 git diff --check 检查通过。凭据仅由进程环境变量传入。
+
+## 2026-10-09 客户端存储过程调用限制
+
+客户端在普通查询、Prepare 及预处理执行入口检查调用 SQL，直接 CALL 抛出 UnsupportedOperationException，不发送调用命令。识别大小写、前导空白、# 和 -- 行注释、普通块注释及 MySQL 可执行注释，避免只检查字符串前缀而漏判。CALL 出现在字符串、普通注释或 CREATE PROCEDURE 的过程体中不会误判；多结果及多语句能力维持关闭。
+
+新增模拟服务端测试：11 种 CALL 写法分别通过 Client rawQuery、Prepare、QueryBuilder 及协议连接 query/prepare 拒绝，服务端只收到后续允许的 SQL，证明调用命令没有发送。覆盖普通字符串、注释、CALL 开头的字段名、存储函数及存储过程管理语句不被拦截。
+
+新增 PolarDB 集成测试：建立随机名称的无结果存储过程，其执行会插入测试记录；在事务中逐一验证各入口拒绝调用，错误来自客户端（错误码 0），测试记录始终为 0，事务状态及 ping 保持正常，拒绝后预处理普通查询可继续执行。过程在 finally 删除，临时表随会话关闭清理。
+
+专项 2 个测试、202 个断言通过；完整 PolarDB 回归 165 个测试、1971 个断言全部通过，无错误、失败或跳过，耗时 71.268 秒，峰值内存 124.34 MB。PHP 语法和 git diff --check 检查通过。README 已注明 CALL/多结果限制及本项目典型生产场景中存储过程使用相对较少的说明。

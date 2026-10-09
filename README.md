@@ -77,6 +77,14 @@ Coroutine\run(function (): void {
 
 超时值必须大于零。如果 Statement 清理阶段的查询预算已经耗尽，客户端会直接丢弃连接，不再为清理操作分配新的超时预算。
 
+## 存储过程限制
+
+本项目以生产应用中常见的普通 SQL、预处理查询和应用层事务为主要使用方式；在这类项目中，存储过程的使用相对较少，因此客户端暂不支持存储过程调用及多结果集。
+
+`rawQuery()`、`query()`、`prepare()` 及协议连接入口会在发送调用 SQL 前拒绝 `CALL`，抛出 `EasySwoole\Mysqli\Exception\UnsupportedOperationException`。判断支持大小写、前导空白、普通注释及 MySQL 可执行注释；拒绝后原连接仍可继续使用。多结果及分号多语句能力保持关闭。
+
+此限制仅针对本客户端调用存储过程，不修改服务端配置，也不影响其他客户端。`CREATE PROCEDURE`、`DROP PROCEDURE` 等管理语句及普通 SELECT 中的存储函数不在 CALL 限制范围内。
+
 ## 更多文档
 
 - [测试命令与环境配置](tests/README.md)。

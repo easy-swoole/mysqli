@@ -8,6 +8,7 @@ use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use EasySwoole\Mysqli\Exception\TransactionLostException;
+use EasySwoole\Mysqli\Exception\UnsupportedOperationException;
 use Swoole\Coroutine\Socket;
 
 final class Connection
@@ -154,6 +155,7 @@ final class Connection
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         return $this->guard(function () use ($sql, $timeout): Statement {
+            $this->assertSupportedSql($sql);
             $deadline = $this->deadline($timeout);
             $this->ensureConnected($deadline);
             $this->beginCommand();
@@ -191,6 +193,7 @@ final class Connection
 
         return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
             $this->assertStatementGeneration($statement->getGeneration());
+            $this->assertSupportedSql($statement->getSql());
             $deadline = $this->deadline($timeout);
             [$nullBitmap, $types, $values] = $this->encodeParameters($parameters);
             $payload = chr(self::COM_STMT_EXECUTE)
@@ -348,6 +351,9 @@ final class Connection
     private function command(int $command, string $payload, ?float $timeout, bool $binary): array|bool
     {
         return $this->guard(function () use ($command, $payload, $timeout, $binary): array|bool {
+            if ($command === self::COM_QUERY) {
+                $this->assertSupportedSql($payload);
+            }
             $deadline = $this->deadline($timeout);
             $this->ensureConnected($deadline);
             $this->resetMetadata();
@@ -355,6 +361,34 @@ final class Connection
             $this->writePacket(chr($command) . $payload, $this->remaining($deadline), 'query');
             return $this->readResponse($deadline, $binary, $payload);
         });
+    }
+
+    /**
+     * 拒绝 CALL 调用，跳过前导注释并识别 MySQL 可执行注释中的调用。
+     */
+    private function assertSupportedSql(string $sql): void
+    {
+        while (true) {
+            $sql = preg_replace('/\A[\x00-\x20;]+/', '', $sql);
+            if (str_starts_with($sql, '#') || (str_starts_with($sql, '--')
+                && (strlen($sql) === 2 || ord($sql[2]) <= 32))) {
+                $length = strcspn($sql, "\r\n");
+                $sql = substr($sql, $length);
+                continue;
+            }
+            if (str_starts_with($sql, '/*')) {
+                $end = strpos($sql, '*/', 2);
+                if ($end === false) { return; } // 未闭合注释由服务端按 SQL 语法报错。
+                $body = ($sql[2] ?? '') === '!'
+                    ? preg_replace('/\A[0-9]{5,6}/', '', substr($sql, 3, $end - 3)) : '';
+                $sql = $body . ' ' . substr($sql, $end + 2);
+                continue;
+            }
+            break;
+        }
+        if (preg_match('/\ACALL(?![a-zA-Z0-9_$\x80-\xff])/i', $sql)) {
+            throw new UnsupportedOperationException('Stored procedure calls (CALL) are not supported by this client');
+        }
     }
 
     /**
@@ -1027,7 +1061,7 @@ final class Connection
     private function guard(callable $callback): mixed
     {
         if ($this->busy) {
-            throw new Exception('Concurrent operations on one MySQL connection are not allowed');
+            throw new Exception('Concurrent operations on active MySQL connection are not allowed');
         }
         $this->busy = true;
         try {

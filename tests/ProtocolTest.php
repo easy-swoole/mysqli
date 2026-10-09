@@ -649,6 +649,48 @@ final class ProtocolTest extends TestCase
         }
     }
 
+    public function testCallIsRejectedLocallyAcrossAllQueryEntrypoints(): void
+    {
+        $allowed = ["SELECT 'CALL p()' AS value", '/* CALL p() */ SELECT 1',
+            'SELECT callable_column FROM t', 'SELECT stored_function()',
+            'CREATE PROCEDURE p() BEGIN CALL q(); END', 'DROP PROCEDURE p'];
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($allowed): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            foreach ($allowed as $sql) {
+                [, $packet] = self::receivePacket($peer);
+                self::assertSame("\x03" . $sql, $packet); // CALL 拒绝期间不应收到任何命令。
+                self::sendPacket($peer, self::ok(), 1);
+            }
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        $client->connect();
+        $connection = $client->mysqlClient();
+        $calls = ['CALL p()', " \t\r\n cAlL p()", '/* ordinary */ CALL/**/p()',
+            "# CALL in comment\r\n-- comment\nCALL p()", '/*+ hint */ /* comment */ call p()',
+            '/*!80000 CALL p() */', '/*! CALL */ p()', '/*!80000 */ CALL p()',
+            '; /* prefix */ CALL p()', 'CALL`p`()', '/*CALL*/ /*!80000 CALL p() */'];
+        foreach ($calls as $sql) {
+            foreach ([fn() => $client->rawQuery($sql), fn() => $client->prepare($sql),
+                fn() => $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw($sql)),
+                fn() => $connection->query($sql), fn() => $connection->prepare($sql)] as $operation) {
+                try {
+                    $operation();
+                    self::fail('CALL must be rejected before sending SQL');
+                } catch (\EasySwoole\Mysqli\Exception\UnsupportedOperationException $error) {
+                    self::assertStringContainsString('CALL', $error->getMessage());
+                    self::assertSame(0, $error->getCode());
+                    self::assertTrue($connection->isConnected());
+                }
+            }
+        }
+        foreach ($allowed as $sql) { self::assertTrue($client->rawQuery($sql)); }
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
     private function assertTotalTimeout(string $operation): void
     {
         [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
