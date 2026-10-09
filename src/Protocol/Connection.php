@@ -45,16 +45,25 @@ final class Connection
     public int|string $insert_id = 0;
     public int|string $affected_rows = 0;
 
+    /**
+     * 保存连接配置及默认操作超时。
+     */
     public function __construct(private readonly Config $config)
     {
         $this->timeout = $config->getTimeout();
     }
 
+    /**
+     * 在并发保护下建立连接。
+     */
     public function connect(?float $timeout = null): bool
     {
         return $this->guard(fn(): bool => $this->connectInternal($this->deadline($timeout ?? $this->config->getMaxConnectTime())));
     }
 
+    /**
+     * 在截止时间内完成建连、认证和字符集设置。
+     */
     private function connectInternal(float $deadline): bool
     {
         if ($this->isConnected()) {
@@ -102,26 +111,41 @@ final class Connection
         }
     }
 
+    /**
+     * 判断连接和底层 Socket 是否仍然有效。
+     */
     public function isConnected(): bool
     {
         return $this->connected && $this->socket !== null && !$this->socket->isClosed();
     }
 
+    /**
+     * 判断当前连接是否正在执行操作。
+     */
     public function isBusy(): bool
     {
         return $this->busy;
     }
 
+    /**
+     * 获取实际协商后的协议压缩状态。
+     */
     public function isCompressionEnabled(): bool
     {
         return $this->compressionEnabled;
     }
 
+    /**
+     * 通过文本协议发送 SQL 并读取结果。
+     */
     public function query(string $sql, ?float $timeout = null): array|bool
     {
         return $this->command(self::COM_QUERY, $sql, $timeout, false);
     }
 
+    /**
+     * 在服务端创建预处理语句并读取语句信息。
+     */
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         return $this->guard(function () use ($sql, $timeout): Statement {
@@ -147,6 +171,9 @@ final class Connection
         });
     }
 
+    /**
+     * 验证语句会话、编码参数并读取执行结果。
+     */
     public function executeStatement(Statement $statement, array $parameters, ?float $timeout): array|bool
     {
         if (count($parameters) !== $statement->getParameterCount()) {
@@ -174,6 +201,9 @@ final class Connection
         });
     }
 
+    /**
+     * 检查语句是否仍属于当前有效会话。
+     */
     private function assertStatementGeneration(int $generation): void
     {
         if (!$this->isConnected() || $generation !== $this->generation) {
@@ -181,6 +211,9 @@ final class Connection
         }
     }
 
+    /**
+     * 关闭当前会话中的语句，预算耗尽时丢弃连接。
+     */
     public function closeStatement(int $statementId, ?int $generation = null, ?float $timeout = null): void
     {
         // A stale statement must never send its ID to another server session.
@@ -197,32 +230,50 @@ final class Connection
         });
     }
 
+    /**
+     * 向服务端发送探测命令以检查连接。
+     */
     public function ping(): bool
     {
         return $this->command(self::COM_PING, '', $this->timeout, false) === true;
     }
 
+    /**
+     * 开始数据库事务。
+     */
     public function begin_transaction(int $flags = 0): bool
     {
         return $this->query('START TRANSACTION') === true;
     }
 
+    /**
+     * 提交当前事务。
+     */
     public function commit(int $flags = 0): bool
     {
         return $this->query('COMMIT') === true;
     }
 
+    /**
+     * 回滚当前事务。
+     */
     public function rollback(int $flags = 0): bool
     {
         return $this->query('ROLLBACK') === true;
     }
 
+    /**
+     * 切换当前数据库。
+     */
     public function select_db(string $database): bool
     {
         $escaped = str_replace('`', '``', $database);
         return $this->query("USE `{$escaped}`") === true;
     }
 
+    /**
+     * 验证并设置连接字符集。
+     */
     public function set_charset(string $charset)
     {
         $timeout = func_get_args()[1] ?? null;
@@ -232,11 +283,17 @@ final class Connection
         return $this->query("SET NAMES {$charset}", $timeout) === true;
     }
 
+    /**
+     * 在并发保护下关闭连接。
+     */
     public function close(): bool
     {
         return $this->guard(fn(): bool => $this->closeInternal());
     }
 
+    /**
+     * 尝试发送退出命令并关闭 Socket。
+     */
     private function closeInternal(): bool
     {
         if ($this->isConnected()) {
@@ -250,6 +307,9 @@ final class Connection
         return true;
     }
 
+    /**
+     * 在共享超时预算内发送命令并读取响应。
+     */
     private function command(int $command, string $payload, ?float $timeout, bool $binary): array|bool
     {
         return $this->guard(function () use ($command, $payload, $timeout, $binary): array|bool {
@@ -262,6 +322,9 @@ final class Connection
         });
     }
 
+    /**
+     * 解析服务端响应，返回结果行或执行成功标志。
+     */
     private function readResponse(float $deadline, bool $binary, string $sql): array|bool
     {
         $packet = $this->readPacket($this->remaining($deadline), 'query');
@@ -303,6 +366,9 @@ final class Connection
         return $rows;
     }
 
+    /**
+     * 解析握手信息并发送认证请求。
+     */
     private function authenticate(string $handshake, float $deadline): void
     {
         $offset = 0;
@@ -372,6 +438,9 @@ final class Connection
         $this->decompressedBuffer = '';
     }
 
+    /**
+     * 处理认证切换及完整认证流程。
+     */
     private function completeAuthentication(string $plugin, string $scramble, float $deadline): void
     {
         while (true) {
@@ -411,6 +480,9 @@ final class Connection
         }
     }
 
+    /**
+     * 根据认证插件生成密码认证数据。
+     */
     private function authToken(string $plugin, string $password, string $scramble): string
     {
         if ($password === '') {
@@ -423,6 +495,9 @@ final class Connection
         };
     }
 
+    /**
+     * 读取预处理语句的参数或字段定义。
+     */
     private function consumeDefinitions(int $count, float $deadline): void
     {
         for ($i = 0; $i < $count; $i++) {
@@ -435,6 +510,9 @@ final class Connection
         }
     }
 
+    /**
+     * 解析结果字段的名称、类型及标志。
+     */
     private function parseColumn(string $packet): Column
     {
         $offset = 0;
@@ -451,6 +529,9 @@ final class Connection
         return new Column($name, $type, $flags);
     }
 
+    /**
+     * 将文本协议结果行解析为关联数组。
+     */
     private function parseTextRow(string $packet, array $columns): array
     {
         $offset = 0;
@@ -462,6 +543,9 @@ final class Connection
         return $row;
     }
 
+    /**
+     * 按字段类型转换文本值，并保留超大无符号整数。
+     */
     private function castTextValue(?string $value, Column $column): mixed
     {
         if ($value === null) {
@@ -479,6 +563,9 @@ final class Connection
         };
     }
 
+    /**
+     * 将二进制协议结果行解析为关联数组。
+     */
     private function parseBinaryRow(string $packet, array $columns): array
     {
         if (($packet[0] ?? '') !== "\0") {
@@ -500,6 +587,9 @@ final class Connection
         return $row;
     }
 
+    /**
+     * 按字段类型解码单个二进制值。
+     */
     private function decodeBinaryValue(string $packet, int &$offset, Column $column): mixed
     {
         return match ($column->type) {
@@ -517,6 +607,9 @@ final class Connection
         };
     }
 
+    /**
+     * 解码二进制整数，超大无符号值返回字符串。
+     */
     private function unpackInteger(string $packet, int &$offset, int $bytes, bool $unsigned): int|string
     {
         $raw = substr($packet, $offset, $bytes);
@@ -542,6 +635,9 @@ final class Connection
         return sprintf('%u', $value);
     }
 
+    /**
+     * 解码小端单精度或双精度浮点数。
+     */
     private function unpackFloat(string $packet, int &$offset, int $bytes): float
     {
         $raw = substr($packet, $offset, $bytes);
@@ -549,6 +645,9 @@ final class Connection
         return unpack($bytes === 4 ? 'g' : 'e', $raw)[1];
     }
 
+    /**
+     * 将二进制日期或时间转换为字符串。
+     */
     private function unpackTemporal(string $packet, int &$offset, int $type): string
     {
         $length = Codec::int1($packet, $offset);
@@ -582,6 +681,9 @@ final class Connection
         return $value;
     }
 
+    /**
+     * 生成预处理参数的空值位图、类型及数据。
+     */
     private function encodeParameters(array $parameters): array
     {
         $bitmap = str_repeat("\0", intdiv(count($parameters) + 7, 8));
@@ -611,6 +713,9 @@ final class Connection
         return [$bitmap, $types, $values];
     }
 
+    /**
+     * 读取成功响应中的影响行数和插入 ID。
+     */
     private function parseOk(string $packet): void
     {
         $offset = 1;
@@ -618,6 +723,9 @@ final class Connection
         $this->insert_id = Codec::lenencInt($packet, $offset) ?? 0;
     }
 
+    /**
+     * 识别服务端错误响应并抛出异常。
+     */
     private function throwIfError(string $packet, string $context): void
     {
         if (($packet[0] ?? '') !== "\xff") {
@@ -634,11 +742,17 @@ final class Connection
         throw new Exception("{$context}: {$message}", $code);
     }
 
+    /**
+     * 判断数据包是否为结果集结束标记。
+     */
     private function isEof(string $packet): bool
     {
         return ($packet[0] ?? '') === "\xfe" && strlen($packet) < 9;
     }
 
+    /**
+     * 转换文本整数，超大无符号值保留为字符串。
+     */
     private function integerValue(string $value, bool $unsigned): int|string
     {
         if ($unsigned && self::compareUnsignedDecimal($value, (string) PHP_INT_MAX) > 0) {
@@ -647,6 +761,9 @@ final class Connection
         return (int) $value;
     }
 
+    /**
+     * 重置新命令的包序号及解压缓冲区。
+     */
     private function beginCommand(): void
     {
         $this->sequence = 0;
@@ -654,6 +771,9 @@ final class Connection
         $this->decompressedBuffer = '';
     }
 
+    /**
+     * 按协议分片并发送完整数据包。
+     */
     private function writePacket(string $payload, float $timeout, string $operation): void
     {
         $deadline = microtime(true) + $timeout;
@@ -673,6 +793,9 @@ final class Connection
         }
     }
 
+    /**
+     * 校验包序号并重组完整数据包。
+     */
     private function readPacket(float $timeout, string $operation): string
     {
         $deadline = microtime(true) + $timeout;
@@ -691,6 +814,9 @@ final class Connection
         return $payload;
     }
 
+    /**
+     * 按压缩协商状态发送协议字节。
+     */
     private function writeProtocolBytes(string $data, float $deadline, string $operation): void
     {
         if (!$this->compressionEnabled) {
@@ -718,6 +844,9 @@ final class Connection
         }
     }
 
+    /**
+     * 读取指定长度的协议字节，必要时解压。
+     */
     private function receiveProtocolExactly(int $length, float $deadline, string $operation): string
     {
         if (!$this->compressionEnabled) {
@@ -751,6 +880,9 @@ final class Connection
         return $data;
     }
 
+    /**
+     * 在剩余预算内发送全部字节。
+     */
     private function sendExactly(string $data, float $deadline, string $operation): void
     {
         $remaining = $this->remaining($deadline);
@@ -760,6 +892,9 @@ final class Connection
         }
     }
 
+    /**
+     * 在指定超时内读取完整字节串。
+     */
     private function receiveExactly(int $length, float $timeout, string $operation): string
     {
         if ($timeout <= 0) {
@@ -775,6 +910,9 @@ final class Connection
         return $data;
     }
 
+    /**
+     * 关闭失效连接并生成 Socket 错误或超时异常。
+     */
     private function ioException(string $operation, float $timeout, ?int $code = null, ?string $message = null): Exception
     {
         $code ??= $this->socket?->errCode ?? 0;
@@ -787,6 +925,9 @@ final class Connection
         return new Exception("MySQL {$operation} failed: {$message}", $code);
     }
 
+    /**
+     * 阻止同一个连接同时执行多个操作。
+     */
     private function guard(callable $callback): mixed
     {
         if ($this->busy) {
@@ -800,6 +941,9 @@ final class Connection
         }
     }
 
+    /**
+     * 在需要时按当前操作预算建立连接。
+     */
     private function ensureConnected(float $deadline): void
     {
         if (!$this->isConnected()) {
@@ -807,6 +951,9 @@ final class Connection
         }
     }
 
+    /**
+     * 验证操作超时并计算截止时间。
+     */
     private function deadline(?float $timeout): float
     {
         $duration = $timeout ?? $this->timeout;
@@ -816,6 +963,9 @@ final class Connection
         return microtime(true) + $duration;
     }
 
+    /**
+     * 计算剩余预算，耗尽时关闭连接并抛出异常。
+     */
     private function remaining(float $deadline): float
     {
         $remaining = $deadline - microtime(true);
@@ -826,6 +976,9 @@ final class Connection
         return $remaining;
     }
 
+    /**
+     * 清空协议层错误信息及查询元数据。
+     */
     private function resetMetadata(): void
     {
         $this->error = '';
@@ -834,6 +987,9 @@ final class Connection
         $this->affected_rows = 0;
     }
 
+    /**
+     * 关闭底层连接并重置连接及压缩状态。
+     */
     private function closeSocket(): void
     {
         $this->connected = false;
@@ -845,6 +1001,9 @@ final class Connection
         }
     }
 
+    /**
+     * 比较两个无符号十进制整数字符串的大小。
+     */
     private static function compareUnsignedDecimal(string $left, string $right): int
     {
         $left = ltrim($left, '0') ?: '0';

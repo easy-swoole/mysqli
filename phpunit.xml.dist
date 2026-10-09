@@ -17,6 +17,7 @@
         <testsuite name="integration">
             <file>tests/ClientTest.php</file>
             <file>tests/DataTypeTest.php</file>
+            <file>tests/LargeNumericTest.php</file>
             <file>tests/MetadataTest.php</file>
             <file>tests/DisconnectTest.php</file>
             <file>tests/FastDbUsageTest.php</file>

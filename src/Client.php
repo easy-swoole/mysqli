@@ -16,21 +16,33 @@ class Client
     protected int|string|null $lastInsertId = null;
     protected int|string|null $lastAffectRows = null;
 
+    /**
+     * 保存数据库连接配置。
+     */
     public function __construct(protected Config $config)
     {
     }
 
+    /**
+     * 设置查询成功后的回调。
+     */
     public function onQuery(callable $callback): static
     {
         $this->onQuery = $callback;
         return $this;
     }
 
+    /**
+     * 使用构造配置建立连接，可指定本次连接超时。
+     */
     public function connect(?float $timeout = null): bool
     {
         return $this->connectWithTimeout($timeout);
     }
 
+    /**
+     * 按超时预算建立连接，并阻止并发建连。
+     */
     private function connectWithTimeout(?float $timeout): bool
     {
         if ($this->mysqlClient?->isBusy()) {
@@ -48,6 +60,9 @@ class Client
         }
     }
 
+    /**
+     * 通过服务端预处理执行查询构造器生成的 SQL。
+     */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
         $sql = $builder->getLastPrepareQuery();
@@ -71,6 +86,9 @@ class Client
         return $result;
     }
 
+    /**
+     * 通过文本协议执行 SQL 并读取结果。
+     */
     public function rawQuery(string $query,?float $timeout = null)
     {
         $start = microtime(true);
@@ -89,6 +107,9 @@ class Client
         return $result;
     }
 
+    /**
+     * 创建服务端预处理语句。
+     */
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         $deadline = $this->queryDeadline($timeout);
@@ -99,11 +120,17 @@ class Client
         );
     }
 
+    /**
+     * 获取当前协议连接，未建立连接时返回 null。
+     */
     public function mysqlClient(): Connection|null
     {
         return $this->mysqlClient;
     }
 
+    /**
+     * 检查当前连接是否可用。
+     */
     public function ping(): bool
     {
         try {
@@ -113,6 +140,9 @@ class Client
         }
     }
 
+    /**
+     * 关闭连接并清除客户端连接引用。
+     */
     public function close(): bool
     {
         $result = $this->mysqlClient?->close() ?? true;
@@ -133,6 +163,9 @@ class Client
      */
     public function getLastAffectRows(): int|string|null { return $this->lastAffectRows; }
 
+    /**
+     * 对象销毁时尝试关闭连接。
+     */
     public function __destruct()
     {
         try {
@@ -141,18 +174,27 @@ class Client
         }
     }
 
+    /**
+     * 保存最近一次查询的插入 ID 和影响行数。
+     */
     private function captureMetadata(): void
     {
         $this->lastInsertId = $this->mysqlClient?->insert_id;
         $this->lastAffectRows = $this->mysqlClient?->affected_rows;
     }
 
+    /**
+     * 清空客户端保存的查询元数据。
+     */
     private function resetMetadata(): void
     {
         $this->lastInsertId = null;
         $this->lastAffectRows = null;
     }
 
+    /**
+     * 调用查询成功回调。
+     */
     private function notify(array|bool $result, float $start): void
     {
         if ($this->onQuery !== null) {
@@ -160,6 +202,9 @@ class Client
         }
     }
 
+    /**
+     * 根据查询超时计算截止时间。
+     */
     private function queryDeadline(?float $timeout): float
     {
         $duration = $timeout ?? $this->config->getTimeout();
@@ -169,6 +214,9 @@ class Client
         return microtime(true) + $duration;
     }
 
+    /**
+     * 获取剩余查询时间，预算耗尽时抛出超时异常。
+     */
     private function remaining(float $deadline): float
     {
         $remaining = $deadline - microtime(true);

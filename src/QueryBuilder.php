@@ -63,6 +63,9 @@ class QueryBuilder
      */
     private $_query;
 
+    /**
+     * 创建普通查询或带别名的子查询构造器。
+     */
     public function __construct(bool $isSubQuery = false, string|null $subQueryAlias = null)
     {
         if ($isSubQuery) {
@@ -71,6 +74,9 @@ class QueryBuilder
         }
     }
 
+    /**
+     * 设置查询的返回数量或偏移及数量。
+     */
     public function limit(int $one, int|null $two = null): QueryBuilder
     {
         if ($two !== null) {
@@ -97,6 +103,9 @@ class QueryBuilder
         return $this;
     }
 
+    /**
+     * 设置查询字段或写入时允许的字段。
+     */
     public function fields($fields): QueryBuilder
     {
         if (!is_array($fields)) {
@@ -107,6 +116,7 @@ class QueryBuilder
     }
 
     /**
+     * 以数组形式获取当前字段配置。
      * @return array
      */
     public function getField(): array
@@ -257,6 +267,7 @@ class QueryBuilder
     }
 
     /**
+     * 为关联表添加 AND 条件。
      * Join xx where xx
      * @param $whereJoin
      * @param $whereProp
@@ -272,6 +283,7 @@ class QueryBuilder
     }
 
     /**
+     * 为关联表添加 OR 条件。
      * Join xx or where xx
      * @param $whereJoin
      * @param $whereProp
@@ -436,6 +448,7 @@ class QueryBuilder
     }
 
     /**
+     * 设置排他锁查询的等待选项。
      * @param string $option NOWAIT,WAIT 5,SKIP LOCKED
      * @return $this
      */
@@ -557,6 +570,9 @@ class QueryBuilder
         return $this;
     }
     //多行插入为INSERT INTO ... VALUES (...) , (...)
+    /**
+     * 构造使用多个 VALUES 分组的批量插入语句。
+     */
     public function insertAll($tableName, $insertData, $option = [])
     {
         $allowFields = $option['field'] ?? [];
@@ -768,6 +784,9 @@ class QueryBuilder
         return $this->lastPrepareQuery;
     }
 
+    /**
+     * 获取最近一次构建的事务操作标记。
+     */
     public function getLastTransactionOp():?int
     {
         return $this->lastTransactionOp;
@@ -791,6 +810,9 @@ class QueryBuilder
         return $this->lastQueryOptions;
     }
 
+    /**
+     * 获取当前查询选项。
+     */
     function getQueryOptions():array
     {
         return $this->_queryOptions;
@@ -831,24 +853,36 @@ class QueryBuilder
         return $this->_isSubQuery;
     }
 
+    /**
+     * 构造开始事务的 SQL。
+     */
     public function startTransaction()
     {
         $this->_lastTransactionOp = self::TS_OP_START;
         $this->raw('start transaction');
     }
 
+    /**
+     * 构造提交事务的 SQL。
+     */
     public function commit()
     {
         $this->_lastTransactionOp = self::TS_OP_COMMIT;
         $this->raw('commit');
     }
 
+    /**
+     * 构造回滚事务的 SQL。
+     */
     public function rollback()
     {
         $this->_lastTransactionOp = self::TS_OP_ROLLBACK;
         $this->raw("rollback");
     }
 
+    /**
+     * 保存原始 SQL 和绑定参数。
+     */
     public function raw($sql, $param = [])
     {
         $this->_query = $sql;

@@ -8,11 +8,17 @@ use EasySwoole\Mysqli\Exception\Exception;
 
 final class Codec
 {
+    /**
+     * 读取单字节整数并推进偏移量。
+     */
     public static function int1(string $data, int &$offset): int
     {
         return ord($data[$offset++]);
     }
 
+    /**
+     * 读取小端双字节整数并推进偏移量。
+     */
     public static function int2(string $data, int &$offset): int
     {
         $value = unpack('v', substr($data, $offset, 2))[1];
@@ -20,6 +26,9 @@ final class Codec
         return $value;
     }
 
+    /**
+     * 读取小端三字节整数并推进偏移量。
+     */
     public static function int3(string $data, int &$offset): int
     {
         $value = ord($data[$offset]) | (ord($data[$offset + 1]) << 8) | (ord($data[$offset + 2]) << 16);
@@ -27,6 +36,9 @@ final class Codec
         return $value;
     }
 
+    /**
+     * 读取小端四字节整数并推进偏移量。
+     */
     public static function int4(string $data, int &$offset): int
     {
         $value = unpack('V', substr($data, $offset, 4))[1];
@@ -34,6 +46,9 @@ final class Codec
         return $value;
     }
 
+    /**
+     * 读取以零字节结尾的字符串并推进偏移量。
+     */
     public static function nullTerminated(string $data, int &$offset): string
     {
         $end = strpos($data, "\0", $offset);
@@ -93,6 +108,9 @@ final class Codec
         return $value;
     }
 
+    /**
+     * 读取长度编码字符串，NULL 标记返回 null。
+     */
     public static function lenencString(string $data, int &$offset): ?string
     {
         $length = self::lenencInt($data, $offset);
@@ -107,6 +125,9 @@ final class Codec
         return $value;
     }
 
+    /**
+     * 将整数编码为 MySQL 长度编码格式。
+     */
     public static function encodeLenencInt(int $value): string
     {
         if ($value < 0xfb) {
@@ -121,11 +142,17 @@ final class Codec
         return "\xfe" . pack('V2', $value & 0xffffffff, intdiv($value, 4294967296));
     }
 
+    /**
+     * 为字符串添加长度编码前缀。
+     */
     public static function encodeLenencString(string $value): string
     {
         return self::encodeLenencInt(strlen($value)) . $value;
     }
 
+    /**
+     * 将字节串与循环使用的掩码逐字节异或。
+     */
     public static function xorBytes(string $left, string $right): string
     {
         $result = '';

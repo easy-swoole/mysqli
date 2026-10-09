@@ -23,6 +23,9 @@ final class Column
 
     private const UNSIGNED_FLAG = 0x20;
 
+    /**
+     * 保存结果字段的名称、类型及标志。
+     */
     public function __construct(
         public readonly string $name,
         public readonly int $type,
@@ -30,6 +33,9 @@ final class Column
     ) {
     }
 
+    /**
+     * 判断结果字段是否为无符号类型。
+     */
     public function isUnsigned(): bool
     {
         return ($this->flags & self::UNSIGNED_FLAG) !== 0;
