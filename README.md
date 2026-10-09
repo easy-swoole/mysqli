@@ -67,7 +67,27 @@ Coroutine\run(function (): void {
 
 恢复时先调用 `$client->close()`，再连接并开启新的事务，由业务决定是否重试整个事务。如果在 Commit 响应到达前断线，提交结果可能无法确认，不能仅凭此异常自动重放写入。
 
-`begin_transaction($flags)` 支持 mysqli 的一致性快照（1）、读写（2）和只读（4）标记，可用位或组合快照与访问模式。`commit($flags)`、`rollback($flags)` 支持 AND CHAIN（1）、AND NO CHAIN（2）、RELEASE（4）、NO RELEASE（8）。CHAIN 后连接仍处于新事务，RELEASE 成功后本地连接同步关闭。未知标记、同时指定只读与读写、CHAIN 与 NO CHAIN 或 RELEASE 与 NO RELEASE 会抛出 `InvalidArgumentException`。标记含义参照 [PHP mysqli 文档](https://www.php.net/manual/en/mysqli.constants.php)。
+`begin_transaction(TransactionStartFlags $flags = TransactionStartFlags::None)` 使用 `EasySwoole\Mysqli\Transaction\TransactionStartFlags` 枚举。支持 `None`（默认）、`ConsistentSnapshot`、`ReadWrite`、`ReadOnly`、`ConsistentSnapshotReadWrite` 和 `ConsistentSnapshotReadOnly`。快照与访问模式通过组合枚举值表达，无需按位或；不再接受整数，旧调用需迁移为枚举，否则抛出 `TypeError`。例如：
+
+```php
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+
+$client->mysqlClient()->begin_transaction();
+$client->mysqlClient()->begin_transaction(TransactionStartFlags::ReadOnly);
+$client->mysqlClient()->begin_transaction(TransactionStartFlags::ConsistentSnapshotReadWrite);
+```
+
+`commit()`、`rollback()` 同样使用 `EasySwoole\Mysqli\Transaction\TransactionCompletionFlags` 枚举，默认 `None`。支持 `Chain`、`NoChain`、`Release`、`NoRelease`，以及组合值 `ChainNoRelease`、`NoChainRelease`、`NoChainNoRelease`。不再接受整数或按位或组合，旧整数调用会抛出 `TypeError`。枚举仅列出合法选项，不提供相互矛盾的组合。
+
+```php
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
+
+$client->mysqlClient()->commit(TransactionCompletionFlags::ChainNoRelease);
+$client->mysqlClient()->rollback(TransactionCompletionFlags::NoChainNoRelease);
+$client->mysqlClient()->commit(TransactionCompletionFlags::Release);
+```
+
+CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。`None` 不追加选项，由服务端 `completion_type` 决定默认结束方式；需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
 
 文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 

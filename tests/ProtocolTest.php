@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use PHPUnit\Framework\TestCase;
@@ -569,15 +571,24 @@ final class ProtocolTest extends TestCase
     public function testTransactionFlagsGenerateExpectedCommandsAndRejectConflicts(): void
     {
         $commands = [
-            ['begin_transaction', 1, 'START TRANSACTION WITH CONSISTENT SNAPSHOT'],
-            ['begin_transaction', 2, 'START TRANSACTION READ WRITE'],
-            ['begin_transaction', 4, 'START TRANSACTION READ ONLY'],
-            ['begin_transaction', 3, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ WRITE'],
-            ['begin_transaction', 5, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY'],
+            ['begin_transaction', TransactionStartFlags::None, 'START TRANSACTION'],
+            ['begin_transaction', TransactionStartFlags::ConsistentSnapshot, 'START TRANSACTION WITH CONSISTENT SNAPSHOT'],
+            ['begin_transaction', TransactionStartFlags::ReadWrite, 'START TRANSACTION READ WRITE'],
+            ['begin_transaction', TransactionStartFlags::ReadOnly, 'START TRANSACTION READ ONLY'],
+            ['begin_transaction', TransactionStartFlags::ConsistentSnapshotReadWrite, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ WRITE'],
+            ['begin_transaction', TransactionStartFlags::ConsistentSnapshotReadOnly, 'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY'],
         ];
         foreach (['commit' => 'COMMIT', 'rollback' => 'ROLLBACK'] as $method => $sql) {
-            foreach ([1 => ' AND CHAIN', 2 => ' AND NO CHAIN', 4 => ' RELEASE', 8 => ' NO RELEASE',
-                9 => ' AND CHAIN NO RELEASE', 6 => ' AND NO CHAIN RELEASE'] as $flags => $suffix) {
+            foreach ([
+                [TransactionCompletionFlags::None, ''],
+                [TransactionCompletionFlags::Chain, ' AND CHAIN'],
+                [TransactionCompletionFlags::NoChain, ' AND NO CHAIN'],
+                [TransactionCompletionFlags::Release, ' RELEASE'],
+                [TransactionCompletionFlags::NoRelease, ' NO RELEASE'],
+                [TransactionCompletionFlags::ChainNoRelease, ' AND CHAIN NO RELEASE'],
+                [TransactionCompletionFlags::NoChainRelease, ' AND NO CHAIN RELEASE'],
+                [TransactionCompletionFlags::NoChainNoRelease, ' AND NO CHAIN NO RELEASE'],
+            ] as [$flags, $suffix]) {
                 $commands[] = [$method, $flags, $sql . $suffix];
             }
         }
@@ -588,7 +599,7 @@ final class ProtocolTest extends TestCase
                 [, $packet] = self::receivePacket($peer);
                 self::assertSame("\x03" . $sql, $packet);
                 self::sendPacket($peer, self::ok(), 1);
-                if ($method !== 'begin_transaction' && ($flags & 4)) {
+                if ($flags instanceof TransactionCompletionFlags && $flags->releasesConnection()) {
                     $peer->close();
                     $peer = $listener->accept(1.0);
                     self::acceptSession($peer);
@@ -604,13 +615,15 @@ final class ProtocolTest extends TestCase
             self::assertTrue($client->mysqlClient()->{$method}($flags));
         }
         $client->connect();
-        foreach (['begin_transaction' => [6, 7, 8, -1], 'commit' => [3, 12, 16, -1],
-            'rollback' => [3, 12, 16, -1]] as $method => $invalidFlags) {
+        foreach (['begin_transaction' => [0, 1, 2, 3, 4, 5, 6, 7, 8, -1, TransactionCompletionFlags::None],
+            'commit' => [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 16, -1, TransactionStartFlags::None],
+            'rollback' => [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 16, -1, TransactionStartFlags::None]] as $method => $invalidFlags) {
             foreach ($invalidFlags as $flags) {
                 try {
                     $client->mysqlClient()->{$method}($flags);
                     self::fail('Invalid transaction flags must not be sent');
-                } catch (\InvalidArgumentException) {
+                } catch (\TypeError $error) {
+                    self::assertInstanceOf(\TypeError::class, $error);
                     self::assertTrue($client->mysqlClient()->isConnected());
                 }
             }

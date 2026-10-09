@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection;
 use PHPUnit\Framework\TestCase;
@@ -54,14 +56,14 @@ final class FastDbUsageTest extends TestCase
     public function testDirectMysqlClientTransactionCalls(): void
     {
         self::assertTrue($this->connection->connect());
-        self::assertTrue($this->connection->begin(3));
+        self::assertTrue($this->connection->begin(TransactionStartFlags::ConsistentSnapshotReadWrite));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('rollback')"));
-        self::assertTrue($this->connection->rollback(2));
+        self::assertTrue($this->connection->rollback(TransactionCompletionFlags::NoChain));
         self::assertSame([['total' => 0]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
 
-        self::assertTrue($this->connection->begin(3));
+        self::assertTrue($this->connection->begin(TransactionStartFlags::ConsistentSnapshotReadWrite));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('commit')"));
-        self::assertTrue($this->connection->commit(2));
+        self::assertTrue($this->connection->commit(TransactionCompletionFlags::NoChain));
         self::assertSame([['total' => 1]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
     }
 }

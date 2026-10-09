@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
 use PHPUnit\Framework\TestCase;
@@ -285,7 +287,7 @@ final class TransactionTest extends TestCase
         $writer = $this->newClient();
         try {
             $connection = $writer->mysqlClient();
-            $connection->begin_transaction(4); // MYSQLI_TRANS_START_READ_ONLY。
+            $connection->begin_transaction(TransactionStartFlags::ReadOnly); // MYSQLI_TRANS_START_READ_ONLY。
             try {
                 $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
                 self::fail('Read-only transaction must reject writes');
@@ -295,12 +297,12 @@ final class TransactionTest extends TestCase
             self::assertTrue($connection->inTransaction());
             $connection->rollback();
             $writer->rawQuery('SET SESSION TRANSACTION READ ONLY');
-            $connection->begin_transaction(2); // 显式 READ WRITE 覆盖会话默认只读。
+            $connection->begin_transaction(TransactionStartFlags::ReadWrite); // 显式 READ WRITE 覆盖会话默认只读。
             self::assertTrue($writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1"));
             $connection->commit();
             self::assertSame(10, $this->value($this->admin, 1));
             $writer->rawQuery('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-            $connection->begin_transaction(1 | 4); // 快照在开始时建立，尚未 SELECT。
+            $connection->begin_transaction(TransactionStartFlags::ConsistentSnapshotReadOnly); // 快照在开始时建立，尚未 SELECT。
             $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 1");
             self::assertSame(10, $this->value($writer, 1));
             $connection->rollback();
@@ -317,18 +319,18 @@ final class TransactionTest extends TestCase
             $connection = $writer->mysqlClient();
             $connection->begin_transaction();
             $writer->rawQuery("UPDATE `{$this->table}` SET value = 10 WHERE id = 1");
-            $connection->commit(1 | 8); // AND CHAIN NO RELEASE。
+            $connection->commit(TransactionCompletionFlags::ChainNoRelease); // AND CHAIN NO RELEASE。
             self::assertTrue($connection->inTransaction());
             self::assertSame(10, $this->value($this->admin, 1));
             $writer->rawQuery("UPDATE `{$this->table}` SET value = 20 WHERE id = 2");
-            $connection->rollback(1);
+            $connection->rollback(TransactionCompletionFlags::Chain);
             self::assertTrue($connection->inTransaction());
             self::assertSame(0, $this->value($this->admin, 2));
             $writer->rawQuery('SET SESSION completion_type = 1');
-            $connection->commit(2 | 8); // AND NO CHAIN 覆盖默认链式事务。
+            $connection->commit(TransactionCompletionFlags::NoChainNoRelease); // AND NO CHAIN 覆盖默认链式事务。
             self::assertFalse($connection->inTransaction());
             $connection->begin_transaction();
-            $connection->rollback(2 | 8);
+            $connection->rollback(TransactionCompletionFlags::NoChainNoRelease);
             self::assertFalse($connection->inTransaction());
         } finally {
             $writer->close();
@@ -338,19 +340,42 @@ final class TransactionTest extends TestCase
     public function testReleaseFlagsActuallyCloseServerSession(): void
     {
         foreach (['commit', 'rollback'] as $method) {
+            foreach ([TransactionCompletionFlags::Release, TransactionCompletionFlags::NoChainRelease] as $flags) {
+                $writer = $this->newClient();
+                try {
+                    $connection = $writer->mysqlClient();
+                    $connection->begin_transaction();
+                    $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
+                    self::assertTrue($connection->{$method}($flags));
+                    self::assertFalse($connection->isConnected());
+                    self::assertFalse($connection->inTransaction());
+                    self::assertFalse($writer->ping());
+                    self::assertFalse($connection->isTransactionLost());
+                    self::assertSame($method === 'commit' ? 30 : 0, $this->value($this->admin, 2));
+                    $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
+                    self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
+                } finally {
+                    $writer->close();
+                }
+            }
+        }
+    }
+
+    public function testNoReleaseEnumOverridesServerReleaseDefault(): void
+    {
+        foreach (['commit', 'rollback'] as $method) {
             $writer = $this->newClient();
             try {
+                $writer->rawQuery('SET SESSION completion_type = 2');
                 $connection = $writer->mysqlClient();
                 $connection->begin_transaction();
                 $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
-                self::assertTrue($connection->{$method}(4));
-                self::assertFalse($connection->isConnected());
+                self::assertTrue($connection->{$method}(TransactionCompletionFlags::NoRelease));
                 self::assertFalse($connection->inTransaction());
-                self::assertFalse($writer->ping());
-                self::assertFalse($connection->isTransactionLost());
+                self::assertTrue($connection->isConnected());
+                self::assertTrue($writer->ping());
                 self::assertSame($method === 'commit' ? 30 : 0, $this->value($this->admin, 2));
                 $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
-                self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
             } finally {
                 $writer->close();
             }

@@ -380,3 +380,25 @@ PolarDB 最终全套回归：163 个测试、1769 个断言全部通过，无失
 新增 PolarDB 集成测试：建立随机名称的无结果存储过程，其执行会插入测试记录；在事务中逐一验证各入口拒绝调用，错误来自客户端（错误码 0），测试记录始终为 0，事务状态及 ping 保持正常，拒绝后预处理普通查询可继续执行。过程在 finally 删除，临时表随会话关闭清理。
 
 专项 2 个测试、202 个断言通过；完整 PolarDB 回归 165 个测试、1971 个断言全部通过，无错误、失败或跳过，耗时 71.268 秒，峰值内存 124.34 MB。PHP 语法和 git diff --check 检查通过。README 已注明 CALL/多结果限制及本项目典型生产场景中存储过程使用相对较少的说明。
+
+## 2026-10-09 开始事务参数改为枚举
+
+begin_transaction() 的 flags 参数改为原生 PHP 枚举 TransactionStartFlags，默认 None，保留 ConsistentSnapshot、ReadWrite、ReadOnly、ConsistentSnapshotReadWrite、ConsistentSnapshotReadOnly 六种合法模式。枚举生成相应 START TRANSACTION SQL，不再接收整数或按位或组合；传入整数时在发送命令前抛出 TypeError。commit()/rollback() 的整数参数保持原接口。
+
+协议测试覆盖全部六个枚举值发送的 SQL，以及原先合法和非法的整数均被拒绝且连接仍可使用。真实事务测试及 FastDb 风格适配调用已迁移到枚举，验证只读事务、显式读写、一致性快照以及提交和回滚行为。README 提供枚举示例和旧整数调用的迁移说明。
+
+MySQL 测试服务器完整回归：165 个测试、1997 个断言全部通过，无错误、失败或跳过，耗时 37.378 秒，峰值内存 124.34 MB。PHP 语法及 git diff --check 检查通过。
+
+## 2026-10-09 提交与回滚参数改为枚举
+
+commit()/rollback() 的 flags 参数统一改为 TransactionCompletionFlags，默认 None，支持 Chain、NoChain、Release、NoRelease、NoChainRelease、ChainNoRelease、NoChainNoRelease 八种合法模式。枚举生成对应 SQL 后缀，并明确标记 RELEASE 模式用于同步关闭本地连接；不再接受整数或开始事务的枚举类型，错误类型在命令发送前抛出 TypeError。
+
+协议测试对 commit 和 rollback 分别验证全部八个枚举值的 SQL，测试原先合法/非法整数及错误枚举类型被拒绝，连接仍然可用。真实事务测试及 FastDb 风格适配已迁移到枚举；RELEASE 测试覆盖 Release 与 NoChainRelease 的提交/回滚，新增 NoRelease 覆盖 session completion_type=2 的验证，确认提交可见、回滚不写入，并保留连接。原有链式事务、NO CHAIN、事务丢失保护等测试继续通过。README 已更新枚举调用与迁移说明。
+
+MySQL 测试服务器完整回归：166 个测试、2071 个断言全部通过，无错误、失败或跳过，耗时 38.745 秒，峰值内存 124.34 MB。PHP 语法及 git diff --check 检查通过。
+
+## 2026-10-09 事务枚举归类及中文语义注释
+
+TransactionStartFlags 和 TransactionCompletionFlags 移至 src/Transaction，命名空间统一为 EasySwoole\Mysqli\Transaction；协议实现、测试适配和 README 引用同步更新。两个枚举的全部 14 个 case 均补充中文语义注释，说明默认行为、访问模式、一致性快照及事务结束后的链式事务和连接释放行为。
+
+MySQL 测试服务器完整回归：166 个测试、2071 个断言全部通过，无错误、失败或跳过，耗时 38.537 秒。两个枚举文件语法检查及 git diff --check 通过。

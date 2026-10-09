@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests\Support;
 
 use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\QueryBuilder;
 
 /**
@@ -24,14 +26,14 @@ final class FastDbStyleConnection extends Client
         return parent::rawQuery($query, $timeout);
     }
 
-    public function begin(int $flags = 0): bool
+    public function begin(TransactionStartFlags $flags = TransactionStartFlags::None): bool
     {
         $result = $this->mysqlClient()->begin_transaction($flags);
         $this->isInTransaction = $result;
         return $result;
     }
 
-    public function commit(int $flags = 0): bool
+    public function commit(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
         $result = $this->mysqlClient()->commit($flags);
         if ($result) {
@@ -40,7 +42,7 @@ final class FastDbStyleConnection extends Client
         return $result;
     }
 
-    public function rollback(int $flags = 0): bool
+    public function rollback(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
         $result = $this->mysqlClient()->rollback($flags);
         if ($result) {

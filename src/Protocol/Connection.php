@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
+use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use EasySwoole\Mysqli\Exception\TransactionLostException;
@@ -250,22 +252,15 @@ final class Connection
     /**
      * 开始数据库事务，flags 支持一致性快照、只读或读写模式。
      */
-    public function begin_transaction(int $flags = 0): bool
+    public function begin_transaction(TransactionStartFlags $flags = TransactionStartFlags::None): bool
     {
-        if (($flags & ~7) !== 0 || ($flags & 6) === 6) {
-            throw new \InvalidArgumentException('Invalid or conflicting transaction start flags');
-        }
-        $options = [];
-        if ($flags & 1) { $options[] = 'WITH CONSISTENT SNAPSHOT'; }
-        if ($flags & 2) { $options[] = 'READ WRITE'; }
-        if ($flags & 4) { $options[] = 'READ ONLY'; }
-        return $this->query('START TRANSACTION' . ($options ? ' ' . implode(', ', $options) : '')) === true;
+        return $this->query($flags->toSql()) === true;
     }
 
     /**
      * 提交当前事务，flags 支持 CHAIN、NO CHAIN、RELEASE 和 NO RELEASE。
      */
-    public function commit(int $flags = 0): bool
+    public function commit(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
         return $this->finishTransaction('COMMIT', $flags);
     }
@@ -273,25 +268,19 @@ final class Connection
     /**
      * 回滚当前事务，flags 支持 CHAIN、NO CHAIN、RELEASE 和 NO RELEASE。
      */
-    public function rollback(int $flags = 0): bool
+    public function rollback(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
         return $this->finishTransaction('ROLLBACK', $flags);
     }
 
     /**
-     * 按 mysqli flags 提交或回滚，支持链式事务及释放连接，拒绝冲突标记。
+     * 按枚举选项提交或回滚，并同步 RELEASE 后的连接状态。
      */
-    private function finishTransaction(string $command, int $flags): bool
+    private function finishTransaction(string $command, TransactionCompletionFlags $flags): bool
     {
-        if (($flags & ~15) !== 0 || ($flags & 3) === 3 || ($flags & 12) === 12) {
-            throw new \InvalidArgumentException('Invalid or conflicting transaction completion flags');
-        }
-        if ($flags & 1) { $command .= ' AND CHAIN'; }
-        if ($flags & 2) { $command .= ' AND NO CHAIN'; }
-        if ($flags & 4) { $command .= ' RELEASE'; }
-        if ($flags & 8) { $command .= ' NO RELEASE'; }
+        $command .= $flags->toSqlSuffix();
         $result = $this->query($command) === true;
-        if ($result && ($flags & 4)) {
+        if ($result && $flags->releasesConnection()) {
             // RELEASE 成功后服务端已释放会话，立即同步本地连接状态。
             $this->closeSocket();
         }
