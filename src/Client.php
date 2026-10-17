@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exception\Exception;
-use EasySwoole\Mysqli\Exception\TimeoutException;
 use EasySwoole\Mysqli\Protocol\Connection;
+use EasySwoole\Mysqli\Protocol\Deadline;
 use EasySwoole\Mysqli\Protocol\Statement;
 
 class Client
@@ -71,17 +71,17 @@ class Client
         $start = microtime(true);
         $deadline = $this->queryDeadline($timeout);
         $this->resetMetadata();
-        $this->connectWithTimeout($this->remaining($deadline));
+        $this->connectWithTimeout($deadline->remaining());
         $statement = null;
         try {
-            $statement = $this->prepare($sql, $this->remaining($deadline));
-            $result = $statement->execute($parameters, $this->remaining($deadline));
+            $statement = $this->prepare($sql, $deadline->remaining());
+            $result = $statement->execute($parameters, $deadline->remaining());
         } catch (Exception $error) {
             throw $error;
         } catch (\Throwable $error) {
             throw new Exception("SQL {$sql} failed: {$error->getMessage()}", (int) $error->getCode(), $error);
         } finally {
-            $statement?->close(max(0.0, $deadline - microtime(true)));
+            $statement?->close($deadline->remainingOrZero());
         }
         $this->notify($result, $start);
         return $result;
@@ -95,9 +95,9 @@ class Client
         $start = microtime(true);
         $deadline = $this->queryDeadline($timeout);
         $this->resetMetadata();
-        $this->connectWithTimeout($this->remaining($deadline));
+        $this->connectWithTimeout($deadline->remaining());
         try {
-            $result = $this->mysqlClient->query($query, $this->remaining($deadline));
+            $result = $this->mysqlClient->query($query, $deadline->remaining());
             $this->captureMetadata();
         } catch (Exception $error) {
             throw $error;
@@ -114,8 +114,8 @@ class Client
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         $deadline = $this->queryDeadline($timeout);
-        $this->connectWithTimeout($this->remaining($deadline));
-        return $this->mysqlClient->prepare($sql, $this->remaining($deadline))->setExecutionCallbacks(
+        $this->connectWithTimeout($deadline->remaining());
+        return $this->mysqlClient->prepare($sql, $deadline->remaining())->setExecutionCallbacks(
             fn() => $this->resetMetadata(),
             fn() => $this->captureMetadata(),
         );
@@ -206,24 +206,8 @@ class Client
     /**
      * 根据查询超时计算截止时间。
      */
-    private function queryDeadline(?float $timeout): float
+    private function queryDeadline(?float $timeout): Deadline
     {
-        $duration = $timeout ?? $this->config->getTimeout();
-        if ($duration <= 0) {
-            throw new \InvalidArgumentException('Query timeout must be greater than zero');
-        }
-        return microtime(true) + $duration;
-    }
-
-    /**
-     * 获取剩余查询时间，预算耗尽时抛出超时异常。
-     */
-    private function remaining(float $deadline): float
-    {
-        $remaining = $deadline - microtime(true);
-        if ($remaining <= 0) {
-            throw new TimeoutException('MySQL query timed out', 110);
-        }
-        return $remaining;
+        return Deadline::after($timeout ?? $this->config->getTimeout());
     }
 }

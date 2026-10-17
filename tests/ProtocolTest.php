@@ -634,7 +634,7 @@ final class ProtocolTest extends TestCase
 
     public function testBinaryTemporalLengthsAndPrecisionPreserveValueAndOffset(): void
     {
-        $connection = new \EasySwoole\Mysqli\Protocol\Connection(new Config());
+        $connection = new \EasySwoole\Mysqli\Protocol\ResultDecoder();
         $decode = new \ReflectionMethod($connection, 'decodeBinaryValue');
         for ($precision = 0; $precision <= 6; $precision++) {
             $zero = $precision ? '.' . str_repeat('0', $precision) : '';
@@ -701,6 +701,97 @@ final class ProtocolTest extends TestCase
         }
         foreach ($allowed as $sql) { self::assertTrue($client->rawQuery($sql)); }
         $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testDeadlockClearsTransactionStateWithoutClearingOrdinaryErrors(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            foreach ([1062, 1205, 1213] as $code) {
+                self::receivePacket($peer);
+                self::sendPacket($peer, self::ok(3), 1); // BEGIN
+                self::receivePacket($peer);
+                self::sendPacket($peer, "\xff" . pack('v', $code) . '#HY000simulated error', 1);
+            }
+            self::receivePacket($peer); // QUIT
+            $peer->close();
+        });
+        try {
+            foreach ([1062, 1205, 1213] as $code) {
+                $client->rawQuery('BEGIN');
+                try {
+                    $client->rawQuery('UPDATE t SET value = 1');
+                    self::fail('Expected server error');
+                } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                    self::assertSame($code, $error->getCode());
+                    self::assertSame($code !== 1213, $client->mysqlClient()->inTransaction());
+                    self::assertTrue($client->mysqlClient()->isConnected());
+                    self::assertFalse($client->mysqlClient()->isTransactionLost());
+                }
+            }
+        } finally {
+            $client->close();
+        }
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testMalformedResultClosesConnectionAndNextQueryReconnects(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendResultHeader($peer, 'v', 3, false);
+            self::sendPacket($peer, "\xfc\x05\0x", 4); // Declares 5 bytes, contains only one.
+            self::sendPacket($peer, self::eof(), 5); // Must never leak into the next command.
+            $peer->recvAll(1, 1.0);
+            $peer->close();
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendResultHeader($peer, 'v', 3, false);
+            self::sendPacket($peer, "\x012", 4);
+            self::sendPacket($peer, self::eof(), 5);
+            self::receivePacket($peer);
+            $peer->close();
+        });
+        try {
+            try {
+                $client->rawQuery('SELECT 1 AS v');
+                self::fail('Expected malformed result');
+            } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                self::assertStringContainsString('Malformed', $error->getMessage());
+                self::assertFalse($client->mysqlClient()->isConnected());
+            }
+            self::assertSame([['v' => 2]], $client->rawQuery('SELECT 2 AS v'));
+        } finally {
+            $client->close();
+        }
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testPacketSequenceErrorPreservesExpectedNumberAfterClosingStream(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, self::ok(), 9); // Response must start with sequence 1.
+            $peer->close();
+        });
+        try {
+            try {
+                $client->rawQuery('SELECT 1');
+                self::fail('Expected packet sequence error');
+            } catch (\EasySwoole\Mysqli\Exception\ProtocolException $error) {
+                self::assertStringContainsString('expected 1, got 9', $error->getMessage());
+                self::assertFalse($client->mysqlClient()->isConnected());
+            }
+        } finally {
+            $client->close();
+        }
         $this->assertServerCompleted($completed);
     }
 

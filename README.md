@@ -63,7 +63,7 @@ Coroutine\run(function (): void {
 
 预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新 Prepare；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
-连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
+连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
 
 事务期间断线或查询超时，首次操作仍抛出原始连接/超时异常；后续查询、Prepare、旧 Statement 执行、Connect、Commit 和 Rollback 会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`，阻止透明重连后继续执行。此标记在显式 `close()` 前一直保留，关闭 Statement 不会解除保护。
 
@@ -112,3 +112,20 @@ CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。
 - [测试命令与环境配置](tests/README.md)。
 - [测试场景与验证记录](TEST.md)。
 - [QueryBuilder 使用说明](queryBuilder.md)。
+
+## 协议错误与大参数
+
+收到格式错误或截断的协议数据时，抛出 `EasySwoole\Mysqli\Exception\ProtocolException` 并立即关闭连接，避免下一条查询读取遗留报文。非事务连接可在下一次查询时重新建立；事务内发生协议错误时，仍遵循上述事务丢失保护。
+
+预处理参数采用分段编码与分包发送，避免将多个大字符串重复拼成整条执行报文。结果字段及行解码由 `Protocol\ResultDecoder` 负责；压缩接收缓冲区使用读取游标，减少逐行读取时的字符串复制。
+
+## 内部职责划分
+
+- `Client`：公开查询 API、元数据及成功回调；对外超时参数继续使用秒数。
+- `Connection`：命令调度、认证流程和完整操作的并发保护。
+- `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
+- `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
+- `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。
+- `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。
+
+上述辅助类属于内部实现。`Client`、`Connection`、`Statement` 和 `QueryBuilder` 的既有公开方法签名保持不变。

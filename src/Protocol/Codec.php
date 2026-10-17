@@ -4,15 +4,24 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Protocol;
 
-use EasySwoole\Mysqli\Exception\Exception;
+use EasySwoole\Mysqli\Exception\ProtocolException;
 
 final class Codec
 {
+    /** Validate a read before indexing or unpacking packet bytes. */
+    public static function requireBytes(string $data, int $offset, int $length): void
+    {
+        if ($offset < 0 || $length < 0 || $offset > strlen($data) || $length > strlen($data) - $offset) {
+            throw new ProtocolException('Malformed MySQL packet: truncated value');
+        }
+    }
+
     /**
      * 读取单字节整数并推进偏移量。
      */
     public static function int1(string $data, int &$offset): int
     {
+        self::requireBytes($data, $offset, 1);
         return ord($data[$offset++]);
     }
 
@@ -21,6 +30,7 @@ final class Codec
      */
     public static function int2(string $data, int &$offset): int
     {
+        self::requireBytes($data, $offset, 2);
         $value = unpack('v', substr($data, $offset, 2))[1];
         $offset += 2;
         return $value;
@@ -31,6 +41,7 @@ final class Codec
      */
     public static function int3(string $data, int &$offset): int
     {
+        self::requireBytes($data, $offset, 3);
         $value = ord($data[$offset]) | (ord($data[$offset + 1]) << 8) | (ord($data[$offset + 2]) << 16);
         $offset += 3;
         return $value;
@@ -41,6 +52,7 @@ final class Codec
      */
     public static function int4(string $data, int &$offset): int
     {
+        self::requireBytes($data, $offset, 4);
         $value = unpack('V', substr($data, $offset, 4))[1];
         $offset += 4;
         return $value;
@@ -51,9 +63,10 @@ final class Codec
      */
     public static function nullTerminated(string $data, int &$offset): string
     {
+        self::requireBytes($data, $offset, 1);
         $end = strpos($data, "\0", $offset);
         if ($end === false) {
-            $end = strlen($data);
+            throw new ProtocolException('Malformed MySQL null-terminated string');
         }
         $value = substr($data, $offset, $end - $offset);
         $offset = min($end + 1, strlen($data));
@@ -72,6 +85,7 @@ final class Codec
             0xfc => self::int2($data, $offset),
             0xfd => self::int3($data, $offset),
             0xfe => self::int8($data, $offset),
+            0xff => throw new ProtocolException('Malformed MySQL length-encoded integer'),
             default => $first,
         };
     }
@@ -85,7 +99,7 @@ final class Codec
     {
         $bytes = substr($data, $offset, 8);
         if (strlen($bytes) !== 8) {
-            throw new Exception('Malformed MySQL unsigned 64-bit integer');
+            throw new ProtocolException('Malformed MySQL unsigned 64-bit integer');
         }
         $offset += 8;
         $value = 0;
@@ -118,7 +132,7 @@ final class Codec
             return null;
         }
         if (!is_int($length) || $length < 0 || $length > strlen($data) - $offset) {
-            throw new Exception('Malformed MySQL length-encoded string');
+            throw new ProtocolException('Malformed MySQL length-encoded string');
         }
         $value = substr($data, $offset, $length);
         $offset += $length;

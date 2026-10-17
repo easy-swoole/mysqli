@@ -8,10 +8,13 @@
     <testsuites>
         <testsuite name="unit">
             <file>tests/ConfigTest.php</file>
+            <file>tests/DeadlineTest.php</file>
+            <file>tests/SessionStateTest.php</file>
             <file>tests/FastDbApiCompatibilityTest.php</file>
             <file>tests/ConnectionTimeoutTest.php</file>
             <file>tests/ProtocolTest.php</file>
             <file>tests/CodecTest.php</file>
+            <file>tests/ProtocolPayloadTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
         </testsuite>
         <testsuite name="integration">
@@ -24,6 +27,7 @@
             <file>tests/DisconnectTest.php</file>
             <file>tests/FastDbUsageTest.php</file>
             <file>tests/LargePacketTest.php</file>
+            <file>tests/LargeParameterMemoryTest.php</file>
             <file>tests/TransactionTest.php</file>
             <file>tests/CompressionTest.php</file>
             <file>tests/ConcurrencyTest.php</file>

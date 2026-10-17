@@ -144,11 +144,12 @@ final class TransactionTest extends TestCase
                 $client->mysqlClient()->commit();
                 $results->push(['status' => 'committed', 'value' => $value]);
             } catch (\Throwable $error) {
+                $transactionAfterError = $client->mysqlClient()?->inTransaction();
                 try {
                     $client->mysqlClient()?->rollback();
                 } catch (\Throwable) {
                 }
-                $results->push(['status' => 'error', 'code' => $error->getCode(), 'message' => $error->getMessage()]);
+                $results->push(['status' => 'error', 'code' => $error->getCode(), 'message' => $error->getMessage(), 'in_transaction' => $transactionAfterError]);
             } finally {
                 $client->close();
             }
@@ -171,6 +172,7 @@ final class TransactionTest extends TestCase
         self::assertCount(1, $errors);
         self::assertCount(1, $commits);
         self::assertSame(1213, $errors[0]['code']);
+        self::assertFalse($errors[0]['in_transaction'], 'Deadlock must clear state before an explicit rollback or another query');
         self::assertStringContainsString('Deadlock found', $errors[0]['message']);
 
         $rows = $this->admin->rawQuery("SELECT id, value FROM `{$this->table}` ORDER BY id");
