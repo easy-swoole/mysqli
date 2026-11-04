@@ -58,6 +58,9 @@ class QueryBuilder
     private $_subQueryAlias = '';
     private $_limit = null;
     private $_field = '*';
+    private array $_forceIndexes = [];
+    private array $_useIndexes = [];
+    private array $_ignoreIndexes = [];
     /*
      * 查询构造结构
      */
@@ -104,6 +107,47 @@ class QueryBuilder
     }
 
     /**
+     * 为下一次 SELECT 的主表指定强制使用的索引；重复调用覆盖之前的设置。
+     * 传入空数组可取消设置，索引名按标识符引用，不接受 SQL 片段。
+     */
+    public function forceIndex(string|array $indexes): QueryBuilder
+    {
+        $this->_forceIndexes = $this->normalizeIndexNames($indexes);
+        if ($this->_forceIndexes !== []) {
+            $this->_useIndexes = [];
+        }
+        return $this;
+    }
+
+    /** 建议下一次 SELECT 主表使用的索引；与 FORCE INDEX 互斥。 */
+    public function useIndex(string|array $indexes): QueryBuilder
+    {
+        $this->_useIndexes = $this->normalizeIndexNames($indexes);
+        if ($this->_useIndexes !== []) {
+            $this->_forceIndexes = [];
+        }
+        return $this;
+    }
+
+    /** 排除下一次 SELECT 主表的索引。 */
+    public function ignoreIndex(string|array $indexes): QueryBuilder
+    {
+        $this->_ignoreIndexes = $this->normalizeIndexNames($indexes);
+        return $this;
+    }
+
+    private function normalizeIndexNames(string|array $indexes): array
+    {
+        $indexes = is_array($indexes) ? array_values($indexes) : [$indexes];
+        foreach ($indexes as $index) {
+            if (!is_string($index) || trim($index) === '' || str_contains($index, "\0")) {
+                throw new \InvalidArgumentException('Index names must be non-empty strings without NUL bytes');
+            }
+        }
+        return $indexes;
+    }
+
+    /**
      * 设置查询字段或写入时允许的字段。
      */
     public function fields($fields): QueryBuilder
@@ -134,7 +178,6 @@ class QueryBuilder
      * Where条件
      * TODO Where支持数组条件查询(索引数组和kv数组两种方式)
      * TODO Where支持字符串条件，支持字符串直接预绑定(在Where条件上直接绑定参数)
-     * TODO Where支持快捷查询方法(whereLike/whereIn/whereNotIn等)
      * @param $whereProp
      * @param string $whereValue
      * @param string $operator
@@ -160,6 +203,115 @@ class QueryBuilder
     public function orWhere($whereProp, $whereValue = 'DBNULL', $operator = '=')
     {
         return $this->where($whereProp, $whereValue, $operator, 'OR');
+    }
+
+    /** 集合条件；空数组生成恒假条件。 */
+    public function whereIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
+    {
+        if ($values === []) {
+            return $this->where('0 = 1', 'DBNULL', '=', $cond);
+        }
+        $this->validateConditionSubquery($values);
+        return $this->where($column, $values, 'IN', $cond);
+    }
+
+    /** 排除集合；空数组生成恒真条件。 */
+    public function whereNotIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
+    {
+        if ($values === []) {
+            return $this->where('1 = 1', 'DBNULL', '=', $cond);
+        }
+        $this->validateConditionSubquery($values);
+        return $this->where($column, $values, 'NOT IN', $cond);
+    }
+
+    public function whereNull(string $column, string $cond = 'AND'): QueryBuilder
+    {
+        return $this->where($column, null, 'IS', $cond);
+    }
+
+    public function whereNotNull(string $column, string $cond = 'AND'): QueryBuilder
+    {
+        return $this->where($column, null, 'IS NOT', $cond);
+    }
+
+    public function whereBetween(string $column, array $bounds, string $cond = 'AND'): QueryBuilder
+    {
+        if (count($bounds) !== 2) {
+            throw new \InvalidArgumentException('BETWEEN requires exactly two bounds');
+        }
+        return $this->where($column, array_values($bounds), 'BETWEEN', $cond);
+    }
+
+    /** pattern 由调用方提供，% 和 _ 保持 SQL 通配符含义。 */
+    public function whereLike(string $column, string $pattern, string $cond = 'AND'): QueryBuilder
+    {
+        // Use an explicit placeholder so the legacy DBNULL sentinel is also a valid pattern.
+        return $this->where(implode('.', array_map(
+            static fn(string $part): string => '`' . str_replace('`', '``', $part) . '`',
+            explode('.', $column)
+        )) . ' LIKE ?', [$pattern], '=', $cond);
+    }
+
+    public function whereExists(QueryBuilder $subquery, string $cond = 'AND'): QueryBuilder
+    {
+        $this->validateConditionSubquery($subquery);
+        return $this->addExistsCondition($subquery, 'EXISTS', $cond);
+    }
+
+    public function whereNotExists(QueryBuilder $subquery, string $cond = 'AND'): QueryBuilder
+    {
+        $this->validateConditionSubquery($subquery);
+        return $this->addExistsCondition($subquery, 'NOT EXISTS', $cond);
+    }
+
+    private function addExistsCondition(QueryBuilder $subquery, string $operator, string $cond): QueryBuilder
+    {
+        if ($subquery->getSubQuery()['alias']) {
+            throw new \InvalidArgumentException('EXISTS subqueries must not have an alias');
+        }
+        $this->_where[] = ['exists' => $subquery, 'operator' => $operator, 'concat' => $this->_where === [] ? '' : $cond];
+        return $this;
+    }
+
+    private function validateConditionSubquery(array|QueryBuilder $value): void
+    {
+        if ($value instanceof QueryBuilder && (!$value->isSubQuery() || $value->getLastPrepareQuery() === null)) {
+            throw new \InvalidArgumentException('Use a built QueryBuilder::subQuery() for condition subqueries');
+        }
+    }
+
+    /** 闭包仅收集 WHERE 条件，支持嵌套；空条件组会被拒绝。 */
+    public function whereGroup(callable $callback): QueryBuilder
+    {
+        return $this->addWhereGroup($callback, 'AND');
+    }
+
+    public function orWhereGroup(callable $callback): QueryBuilder
+    {
+        return $this->addWhereGroup($callback, 'OR');
+    }
+
+    private function addWhereGroup(callable $callback, string $concat): QueryBuilder
+    {
+        $group = new static();
+        $group->setPrefix($this->prefix);
+        $callback($group);
+        if ($group->_where === []) {
+            throw new \InvalidArgumentException('WHERE groups must contain at least one condition');
+        }
+        $this->_where[] = ['group' => $group->_where, 'concat' => $this->_where === [] ? '' : $concat];
+        return $this;
+    }
+
+    public function orderByAsc(string $column): QueryBuilder
+    {
+        return $this->orderBy($column, 'ASC');
+    }
+
+    public function orderByDesc(string $column): QueryBuilder
+    {
+        return $this->orderBy($column, 'DESC');
     }
 
     /**
@@ -350,6 +502,24 @@ class QueryBuilder
         return $this;
     }
 
+    /** selectForUpdate() 的简写，保留旧接口。 */
+    public function forUpdate(bool $isLock = true): QueryBuilder
+    {
+        return $this->selectForUpdate($isLock);
+    }
+
+    /** 开启 FOR UPDATE 并跳过已锁定的行。 */
+    public function skipLocked(): QueryBuilder
+    {
+        return $this->selectForUpdate(true, 'SKIP LOCKED');
+    }
+
+    /** 开启 FOR UPDATE，遇到锁立即报错。 */
+    public function nowait(): QueryBuilder
+    {
+        return $this->selectForUpdate(true, 'NOWAIT');
+    }
+
     /**
      * 锁表模式(读/写)
      * @param $method
@@ -499,6 +669,16 @@ class QueryBuilder
         $this->_tableName = $tableName;
         $this->_query = 'SELECT ' . implode(' ', $this->_queryOptions) . ' ' .
             $column . " FROM " . $this->_paserTableName();
+        foreach (['FORCE' => $this->_forceIndexes, 'USE' => $this->_useIndexes, 'IGNORE' => $this->_ignoreIndexes] as $type => $names) {
+            if ($names === []) {
+                continue;
+            }
+            $indexes = array_map(
+                static fn(string $index): string => '`' . str_replace('`', '``', $index) . '`',
+                $names
+            );
+            $this->_query .= ' ' . $type . ' INDEX (' . implode(', ', $indexes) . ')';
+        }
         if($numRows == null){
             $numRows = $this->_limit;
         }
@@ -684,6 +864,9 @@ class QueryBuilder
 
         $this->_limit = null;
         $this->_field = '*';
+        $this->_forceIndexes = [];
+        $this->_useIndexes = [];
+        $this->_ignoreIndexes = [];
         $this->_union = [];
         $this->_where = [];
         $this->_having = [];
@@ -1321,6 +1504,16 @@ REGEX;
         //Prepare the where portion of the query
         $this->_query .= ' ' . $operator;
         foreach ($conditions as $cond) {
+            if (isset($cond['group'])) {
+                $this->_query .= ' ' . $cond['concat'] . ' (';
+                $this->_buildCondition('', $cond['group']);
+                $this->_query .= ')';
+                continue;
+            }
+            if (isset($cond['exists'])) {
+                $this->_query .= ' ' . $cond['concat'] . ' ' . $cond['operator'] . $this->_buildPair('', $cond['exists']);
+                continue;
+            }
             list ($concat, $varName, $operator, $val) = $cond;
 
             $this->currentOpColumn = $varName;

@@ -107,6 +107,250 @@ CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。
 
 此限制仅针对本客户端调用存储过程，不修改服务端配置，也不影响其他客户端。`CREATE PROCEDURE`、`DROP PROCEDURE` 等管理语句及普通 SELECT 中的存储函数不在 CALL 限制范围内。
 
+## 常用查询语法糖
+
+新增方法保留原有 `where()`、`orWhere()`、`orderBy()`、`selectForUpdate()` 等接口及行为。
+值继续通过预处理参数绑定；构建完成或调用 `reset()` 后，条件、排序、索引提示和行锁设置自动清除，表前缀保留。
+
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+$builder->forceIndex('idx_userId')
+    ->where('userId', $userId)
+    ->whereNull('deleted_at')
+    ->orderByDesc('mapId')
+    ->get('order_mapping', 10);
+$rows = $client->query($builder);
+```
+
+| 接口 | 用法及含义 |
+| --- | --- |
+| `whereIn($column, $values)` | 数组或已构建的 `QueryBuilder::subQuery()`；空数组生成 `0 = 1` |
+| `whereNotIn($column, $values)` | 数组或已构建的子查询；空数组生成 `1 = 1` |
+| `whereNull($column)` / `whereNotNull($column)` | `IS NULL` / `IS NOT NULL` |
+| `whereBetween($column, [$min, $max])` | 包含两端的范围，必须恰好两个边界值 |
+| `whereLike($column, $pattern)` | 普通字段名或 `表名.字段名`；自行提供 `%`、`_` 通配符，不自动转义通配符 |
+| `whereExists($sub)` / `whereNotExists($sub)` | 已构建且不带结果别名的子查询 |
+| `whereGroup($callback)` / `orWhereGroup($callback)` | 带括号的 AND / OR 条件组，支持嵌套 |
+| `orderByAsc($column)` / `orderByDesc($column)` | 对应 `orderBy($column, 'ASC' / 'DESC')` |
+| `forceIndex($indexes)` / `useIndex($indexes)` / `ignoreIndex($indexes)` | 强制、建议使用或排除主表索引 |
+| `forUpdate($isLock = true)` | 对应现有 `selectForUpdate()` |
+| `skipLocked()` / `nowait()` | 自动开启 `FOR UPDATE SKIP LOCKED` / `FOR UPDATE NOWAIT` |
+
+### 通用调用规则
+
+- 先调用条件、排序、索引及锁方法，最后调用 `get()`、`getOne()`、`update()` 等构建方法，再交给 `$client->query($builder)` 执行。构建方法本身不访问数据库。
+- `get()` 等方法完成构建时就会清除当前设置，并非等到执行后才清除；已生成的 SQL 和绑定参数保留。表前缀不会自动清除。
+- 字段名、索引名、SQL 表达式和 AND/OR 连接符使用代码常量或白名单；参数绑定只保护条件值，不保护 SQL 结构。
+- 集合、范围和 LIKE 方法的第三个参数是 `$cond`；NULL 和 EXISTS 方法的第二个参数是 `$cond`，默认均为 `'AND'`。只传 `'AND'` 或 `'OR'`，首个条件的连接符自动省略。
+- AND/OR 仍遵循 SQL 的优先级，需要括号时使用条件组。这些 WHERE 方法也可用于 UPDATE、DELETE，写入前应确认条件范围。
+
+### `forceIndex($indexes)`
+
+```php
+$builder->forceIndex('idx_userId')->where('userId', $userId)->get('order_mapping', 10);
+$builder->forceIndex(['idx_userId', 'idx_mapId'])->get('order_mapping');
+```
+
+- 只作用于本次 SELECT 的主表，提示放在表名及别名之后、JOIN 之前；不作用于 JOIN 表或 UPDATE、DELETE 的目标表。
+- 传单个索引名或名称数组，不传逗号分隔的 SQL。名称自动用反引号引用，名称内部的反引号会被转义；空白名称、非字符串数组元素和 NUL 字节会抛出 `InvalidArgumentException`。
+- 重复调用覆盖本类提示；`forceIndex([])` 清除 FORCE 设置。非空 `forceIndex()` 会清除已有 USE 设置，`ignoreIndex()` 设置保留。
+- 使用实际存在的索引；构造器不检查索引是否存在，也不保证强制索引能改善性能。已有表名 SQL 片段中带索引提示时，不要再为该表叠加此方法。
+- 子查询中调用时只作用于该子查询的主表，不会传递到外层。
+
+### `useIndex($indexes)`
+
+```php
+$builder->useIndex(['idx_userId', 'idx_mapId'])->get('order_mapping');
+```
+
+- 参数格式、名称引用、异常及 SELECT 主表作用范围与 `forceIndex()` 相同；它是索引使用建议，不保证服务端最终采用指定索引。
+- 重复调用覆盖 USE 列表；非空设置会清除 FORCE 列表，可搭配 `ignoreIndex()`。
+- `useIndex([])` 只清除 USE 设置，不生成 MySQL 的 `USE INDEX ()`，也不会恢复此前被覆盖的 FORCE 列表。
+- 构建完成后自动清除；主表与子查询的设置各自独立。
+
+### `ignoreIndex($indexes)`
+
+```php
+$builder->ignoreIndex('idx_status')->where('status', 1)->get('orders');
+```
+
+- 参数格式、名称引用、异常及作用范围与 `forceIndex()` 相同，表示排除指定索引。
+- 可与 USE 或 FORCE 搭配；不要同时要求使用和忽略同一个索引。
+- 重复调用覆盖 IGNORE 列表；`ignoreIndex([])` 清除本类提示，不改变 USE 或 FORCE 设置。构建完成后自动清除。
+
+### `whereIn($column, $values, $cond = 'AND')`
+
+```php
+$builder->whereIn('id', [1, 2, 3])->get('orders');
+$sub = QueryBuilder::subQuery()->where('active', 1)->get('users', null, 'id');
+$builder->whereIn('userId', $sub)->get('orders');
+```
+
+- 接受值数组或已经调用 `get()` 等完成构建的 `QueryBuilder::subQuery()`；普通 Builder 或未构建子查询会抛出 `InvalidArgumentException`。
+- 数组元素逐个绑定，不传 `'1,2,3'` 这样的字符串；子查询应只选择一列，且不要设置结果别名。
+- 空数组生成 `0 = 1`，不是忽略条件；与其他条件使用 OR 连接时，最终范围仍取决于完整表达式。
+- 数组包含 `null` 不等于额外匹配 NULL 行；需要时另加 `whereNull()` 并通过条件组表达 OR。
+- 子查询在外层构建前不要重建或修改，外层构建时才读取它的 SQL 和参数。
+- 旧写法 `where('id', [], 'IN')` 保持原行为，空数组保护仅适用于此新方法。
+
+### `whereNotIn($column, $values, $cond = 'AND')`
+
+```php
+$builder->whereNotIn('status', ['cancelled', 'closed'])->get('orders');
+```
+
+- 参数和子查询要求与 `whereIn()` 相同；子查询只选一列、不带结果别名，并在外层构建前保持不变。
+- 空数组生成 `1 = 1`。用于 UPDATE、DELETE 时，它本身不会缩小操作范围；尤其注意与 OR 的组合。
+- 列表或子查询结果包含 NULL 时，遵循 SQL 的 NULL 比较规则，可能导致原本预期保留的行也不返回；需要排除集合中的 NULL，或明确设计 NULL 条件。
+- 旧的 `where(..., 'NOT IN')` 不增加空数组保护。
+
+### `whereNull($column, $cond = 'AND')`
+
+```php
+$builder->whereNull('deleted_at')->get('orders');
+```
+
+- 生成 `IS NULL`，不绑定值；匹配数据库 NULL，不匹配空字符串、字符串 `'NULL'` 或数值 0。
+- `$cond` 是第二个参数，例如 `whereNull('deleted_at', 'OR')`。需要与其他条件组成一个整体时放入 `whereGroup()`。
+- 该方法不改变旧的 `where($column, null)` 行为；判断 NULL 时优先使用明确的 NULL 方法。
+
+### `whereNotNull($column, $cond = 'AND')`
+
+```php
+$builder->whereNotNull('paid_at')->get('orders');
+```
+
+- 生成 `IS NOT NULL`，不绑定值；空字符串和 0 仍可能满足条件。如果还要排除这些值，需要另加条件。
+- `$cond` 是第二个参数；字段名使用固定值或白名单。
+
+### `whereBetween($column, [$min, $max], $cond = 'AND')`
+
+```php
+$builder->whereBetween('amount', [100, 500])->get('orders');
+```
+
+- 数组必须恰好两个值，否则抛出 `InvalidArgumentException`；按传入顺序绑定，不自动排序边界，也不检查大小关系。
+- 包含两端边界，不能表达“含起点、不含终点”。时间范围需要半开区间时使用原有 `where('created_at', $start, '>=')->where('created_at', $end, '<')`。
+- 使用与字段类型匹配的值；日期时间字符串的格式、精度和时区由调用方统一。NULL 边界遵循 SQL 的 NULL 比较规则。
+
+### `whereLike($column, $pattern, $cond = 'AND')`
+
+```php
+$builder->whereLike('u.name', '%手机%')->get('users u');
+```
+
+- 字段只传未加反引号的普通名称或 `别名.字段名`，方法自动逐段引用；不传 `LOWER(name)` 等表达式或完整 SQL。
+- 不自动添加 `%`，也不转义 `%`、`_`；它们仍是通配符。要按字面量搜索这些字符时，由调用方按会话的 SQL 转义规则处理。
+- pattern 整体通过参数绑定，不需要手动添加 SQL 引号；字符串 `'DBNULL'` 也会正常绑定。
+- 是否区分大小写由字段和表达式的排序规则决定，前置 `%` 的匹配需要关注查询成本。
+
+### `whereExists($subquery, $cond = 'AND')`
+
+```php
+$sub = QueryBuilder::subQuery()
+    ->where('payments.orderId = orders.id')
+    ->where('status', 'paid')->get('payments', null, '1');
+$builder->whereExists($sub)->get('orders');
+```
+
+- 必须传已构建且不带结果别名的 `QueryBuilder::subQuery()`，否则抛出 `InvalidArgumentException`。`get(..., null, '1')` 可明确表达只检查存在性。
+- EXISTS 只判断有无记录；若要检查“当前外层记录”的关联数据，必须显式写关联条件。没有关联条件时，只判断整个子查询是否有记录。
+- 关联列比较应使用代码中固定的 SQL 表达式，如示例的单参数 `where()`；`where('payments.orderId', 'orders.id')` 会把后者当字符串值绑定。
+- 内外层别名要与各自 SQL 一致。子查询在外层构建前不要重建或修改，参数会在外层构建时按 SQL 顺序合并。
+
+### `whereNotExists($subquery, $cond = 'AND')`
+
+```php
+$builder->whereNotExists($sub)->get('orders');
+```
+
+- 子查询、别名、关联条件及参数合并要求与 `whereExists()` 相同；这里的 `$sub` 可使用上一节构建的子查询。
+- 表示子查询没有符合条件的记录；没有关联条件时，可能使整个外层查询全部满足或全部不满足，而不是逐条判断关联关系。
+- `$cond` 是第二个参数。用于写入时，应先确认关联条件和最终 WHERE 范围。
+
+### `whereGroup($callback)`
+
+```php
+$builder->where('tenantId', $tenantId)
+    ->whereGroup(function (QueryBuilder $q): void {
+        $q->where('status', 1)->orWhere('status', 2);
+    })->get('orders');
+// WHERE tenantId = ? AND (status = ? OR status = ?)
+```
+
+- 闭包拿到一个独立 Builder，只有其中的 WHERE 条件被收集；支持继续嵌套 `whereGroup()`、`orWhereGroup()`。
+- 在闭包内调用条件方法，不调用 `get()`、`reset()` 等构建/清理方法，也不设置字段、JOIN、排序、分页、索引或锁；这些设置不会合并到外层。
+- 闭包返回值不参与构建，不需要返回 Builder。空条件组会抛出 `InvalidArgumentException`；闭包抛异常时，整个组不会加入外层，外层此前条件保留。
+- 默认以 AND 连接前面的条件；它是首个条件时不添加前置 AND。组内绑定参数保持 SQL 出现顺序。
+
+### `orWhereGroup($callback)`
+
+```php
+$builder->where('status', 'pending')
+    ->orWhereGroup(function (QueryBuilder $q): void {
+        $q->where('status', 'retry')->where('attempts', 3, '<');
+    })->get('jobs');
+```
+
+- 闭包及嵌套要求与 `whereGroup()` 相同，只是以 OR 连接整个分组；作为首个条件时省略前置 OR。
+- 它不会把之前的条件一起括起来。例如租户限制后直接 OR 一个组，可能使该组绕开租户限制；需要 `tenantId AND (A OR B)` 时，把 A、B 都放入同一个 `whereGroup()`。
+
+### `orderByAsc($column)`
+
+```php
+$builder->orderByAsc('created_at')->orderByAsc('id')->get('orders', 10);
+```
+
+- 等价于旧的 `orderBy($column, 'ASC')`，保留旧方法的字段处理规则；字段名用固定值或白名单，不直接接收请求参数。
+- 多次调用不同字段按调用顺序排列；同一字段再次设置会覆盖原方向。
+- 不提供旧 `orderBy()` 的第三个自定义排序参数；需要自定义排序时继续调用原方法。分页需要稳定顺序时可追加唯一字段。
+
+### `orderByDesc($column)`
+
+```php
+$builder->orderByDesc('mapId')->get('order_mapping', 10);
+```
+
+- 等价于旧的 `orderBy($column, 'DESC')`；字段安全、多字段顺序和同字段覆盖规则与 `orderByAsc()` 相同。
+- `orderByAsc('id')->orderByDesc('id')` 最终按 `id DESC`，不会同时生成两个相反方向。构建完成后排序设置自动清除。
+
+### `forUpdate($isLock = true)`
+
+```php
+// 在调用方已开启的业务事务内执行。
+$builder->where('id', $id)->forUpdate()->get('orders');
+$rows = $client->query($builder);
+```
+
+- 等价于 `selectForUpdate($isLock)`，用于 SELECT；不自动开启事务，调用方负责开启、提交或回滚事务，并在同一客户端连接上执行。
+- 需要跨语句持有锁时，在事务内执行；不要把 `get()` 或 `forUpdate()` 当作已经向服务端申请锁，实际锁定发生在查询执行时。
+- `forUpdate(false)` 取消排他锁及其等待选项。已调用 `skipLocked()` 或 `nowait()` 后再调用 `forUpdate(true)`，会保留已有等待选项。
+- 不要与 `lockInShareMode()` 混用；当前接口不会自动替你消除两种锁模式的冲突。外层的锁设置也不会自动传播到子查询。
+
+### `skipLocked()`
+
+```php
+$builder->where('status', 'pending')->orderByAsc('id')->skipLocked()->get('jobs', 10);
+```
+
+- 自动开启 `FOR UPDATE SKIP LOCKED`，不必先调用 `forUpdate()`，仍需由调用方管理事务。
+- 跳过被其他事务锁定的行；即使存在符合条件的记录，也可能返回不足 LIMIT 数量或空结果，不能据此断定队列没有任务。
+- `skipLocked()->nowait()` 最终使用 NOWAIT；`forUpdate(false)` 会取消锁及等待选项。构建完成后自动重置。
+- 队列场景中，在同一事务内锁定、更新任务状态并提交；提交后再进行耗时的外部工作，避免长时间占锁。
+
+### `nowait()`
+
+```php
+$builder->where('id', $id)->nowait()->get('orders');
+```
+
+- 自动开启 `FOR UPDATE NOWAIT`，无需预先调用 `forUpdate()`，仍需由调用方管理事务。
+- 行锁冲突会使查询报错，不会像 `skipLocked()` 一样跳过冲突记录；业务需要捕获异常并决定回滚或重试。
+- NOWAIT 不等于客户端查询超时，也不保证 SQL 的所有执行阶段都不等待；连接、网络及查询本身仍使用客户端超时配置。
+- `nowait()->skipLocked()` 最终使用 SKIP LOCKED；`forUpdate(false)` 取消锁及等待选项。构建完成后自动重置。
+
 ## 更多文档
 
 - [测试命令与环境配置](tests/README.md)。

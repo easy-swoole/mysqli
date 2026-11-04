@@ -64,6 +64,111 @@ var_dump($builder->getLastBindParams());
 //[2]
 ```
 
+## 常用查询语法糖
+
+新增方法保留原有 `where()`、`orWhere()`、`orderBy()`、`selectForUpdate()` 等接口及行为。
+值继续通过预处理参数绑定；构建完成或调用 `reset()` 后，条件、排序、索引提示和行锁设置自动清除，表前缀保留。
+
+```php
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+$builder->forceIndex('idx_userId')
+    ->where('userId', $userId)
+    ->whereNull('deleted_at')
+    ->orderByDesc('mapId')
+    ->get('order_mapping', 10);
+$rows = $client->query($builder);
+```
+
+| 接口 | 用法及含义 |
+| --- | --- |
+| `whereIn($column, $values)` | 数组或已构建的 `QueryBuilder::subQuery()`；空数组生成 `0 = 1` |
+| `whereNotIn($column, $values)` | 数组或已构建的子查询；空数组生成 `1 = 1` |
+| `whereNull($column)` / `whereNotNull($column)` | `IS NULL` / `IS NOT NULL` |
+| `whereBetween($column, [$min, $max])` | 包含两端的范围，必须恰好两个边界值 |
+| `whereLike($column, $pattern)` | 普通字段名或 `表名.字段名`；自行提供 `%`、`_` 通配符，不自动转义通配符 |
+| `whereExists($sub)` / `whereNotExists($sub)` | 已构建且不带结果别名的子查询 |
+| `whereGroup($callback)` / `orWhereGroup($callback)` | 带括号的 AND / OR 条件组，支持嵌套 |
+| `orderByAsc($column)` / `orderByDesc($column)` | 对应 `orderBy($column, 'ASC' / 'DESC')` |
+| `forceIndex($indexes)` / `useIndex($indexes)` / `ignoreIndex($indexes)` | 强制、建议使用或排除主表索引 |
+| `forUpdate($isLock = true)` | 对应现有 `selectForUpdate()` |
+| `skipLocked()` / `nowait()` | 自动开启 `FOR UPDATE SKIP LOCKED` / `FOR UPDATE NOWAIT` |
+
+集合、范围和 LIKE 方法可通过第三个参数 `'OR'` 与前面条件连接；
+NULL 和 EXISTS 方法使用第二个参数，例如 `whereNull('deleted_at', 'OR')`。
+旧的 `where('id', [], 'IN')` 不改变行为，空数组保护仅适用于新的集合方法。
+
+### 条件分组与子查询
+
+```php
+$builder->where('tenantId', $tenantId)
+    ->whereGroup(function (QueryBuilder $q): void {
+        $q->where('status', 1)->orWhere('status', 2);
+    })
+    ->whereBetween('amount', [100, 500])
+    ->whereLike('name', '%手机%')
+    ->get('orders');
+// WHERE tenantId = ? AND (status = ? OR status = ?)
+// AND amount BETWEEN ? AND ? AND name LIKE ?
+
+$sub = QueryBuilder::subQuery()->useIndex('idx_active')
+    ->where('active', 1)->get('users', null, 'id');
+$builder->whereIn('userId', $sub)->get('orders');
+
+$exists = QueryBuilder::subQuery()
+    ->where('payments.orderId = orders.id')
+    ->where('status', 'paid')->get('payments', null, '1');
+$builder->whereExists($exists)->get('orders');
+```
+
+分组闭包只收集 WHERE 条件，不在闭包内调用 `get()` 或设置排序、分页、索引、行锁。
+空分组抛出 `InvalidArgumentException`；闭包异常不会添加半成品条件组。
+子查询参数按 SQL 出现顺序合并，内外层的索引提示各自独立。
+
+### 索引提示和行锁
+
+```php
+$builder->useIndex(['idx_userId', 'idx_mapId'])->ignoreIndex('idx_status')
+    ->where('userId', $userId)->get('order_mapping', 10);
+
+// 在业务事务中执行，事务由调用方开启和结束。
+$builder->where('status', 'pending')->orderByAsc('id')
+    ->forUpdate()->skipLocked()->get('jobs', 10);
+$rows = $client->query($builder);
+```
+
+索引名支持字符串或数组，自动加反引号；不要传逗号分隔的 SQL 片段。
+同类提示重复调用时覆盖，传 `[]` 清除该类提示；非空的 `USE` 和 `FORCE` 设置互相覆盖，`IGNORE` 可搭配使用。
+提示仅作用于 SELECT 主表，不作用于 JOIN 表或写入目标。
+`useIndex([])` 表示清除设置，不生成 MySQL 的 `USE INDEX ()`。
+已有表名 SQL 片段中包含索引提示时，不要再为该表叠加这些方法。
+
+`skipLocked()`、`nowait()` 无需先调用 `forUpdate()`，两种等待选项以后者为准；
+`forUpdate(false)` 取消排他锁。它们不会自动开启业务事务，旧行锁方法继续可用。
+
+## 强制索引（FORCE INDEX）
+
+`forceIndex()` 为下一次 SELECT 的主表指定索引，可用于 `get()`、`getOne()` 等查询。
+索引提示位于表名及别名之后、JOIN 和 WHERE 之前，不作用于 JOIN 表或写入语句。
+
+```php
+$builder->forceIndex('idx_userId')
+    ->where('userId', $userId)
+    ->orderBy('mapId', 'DESC')
+    ->get('order_mapping', 10);
+$rows = $client->query($builder);
+// SELECT * FROM `order_mapping` FORCE INDEX (`idx_userId`)
+// WHERE `userId` = ? ORDER BY mapId DESC LIMIT 10
+
+$builder->forceIndex(['idx_userId', 'idx_mapId'])->get('order_mapping');
+$builder->forceIndex('PRIMARY')->getOne('order_mapping');
+```
+
+传入单个索引名或索引名数组，名称自动使用反引号引用；不要传入逗号分隔的 SQL 片段。
+重复调用覆盖之前的索引列表，`forceIndex([])` 取消设置。
+构建完成或调用 `reset()` 后，索引设置自动清除，不影响下一条查询。
+
 ## 查询（SELECT）
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
