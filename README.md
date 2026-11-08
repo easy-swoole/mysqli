@@ -111,7 +111,9 @@ $config->setTlsCaPath('/secure/mysql/ca-directory');
 $config->setTlsServerName('mysql.internal.example.com');
 ```
 
-- 只指定 VerifyIdentity 要校验的预期证书身份，不改变实际 TCP 连接地址；默认为配置中的 `host`。
+- 指定 TLS 的 SNI 名称，同时作为 VerifyIdentity 校验的预期证书身份；不改变 TCP 连接地址，默认使用 `host`。
+- DNS 名随 ClientHello 发送 SNI，供代理选择证书或后端；IP 字面量不发送 SNI。DNS 名末尾根域点会去除，名称不能包含空白或 NUL。
+- SNI 与证书校验独立：VerifyCA 只检查证书链和有效期，VerifyIdentity 再检查名称匹配；均在发送 MySQL 认证信息前完成校验。
 - 连接 IP 时，默认要求证书 subjectAltName 包含对应 IP，不接受仅把 IP 写进 CN 或 DNS SAN 的证书。
 - DNS 匹配不区分大小写；优先匹配 DNS SAN，没有 DNS SAN 时兼容 CN。通配符仅允许 `*.example.com` 形式，且只匹配一层子域名。
 - 此字段不是跳过校验的开关。仅在明确知道服务端真实证书名称时覆盖；需要关闭身份校验但保留 CA 校验，应明确选择 VerifyCA。
@@ -427,6 +429,57 @@ $builder->where('status', 'pending')
 - 闭包及嵌套要求与 `whereGroup()` 相同，只是以 OR 连接整个分组；作为首个条件时省略前置 OR。
 - 它不会把之前的条件一起括起来。例如租户限制后直接 OR 一个组，可能使该组绕开租户限制；需要 `tenantId AND (A OR B)` 时，把 A、B 都放入同一个 `whereGroup()`。
 
+### `orderBy($column, $direction = 'DESC', $customFieldsOrRegExp = null)`
+
+```php
+$builder->where('tenantId', $tenantId)->orderBy('name', 'DESC', "O'Reilly")->get('users');
+// WHERE `tenantId` = ? ORDER BY name REGEXP ? DESC
+// 参数：[$tenantId, "O'Reilly"]
+```
+
+- 第三个参数为字符串时按正则表达式值绑定，不直接拼进 SQL；不手动添加 SQL 引号或转义单引号。无效正则由数据库报错。
+- 参数按最终 SQL 顺序合并：JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
+- 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
+- 字段名仍使用代码常量或白名单。通过 `Client::query()` 执行预处理 SQL；`getLastQuery()` 仅供调试展示，不用于重新拼接执行。
+
+### `union($query, $isUnionAll = false)`
+
+```php
+$archive = (new QueryBuilder())->where('status', 'closed')->orderByDesc('id')->get('archive', 2, 'id');
+$builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orders', 10, 'id');
+// SELECT id FROM `orders` WHERE `status` = ?
+// UNION (SELECT id FROM `archive` WHERE `status` = ? ORDER BY id DESC LIMIT 2)
+// ORDER BY id DESC LIMIT 10
+```
+
+- 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立 Builder 完成该分支的 `get()`，再传给 `union()`。
+- 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
+- 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
+- `union($builder)` 保存调用时分支的 SQL 与参数；后续重建分支不会改变已保存内容。原始字符串不带结尾分号，也不支持额外绑定参数；需要参数时传已构建 Builder 或 `raw($sql, $params)` Builder。
+
+### `get($table, $numRows = null, $columns = null)`
+
+```php
+$builder->get('orders', 0);               // LIMIT 0，返回零行
+$builder->limit(25)->get('orders', 0);    // 显式的 0 覆盖 25
+$builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
+```
+
+- 只有 `null` 表示未指定条数并使用此前 `limit()` 设置；数字 `0` 不取消 LIMIT。
+- 未指定条数且未设置 `limit()` 才不限制条数；偏移分页 `[0, 0]` 同样返回零行。
+
+### `joinWhere()` / `joinOrWhere()` 的 NULL 判断
+
+```php
+$builder->join('users u', 'u.id=o.userId', 'LEFT')
+    ->joinWhere('users u', 'u.deleted_at', null, 'IS')->get('orders o');
+// LEFT JOIN users u on u.id=o.userId AND u.deleted_at IS NULL
+```
+
+- NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
+- 第一个参数与对应 `join()` 的表名、别名保持一致；条件位于 JOIN 的 ON 部分，不是外层 WHERE。LEFT JOIN 中移动条件到 WHERE 可能改变保留行范围。
+- 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
+
 ### `orderByAsc($column)`
 
 ```php
@@ -503,3 +556,24 @@ $builder->where('id', $id)->nowait()->get('orders');
 - `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。
 
 上述辅助类属于内部实现。`Client`、`Connection`、`Statement` 和 `QueryBuilder` 的既有公开方法签名保持不变。
+
+## QueryBuilder 内部职责
+
+`QueryBuilder` 保留原有公开方法、参数名、默认值、返回类型及链式调用；编译逻辑位于 `src/QueryBuilder/`，内部协作类不作为业务 API 使用。
+
+| 类 | 职责 |
+| --- | --- |
+| `QueryBuilder` | 收集链式调用状态、维护最近构建结果、重置状态和兼容入口 |
+| `QueryParts` | 保存本次编译所需的条件与选项快照 |
+| `QueryCompiler` | 按 SQL 顺序调度各类编译，处理最终行锁和事务标记 |
+| `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
+| `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
+| `WriteCompiler` | INSERT、REPLACE、UPDATE、批量值和重复键更新 |
+| `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
+| `TableReference` | 表名前缀处理、索引名校验及索引提示渲染 |
+| `ExpressionFactory` | 保持 now/inc/dec/not/func 的既有表达式格式 |
+| `SqlFormatter` | 仅生成调试展示 SQL，不参与数据库执行 |
+
+各编译器仅依赖本次 SQL 缓冲和所需输入，不回调整个 Builder 读取私有状态，也不负责连接数据库。
+UNION 保存已构建分支快照，IN/EXISTS 在外层构建时读取子查询；这些时序和 `reset()` 保留前缀等既有规则不变。
+`QueryBuilderPublicApiTest` 记录公开接口快照；有意增加或调整公开 API 时，应审查并同步更新该快照。

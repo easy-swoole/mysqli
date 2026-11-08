@@ -17,8 +17,11 @@
             <file>tests/CodecTest.php</file>
             <file>tests/ProtocolPayloadTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
+            <file>tests/QueryBuilderPublicApiTest.php</file>
+            <file>tests/QueryBuilderRegressionTest.php</file>
         </testsuite>
         <testsuite name="integration">
+            <file>tests/QueryBuilderIntegrationTest.php</file>
             <file>tests/TlsIntegrationTest.php</file>
             <file>tests/ClientTest.php</file>
             <file>tests/DataTypeTest.php</file>

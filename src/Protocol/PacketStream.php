@@ -64,6 +64,17 @@ final class PacketStream
         if (!$socket->setProtocol($options)) {
             throw new Exception('Unable to configure MySQL TLS');
         }
+        $verifyAfterHandshake = $options['ssl_verify_peer'] && $options['ssl_host_name'] !== '';
+        if ($verifyAfterHandshake) {
+            // setProtocol() has already created the native SSL context and loaded its CA store.
+            // On Swoole 5.1 a nonempty ssl_host_name also forces hostname validation during
+            // sslHandshake(). Defer native verification so SNI can select a certificate while
+            // VerifyCA remains CA-only and VerifyIdentity uses our DNS/IP identity checker.
+            if (!method_exists(SocketClient::class, 'verifyPeerCert')
+                || !$socket->setProtocol(['ssl_verify_peer' => false])) {
+                throw new Exception('Unable to configure separate TLS certificate verification');
+            }
+        }
         $remaining = $deadline->remaining();
         $seconds = (int) $remaining;
         if (!$socket->setOption(SOL_SOCKET, SO_RCVTIMEO, ['sec' => $seconds, 'usec' => max(1, (int) (($remaining - $seconds) * 1_000_000))])) {
@@ -82,6 +93,14 @@ final class PacketStream
             if ($expired) { throw new TimeoutException('MySQL TLS handshake timed out', 110); }
             if (!$ok) { throw $this->ioException('TLS handshake', $remaining); }
             $deadline->remaining();
+            if ($verifyAfterHandshake) {
+                // Clearing the option after the handshake does not change the SNI already sent.
+                // It prevents old Swoole versions from coupling CA verification to that DNS name.
+                if (!$socket->setProtocol(['ssl_verify_peer' => true, 'ssl_verify_host' => false, 'ssl_host_name' => ''])
+                    || !@$this->tlsClient->verifyPeerCert(false)) {
+                    throw new Exception('MySQL TLS certificate verification failed');
+                }
+            }
             if ($config->getTlsMode() === TlsMode::VerifyIdentity) {
                 $certificate = $this->tlsClient->getPeerCert();
                 if ($certificate === false) { throw new Exception('TLS peer certificate is unavailable'); }

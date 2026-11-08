@@ -40,6 +40,30 @@ final class TlsIntegrationTest extends TestCase
         }
     }
 
+    public function testSniDoesNotTurnCaOnlyVerificationIntoIdentityVerification(): void
+    {
+        $config = new Config(MYSQL_CONFIG);
+        if (!in_array($config->getTlsMode(), [TlsMode::VerifyCA, TlsMode::VerifyIdentity], true)) {
+            self::markTestSkipped('Requires a trusted server CA configuration');
+        }
+        $name = 'sni-' . bin2hex(random_bytes(8)) . '.mysql-test.invalid';
+        $options = array_replace(MYSQL_CONFIG, ['tlsMode' => TlsMode::VerifyCA, 'tlsServerName' => $name]);
+        $caOnly = new Client(new Config($options));
+        try {
+            self::assertTrue($caOnly->connect());
+            self::assertTrue($caOnly->mysqlClient()->isTlsEnabled());
+        } finally { $caOnly->close(); }
+        $options['tlsMode'] = TlsMode::VerifyIdentity;
+        $identity = new Client(new Config($options));
+        try {
+            $identity->connect();
+            self::fail('Mismatched identity must be rejected even with a trusted CA');
+        } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+            self::assertStringContainsString('identity', $error->getMessage());
+            self::assertNull($identity->mysqlClient());
+        } finally { $identity->close(); }
+    }
+
     public function testTimeoutReconnectKeepsTlsEnabled(): void
     {
         $this->client->connect();

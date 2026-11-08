@@ -411,3 +411,18 @@ MySQL 测试服务器完整回归：166 个测试、2071 个断言全部通过�
 验证环境为 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4。单元测试 155 项、1518 次断言通过；VerifyIdentity 模式下，现有集成测试 75 项、1055 次断言及新增 TLS 集成测试 2 项、13 次断言通过，无跳过。集成测试在独立临时数据库运行，覆盖文本/预处理、事务、死锁、断线恢复、压缩、大包及 128 MiB 内存限制的大参数，测试后已清理临时数据库和账号。额外实测 TLS 1.2/1.3、错误 CA/身份拒绝、REQUIRE X509 双向认证、加密客户端私钥及 TLS/压缩组合通过。
 
 测试服务器使用原 CA 签发带 IP/DNS SAN 的服务端证书并保留原证书备份，通过重启 MySQL 生效；require_secure_transport 保持关闭。README 及 tests/README.md 已补充配置、注意事项和 TLS 测试环境变量。
+
+
+## 2026-11-08 查询构造与 TLS SNI 修复
+
+修复正则排序值的 SQL 注入风险，正则参数按最终 SQL 顺序绑定；保留重复排序表达式覆盖方向的行为。UNION 主构造器的排序和分页作用于整体结果，含局部排序/分页/嵌套 UNION 的分支加括号。显式 get(table, 0) 保留 LIMIT 0；JOIN 中的 IS NULL / IS NOT NULL 正确分隔运算符。
+
+TLS 根据 tlsServerName 或连接 DNS 名发送 SNI，IP 不发送 SNI；SNI 与证书身份校验分离，VerifyCA 不额外要求名称匹配，VerifyIdentity 仍严格验证。为兼容旧版 Swoole，在发送 MySQL 认证数据前完成原生证书链检查和独立身份检查。TLS 默认关闭不变。
+
+单元测试 167 项、1790 次断言全部通过。实际 MySQL 服务器只读验证 8 项、26 次断言通过，包含正则中的引号、嵌套 UNION 与分支/整体排序分页、LIMIT 0、JOIN NULL、TLS 重连及 CA-only 与身份校验的区别。ClientHello 抓包覆盖三种启用模式的 DNS 默认名/覆盖名、IP 不发送 SNI，证书不可信、过期和身份不匹配仍被拒绝。README 与 QueryBuilder 指南已同步，PHP 语法和 git diff --check 通过。未修改远程服务器配置或业务数据。
+
+## 2026-11-08 QueryBuilder 按职责重构
+
+公开 QueryBuilder 保留链式 API 与构建结果管理，编译实现拆分到 src/QueryBuilder：QueryParts 输入快照、QueryCompiler 调度、ConditionCompiler 条件与子查询、SelectCompiler 查询子句、WriteCompiler 写入、SqlBuffer 参数与 SQL、TableReference 表名/索引、ExpressionFactory 表达式、SqlFormatter 调试展示。WHERE/HAVING 与 ON 共用运算符编译，移除未参与执行的 mysqli 参数类型字符串，区分待构建状态与最近构建结果。主文件由 1632 行缩减到 836 行。
+
+新增公开 API 快照测试，核对全部 71 个公开方法的名称、参数名/顺序/类型/默认值、返回类型、静态属性和公开常量，并验证子类工厂、链式调用、编译异常后的恢复和 reset/prefix 规则。单元测试 170 项、1809 次断言通过；独立临时数据库中的完整集成测试 83 项、1081 次断言通过，无跳过。另对重构前后执行 900 组确定性混合调用序列，精确 SQL、参数、展示 SQL、选项、事务标记、子查询元数据与复用状态全部一致，异常后 reset/raw 的状态也一致。临时数据库已清理，README 与 QueryBuilder 指南已补充内部职责说明。

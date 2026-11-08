@@ -13,13 +13,19 @@ final class TlsOptions
     public static function fromConfig(Config $config): array
     {
         $mode = $config->getTlsMode();
+        $name = $config->getTlsServerName() !== '' ? $config->getTlsServerName() : $config->getHost();
+        if (str_contains($name, "\0") || preg_match('/\s/', $name)) {
+            throw new \InvalidArgumentException('TLS server name must not contain NUL bytes or whitespace');
+        }
+        // RFC 6066 SNI carries DNS names, not IP literals. Normalize a DNS root dot.
+        $serverName = filter_var($name, FILTER_VALIDATE_IP) !== false ? '' : rtrim($name, '.');
         $options = [
             'open_ssl' => true,
             'ssl_verify_peer' => in_array($mode, [TlsMode::VerifyCA, TlsMode::VerifyIdentity], true),
             'ssl_allow_self_signed' => false,
-            // Verify identity below using the peer certificate, including IP SANs on Swoole 5.1.
+            // Identity validation is separate from SNI, including on Swoole 5.1.
             'ssl_verify_host' => false,
-            'ssl_host_name' => '',
+            'ssl_host_name' => $serverName,
         ];
         $protocols = 0;
         foreach ($config->getTlsVersions() as $version) {

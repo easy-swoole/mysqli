@@ -86,7 +86,8 @@ CNF);
     {
         foreach ([['tlsMode' => 'typo'], ['tlsVersions' => []], ['tlsVersions' => ['TLSv1']],
                   ['tlsCaFile' => '/missing/ca.pem'], ['tlsCaPath' => self::$directory . '/ca.pem'],
-                  ['tlsCertFile' => self::$directory . '/server.pem']] as $options) {
+                  ['tlsCertFile' => self::$directory . '/server.pem'],
+                  ['tlsServerName' => "bad\0host"], ['tlsServerName' => 'bad host']] as $options) {
             try {
                 TlsOptions::fromConfig(new Config($options + ['tlsMode' => TlsMode::VerifyIdentity]));
                 self::fail('Invalid TLS configuration must not fall back to plaintext');
@@ -109,6 +110,97 @@ CNF);
                 self::fail('Invalid certificate identity was accepted: ' . $name);
             } catch (Exception $error) { self::assertStringContainsString('TLS', $error->getMessage()); }
         }
+    }
+
+    public function testDnsServerNamesAreSentAsSniAndIpLiteralsAreOmitted(): void
+    {
+        foreach ([TlsMode::Required, TlsMode::VerifyCA, TlsMode::VerifyIdentity] as $mode) {
+            foreach ([
+                ['host' => 'localhost', 'expected' => 'localhost'],
+                ['host' => '127.0.0.1', 'tlsServerName' => 'mysql.internal.example.com', 'expected' => 'mysql.internal.example.com'],
+                ['host' => '127.0.0.1', 'expected' => null],
+                ['host' => '127.0.0.1', 'tlsServerName' => '::1', 'expected' => null],
+            ] as $case) {
+                $expected = $case['expected'];
+                unset($case['expected']);
+                $listener = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+                self::assertTrue($listener->bind('127.0.0.1', 0));
+                self::assertTrue($listener->listen());
+                $completed = new Channel(1);
+                Coroutine::create(static function () use ($listener, $completed): void {
+                    $peer = null;
+                    try {
+                        $peer = $listener->accept(1);
+                        self::assertInstanceOf(Socket::class, $peer);
+                        $capabilities = 0x00088205 | 0x800;
+                        self::send($peer, "\x0a8.0.0-sni\0" . pack('V', 1) . "12345678\0" . pack('v', $capabilities & 0xffff)
+                            . "\x2d" . pack('v', 2) . pack('v', $capabilities >> 16) . "\x15" . str_repeat("\0", 10)
+                            . "abcdefghijkl\0caching_sha2_password\0", 0);
+                        [$request, $sequence] = self::receive($peer);
+                        self::assertSame(32, strlen($request));
+                        self::assertSame(1, $sequence);
+                        $header = $peer->recvAll(5, 1);
+                        self::assertSame(5, strlen($header));
+                        self::assertSame(0x16, ord($header[0]));
+                        $recordLength = unpack('n', substr($header, 3, 2))[1];
+                        $hello = $peer->recvAll($recordLength, 1);
+                        self::assertSame($recordLength, strlen($hello));
+                        $completed->push(self::clientHelloServerNames($hello));
+                    } catch (\Throwable $error) { $completed->push($error); }
+                    finally { $peer?->close(); $listener->close(); }
+                });
+                $client = new Client(new Config($case + ['port' => $listener->getsockname()['port'], 'tlsMode' => $mode,
+                    'user' => 'test', 'password' => 'secret', 'maxConnectTime' => 1.0]));
+                try {
+                    $client->connect();
+                    self::fail('Capture server intentionally closes after ClientHello');
+                } catch (Exception $error) {
+                    self::assertNull($client->mysqlClient());
+                } finally { $client->close(); }
+                $names = $completed->pop(2);
+                if ($names instanceof \Throwable) { throw $names; }
+                self::assertSame($expected === null ? [] : [$expected], $names);
+            }
+        }
+    }
+
+    public function testDnsSniAndIdentityCompleteAuthentication(): void
+    {
+        [$client, $completed] = $this->server('ok', ['host' => 'localhost', 'tlsMode' => TlsMode::VerifyIdentity,
+            'tlsCaFile' => self::$directory . '/ca.pem']);
+        self::assertTrue($client->connect());
+        self::assertTrue($client->mysqlClient()->isTlsEnabled());
+        $client->close();
+        $this->completed($completed);
+    }
+
+    private static function clientHelloServerNames(string $hello): array
+    {
+        self::assertSame(1, ord($hello[0]));
+        $offset = 4 + 2 + 32;
+        $offset += 1 + ord($hello[$offset]); // session ID
+        $offset += 2 + unpack('n', substr($hello, $offset, 2))[1]; // cipher suites
+        $offset += 1 + ord($hello[$offset]); // compression methods
+        $end = $offset + 2 + unpack('n', substr($hello, $offset, 2))[1];
+        $offset += 2;
+        $names = [];
+        while ($offset < $end) {
+            $type = unpack('n', substr($hello, $offset, 2))[1];
+            $length = unpack('n', substr($hello, $offset + 2, 2))[1];
+            $offset += 4;
+            if ($type === 0) {
+                $position = $offset + 2;
+                while ($position < $offset + $length) {
+                    self::assertSame(0, ord($hello[$position++]));
+                    $nameLength = unpack('n', substr($hello, $position, 2))[1];
+                    $position += 2;
+                    $names[] = substr($hello, $position, $nameLength);
+                    $position += $nameLength;
+                }
+            }
+            $offset += $length;
+        }
+        return $names;
     }
 
     public function testTlsFullAuthenticationAndIdentityBeforeCredentials(): void
@@ -138,7 +230,7 @@ CNF);
         self::assertTrue($client->connect());
         $client->close();
         $this->completed($completed);
-        [$client, $completed] = $this->server('reject', ['tlsMode' => TlsMode::VerifyCA]);
+        [$client, $completed] = $this->server('reject', ['tlsMode' => TlsMode::VerifyCA, 'tlsServerName' => 'untrusted.invalid']);
         try { $client->connect(); self::fail('Untrusted certificate accepted'); }
         catch (Exception $error) { self::assertNull($client->mysqlClient()); }
         $this->completed($completed);
@@ -169,7 +261,7 @@ CNF);
     {
         // The zero-day fixture expires at its creation second; advance beyond that second.
         Coroutine::sleep(1.05);
-        [$client, $completed] = $this->server('expired', ['tlsMode' => TlsMode::VerifyIdentity,
+        [$client, $completed] = $this->server('expired', ['tlsMode' => TlsMode::VerifyIdentity, 'tlsServerName' => 'localhost',
             'tlsCaFile' => self::$directory . '/ca.pem']);
         try { $client->connect(); self::fail('Expired certificate accepted'); }
         catch (Exception $error) { self::assertNull($client->mysqlClient()); }

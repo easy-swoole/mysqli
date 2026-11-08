@@ -339,6 +339,57 @@ $builder->union((new QueryBuilder)->where('userName', 'user')->get('userTable'))
     ->where('adminUserName', 'admin')->get('adminTable');
 ```
 
+### `orderBy($column, $direction = 'DESC', $customFieldsOrRegExp = null)`
+
+```php
+$builder->where('tenantId', $tenantId)->orderBy('name', 'DESC', "O'Reilly")->get('users');
+// WHERE `tenantId` = ? ORDER BY name REGEXP ? DESC
+// 参数：[$tenantId, "O'Reilly"]
+```
+
+- 第三个参数为字符串时按正则表达式值绑定，不直接拼进 SQL；不手动添加 SQL 引号或转义单引号。无效正则由数据库报错。
+- 参数按最终 SQL 顺序合并：JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
+- 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
+- 字段名仍使用代码常量或白名单。通过 `Client::query()` 执行预处理 SQL；`getLastQuery()` 仅供调试展示，不用于重新拼接执行。
+
+### `union($query, $isUnionAll = false)`
+
+```php
+$archive = (new QueryBuilder())->where('status', 'closed')->orderByDesc('id')->get('archive', 2, 'id');
+$builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orders', 10, 'id');
+// SELECT id FROM `orders` WHERE `status` = ?
+// UNION (SELECT id FROM `archive` WHERE `status` = ? ORDER BY id DESC LIMIT 2)
+// ORDER BY id DESC LIMIT 10
+```
+
+- 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立 Builder 完成该分支的 `get()`，再传给 `union()`。
+- 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
+- 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
+- `union($builder)` 保存调用时分支的 SQL 与参数；后续重建分支不会改变已保存内容。原始字符串不带结尾分号，也不支持额外绑定参数；需要参数时传已构建 Builder 或 `raw($sql, $params)` Builder。
+
+### `get($table, $numRows = null, $columns = null)`
+
+```php
+$builder->get('orders', 0);               // LIMIT 0，返回零行
+$builder->limit(25)->get('orders', 0);    // 显式的 0 覆盖 25
+$builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
+```
+
+- 只有 `null` 表示未指定条数并使用此前 `limit()` 设置；数字 `0` 不取消 LIMIT。
+- 未指定条数且未设置 `limit()` 才不限制条数；偏移分页 `[0, 0]` 同样返回零行。
+
+### `joinWhere()` / `joinOrWhere()` 的 NULL 判断
+
+```php
+$builder->join('users u', 'u.id=o.userId', 'LEFT')
+    ->joinWhere('users u', 'u.deleted_at', null, 'IS')->get('orders o');
+// LEFT JOIN users u on u.id=o.userId AND u.deleted_at IS NULL
+```
+
+- NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
+- 第一个参数与对应 `join()` 的表名、别名保持一致；条件位于 JOIN 的 ON 部分，不是外层 WHERE。LEFT JOIN 中移动条件到 WHERE 可能改变保留行范围。
+- 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
+
 ## 更新（UPDATE）
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
@@ -492,3 +543,10 @@ $builder->rollback();
 ```
 
 以上方法只构建事务语句；整个事务需要使用同一个客户端连接执行。
+
+## 内部实现与兼容性
+
+公开 `QueryBuilder` 负责链式状态和构建结果管理，SQL 编译委托给 `src/QueryBuilder/` 内部协作类。
+条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
+重构保留公开方法签名、SQL/参数输出、子查询读取时机、UNION 快照、锁标记和构建器复用规则，业务调用无需迁移。
+内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。
