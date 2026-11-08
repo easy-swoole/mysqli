@@ -9,7 +9,7 @@
 - OpenSSL、Sockets 和 zlib 扩展。
 - **MySQL 服务端需要 8.0。**
 
-**当前暂不支持 TLS/SSL 加密连接，数据库通信使用未加密的 TCP。** 无法连接要求 TLS/SSL 的 MySQL 服务端或账号；OpenSSL 扩展用于认证相关的加密操作，不代表连接已启用 TLS。
+**TLS 默认关闭。** 可通过 `tlsMode` 显式启用强制加密、CA 校验或服务端身份校验，详见下方 TLS 配置。
 
 ## 使用示例
 
@@ -48,6 +48,104 @@ Coroutine\run(function (): void {
     $client->close();
 });
 ```
+
+## TLS 加密连接（默认关闭）
+
+`tlsMode` 默认是 `TlsMode::Disabled`（字符串 `'disabled'`），不发送 SSLRequest，保持原有未加密 TCP 连接方式。
+只有显式启用才会协商 TLS；所有启用模式都禁止回退到未加密连接。
+
+```php
+use EasySwoole\Mysqli\Client;
+use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\TlsMode;
+
+$client = new Client(new Config([
+    'host' => 'db.example.com',
+    'port' => 3306,
+    'user' => 'app',
+    'password' => getenv('MYSQL_PASSWORD'),
+    'database' => 'app',
+    'tlsMode' => TlsMode::VerifyIdentity,
+    'tlsCaFile' => '/secure/mysql/ca.pem',
+    'maxConnectTime' => 5.0,
+    'timeout' => 3.0,
+    'compress' => true, // TLS 可与现有 zlib 协议压缩同时启用
+]));
+
+// 在 Swoole 协程内：
+$client->connect();
+var_dump($client->mysqlClient()->isTlsEnabled()); // true
+$rows = $client->rawQuery("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_version', 'Ssl_cipher')");
+```
+
+### `tlsMode` / `setTlsMode()`
+
+| 枚举值 | 配置字符串 | 行为 |
+| --- | --- | --- |
+| `TlsMode::Disabled` | `'disabled'` | 默认值，不启用 TLS |
+| `TlsMode::Required` | `'required'` | 强制加密，不验证服务端证书身份 |
+| `TlsMode::VerifyCA` | `'verify_ca'` | 强制加密并验证证书链和有效期，不校验连接地址与证书身份 |
+| `TlsMode::VerifyIdentity` | `'verify_identity'` | 验证证书链、有效期以及预期 DNS 名或 IP 身份 |
+
+- 构造配置和 `setTlsMode()` 均接受上表的枚举或字符串；`getTlsMode()` 返回枚举。无效模式会报错，不会按 Disabled 处理。
+- Required 只能保证连接加密，不防止冒充服务端；需要服务端身份校验时使用 VerifyIdentity。
+- 服务端不支持 TLS、TLS 握手失败、证书校验失败或超时，连接会关闭，不发送后续认证数据，也不尝试明文重连。
+- Swoole 必须编译支持 OpenSSL；仅安装 PHP 的 OpenSSL 扩展不足以让 Swoole Socket 支持 TLS。未启用 TLS 的既有连接不依赖新增握手路径。
+- 配置在建立连接时生效；修改配置后，先显式 `close()`，再重新连接。事务中不要为了切换配置而关闭连接。
+
+### `tlsCaFile` / `tlsCaPath`
+
+```php
+$config->setTlsCaFile('/secure/mysql/ca.pem');
+// 或使用已经按 OpenSSL 要求建立哈希索引的 CA 目录：
+$config->setTlsCaPath('/secure/mysql/ca-directory');
+```
+
+- 分别为可读的 PEM CA 文件和 CA 目录；VerifyCA / VerifyIdentity 未指定时使用 Swoole/OpenSSL 的默认信任库。
+- 私有 CA、自签 CA 通常需要显式配置。通过可信渠道取得 CA，不使用从未验证连接中临时下载的证书建立信任。
+- 显式指定但不存在、不可读或类型不正确的路径会报错。Required 不验证证书链，即使提供 CA 文件也不会自动变成 VerifyCA。
+
+### `tlsServerName`
+
+```php
+$config->setTlsServerName('mysql.internal.example.com');
+```
+
+- 只指定 VerifyIdentity 要校验的预期证书身份，不改变实际 TCP 连接地址；默认为配置中的 `host`。
+- 连接 IP 时，默认要求证书 subjectAltName 包含对应 IP，不接受仅把 IP 写进 CN 或 DNS SAN 的证书。
+- DNS 匹配不区分大小写；优先匹配 DNS SAN，没有 DNS SAN 时兼容 CN。通配符仅允许 `*.example.com` 形式，且只匹配一层子域名。
+- 此字段不是跳过校验的开关。仅在明确知道服务端真实证书名称时覆盖；需要关闭身份校验但保留 CA 校验，应明确选择 VerifyCA。
+
+### `tlsCertFile` / `tlsKeyFile` / `tlsKeyPassphrase`
+
+```php
+$config->setTlsCertFile('/secure/mysql/client-cert.pem');
+$config->setTlsKeyFile('/secure/mysql/client-key.pem');
+$config->setTlsKeyPassphrase(getenv('MYSQL_TLS_KEY_PASSPHRASE') ?: '');
+```
+
+- 用于服务端要求客户端证书的双向 TLS，例如 MySQL 账号配置了 `REQUIRE X509`。普通单向 TLS 不需要这些字段。
+- 客户端证书和私钥必须同时配置、互相匹配；文件必须可读。私钥加密时配置解密口令，未加密私钥保持空字符串。
+- 口令用于解密客户端私钥，不是数据库密码；客户端证书也不代替 MySQL 用户名和数据库密码。
+- 不将私钥、解密口令或数据库密码提交到代码仓库；限制私钥文件读取权限。Config 的序列化包含配置值，不要把完整 Config 打到日志。
+
+### `tlsVersions`
+
+```php
+$config->setTlsVersions(['TLSv1.2', 'TLSv1.3']); // 默认值
+$config->setTlsVersions(['TLSv1.3']);            // 仅允许 TLS 1.3
+```
+
+- 只接受 TLSv1.2、TLSv1.3，列表不能是空数组；不支持或无效的版本配置会报错，不允许降级到旧 TLS 协议。
+- 实际可用版本取决于 Swoole/OpenSSL 编译能力以及服务端配置；没有共同版本时连接失败。
+- TLS 握手计入 `maxConnectTime`，也计入触发自动连接的单次查询总超时，不会获得独立的新超时预算。
+
+### 认证、查询与重连
+
+- 原有 `mysql_native_password`、`caching_sha2_password` 认证均可与 TLS 配合。`caching_sha2_password` 完整认证在 TLS 内传递密码，不再走未加密连接的 RSA 公钥请求流程。
+- 文本查询、服务端预处理、事务、压缩和大包继续使用同一套 MySQL 分包逻辑；TLS 只包裹传输层。
+- 自动重连仍按配置协商和验证 TLS，不会因为前一次失败而关闭校验。事务丢失保护与现有行为一致。
+- `isTlsEnabled()` 表示当前有效连接是否已完成 TLS，关闭连接后返回 false。服务端实际协商的版本与密码套件可查询 `Ssl_version`、`Ssl_cipher`。
 
 ## 压缩与接口兼容
 
@@ -137,6 +235,38 @@ $rows = $client->query($builder);
 | `forceIndex($indexes)` / `useIndex($indexes)` / `ignoreIndex($indexes)` | 强制、建议使用或排除主表索引 |
 | `forUpdate($isLock = true)` | 对应现有 `selectForUpdate()` |
 | `skipLocked()` / `nowait()` | 自动开启 `FOR UPDATE SKIP LOCKED` / `FOR UPDATE NOWAIT` |
+
+### 条件值与原始表达式：`ConditionValue::Raw`
+
+`where()`、`orWhere()`、`having()`、`orHaving()`、`joinWhere()` 和 `joinOrWhere()`
+统一使用 `EasySwoole\Mysqli\ConditionValue::Raw` 表示“不追加比较运算或绑定值的完整 SQL 条件”。
+省略条件值时默认使用此枚举；显式传入的字符串 `'DBNULL'` 不再是控制标记，会作为普通字符串绑定。
+
+```php
+use EasySwoole\Mysqli\ConditionValue;
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+$builder->where('tenantId', 'DBNULL')->where('enabled', true)->get('orders');
+// SELECT * FROM `orders` WHERE `tenantId` = ? AND `enabled` = ?
+// 绑定参数：['DBNULL', true]
+
+$builder->where('payments.orderId = orders.id')->get('payments');
+// 单参数写法：整个条件是原始 SQL。
+
+$builder->where('payments.orderId = orders.id', ConditionValue::Raw)->get('payments');
+// 显式枚举写法，含义与上面的单参数写法相同。
+
+$builder->having('COUNT(*) > 0', ConditionValue::Raw)->get('orders', null, 'COUNT(*)');
+$builder->join('users u', 'u.id = o.userId', 'LEFT')
+    ->joinWhere('users u', 'u.enabled = 1', ConditionValue::Raw)->get('orders o');
+```
+
+- `Raw` 是构造器控制标记，不是数据库值；`true`、`false`、`0`、`'0'`、空字符串和 `'DBNULL'` 都按普通值绑定，不会取消条件。
+- 数据库 NULL 使用 PHP `null`；判断 NULL 请使用 `whereNull()` / `whereNotNull()`。此修复不改变旧的 `where('column', null)` 所指定的比较运算符，不会自动把 `= NULL` 改为 `IS NULL`。
+- `Raw` 或单参数条件会原样写入 SQL，不引用整个表达式、不追加运算符、不绑定值。仅用于代码中固定或经过严格白名单检查的表达式，不拼接请求参数。
+- 迁移：旧的 `where('a.id = b.id', 'DBNULL')` 改为 `where('a.id = b.id')` 或显式传 `ConditionValue::Raw`；HAVING、JOIN 及 OR 方法同理。旧的字符串控制标记不再兼容。
+- 枚举只用于上述条件方法的“值”参数，不作为 INSERT/UPDATE 写入值或 Statement 绑定参数使用；不需要把布尔值转换为枚举。
 
 ### 通用调用规则
 

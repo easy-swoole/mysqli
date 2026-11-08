@@ -13,4 +13,11 @@ define('MYSQL_CONFIG', [
     'timeout' => 1.0,
     'maxConnectTime' => 1.0,
     'charset' => 'utf8mb4',
+    'tlsMode' => getenv('MYSQLI_TEST_TLS_MODE') ?: 'disabled',
+    'tlsCaFile' => getenv('MYSQLI_TEST_TLS_CA_FILE') ?: '',
+    'tlsCaPath' => getenv('MYSQLI_TEST_TLS_CA_PATH') ?: '',
+    'tlsCertFile' => getenv('MYSQLI_TEST_TLS_CERT_FILE') ?: '',
+    'tlsKeyFile' => getenv('MYSQLI_TEST_TLS_KEY_FILE') ?: '',
+    'tlsKeyPassphrase' => getenv('MYSQLI_TEST_TLS_KEY_PASSPHRASE') ?: '',
+    'tlsServerName' => getenv('MYSQLI_TEST_TLS_SERVER_NAME') ?: '',
 ]);

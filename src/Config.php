@@ -17,6 +17,14 @@ class Config extends SplBean
     protected string $charset = 'utf8mb4';
     protected float $maxConnectTime = 1.0;
     protected bool $compress = false;
+    protected TlsMode|string $tlsMode = 'disabled';
+    protected string $tlsCaFile = '';
+    protected string $tlsCaPath = '';
+    protected string $tlsCertFile = '';
+    protected string $tlsKeyFile = '';
+    protected string $tlsKeyPassphrase = '';
+    protected string $tlsServerName = '';
+    protected array $tlsVersions = ['TLSv1.2', 'TLSv1.3'];
 
     /**
      * 获取数据库主机地址。
@@ -161,4 +169,36 @@ class Config extends SplBean
     {
         $this->compress = $compress;
     }
+
+    /** Defaults to Disabled. Invalid mode names are rejected, never downgraded. */
+    public function getTlsMode(): TlsMode
+    {
+        return $this->tlsMode instanceof TlsMode ? $this->tlsMode : TlsMode::from($this->tlsMode);
+    }
+
+    public function setTlsMode(TlsMode|string $mode): void
+    {
+        $this->tlsMode = $mode instanceof TlsMode ? $mode : TlsMode::from($mode);
+    }
+
+    public function getTlsCaFile(): string { return $this->tlsCaFile; }
+    public function setTlsCaFile(string $value): void { $this->tlsCaFile = $value; }
+
+    public function getTlsCaPath(): string { return $this->tlsCaPath; }
+    public function setTlsCaPath(string $value): void { $this->tlsCaPath = $value; }
+
+    public function getTlsCertFile(): string { return $this->tlsCertFile; }
+    public function setTlsCertFile(string $value): void { $this->tlsCertFile = $value; }
+
+    public function getTlsKeyFile(): string { return $this->tlsKeyFile; }
+    public function setTlsKeyFile(string $value): void { $this->tlsKeyFile = $value; }
+
+    public function getTlsKeyPassphrase(): string { return $this->tlsKeyPassphrase; }
+    public function setTlsKeyPassphrase(string $value): void { $this->tlsKeyPassphrase = $value; }
+
+    public function getTlsServerName(): string { return $this->tlsServerName; }
+    public function setTlsServerName(string $value): void { $this->tlsServerName = $value; }
+
+    public function getTlsVersions(): array { return $this->tlsVersions; }
+    public function setTlsVersions(array $versions): void { $this->tlsVersions = $versions; }
 }

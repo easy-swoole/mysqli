@@ -402,3 +402,12 @@ MySQL 测试服务器完整回归：166 个测试、2071 个断言全部通过�
 TransactionStartFlags 和 TransactionCompletionFlags 移至 src/Transaction，命名空间统一为 EasySwoole\Mysqli\Transaction；协议实现、测试适配和 README 引用同步更新。两个枚举的全部 14 个 case 均补充中文语义注释，说明默认行为、访问模式、一致性快照及事务结束后的链式事务和连接释放行为。
 
 MySQL 测试服务器完整回归：166 个测试、2071 个断言全部通过，无错误、失败或跳过，耗时 38.537 秒。两个枚举文件语法检查及 git diff --check 通过。
+
+
+## 2026-11-08 TLS 默认关闭及证书校验
+
+新增 TlsMode（disabled、required、verify_ca、verify_identity），默认关闭 TLS。启用后发送 MySQL SSLRequest，在同一 TCP 连接上完成 TLS 1.2/1.3 握手，禁止明文降级。TLS 握手和证书身份校验共用原有连接/查询截止时间；caching_sha2_password 的完整认证在 TLS 内发送密码。支持自定义 CA 文件/目录、DNS/IP 身份校验、客户端证书和加密私钥。DNS/IP SAN 从证书 DER 中读取，避免将格式化文本中的逗号误识别为额外身份。
+
+验证环境为 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4。单元测试 155 项、1518 次断言通过；VerifyIdentity 模式下，现有集成测试 75 项、1055 次断言及新增 TLS 集成测试 2 项、13 次断言通过，无跳过。集成测试在独立临时数据库运行，覆盖文本/预处理、事务、死锁、断线恢复、压缩、大包及 128 MiB 内存限制的大参数，测试后已清理临时数据库和账号。额外实测 TLS 1.2/1.3、错误 CA/身份拒绝、REQUIRE X509 双向认证、加密客户端私钥及 TLS/压缩组合通过。
+
+测试服务器使用原 CA 签发带 IP/DNS SAN 的服务端证书并保留原证书备份，通过重启 MySQL 生效；require_secure_transport 保持关闭。README 及 tests/README.md 已补充配置、注意事项和 TLS 测试环境变量。

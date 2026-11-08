@@ -28,3 +28,20 @@ Protocol recovery tests also cover deadlock state before any explicit rollback, 
 `LargeParameterMemoryTest` runs a separate PHP process with `memory_limit=128M`. It binds the same 16 MiB random binary string twice and validates the server-reported length and SHA-256 with compression both disabled and enabled. This test needs `proc_open`, inherited test database environment variables, and a server `max_allowed_packet` large enough for the approximately 32 MiB execute packet.
 
 `DeadlineTest` checks that shorter limits cannot extend or revive an operation budget. `SessionStateTest` covers session generations, intentional versus unexpected disconnects, deadlock/lock-wait behavior, and completed transaction release. Existing fake-server tests continue to exercise the full PacketStream framing, compression, shared timeout and recovery paths through the public client API.
+
+## TLS tests
+
+`TlsTest` is part of the unit suite. It generates disposable certificates using the PHP OpenSSL extension and starts local fake MySQL servers. It covers opt-in defaults, SSLRequest framing and sequence numbers, full caching_sha2 authentication inside TLS, untrusted/expired certificates, DNS/IP identity validation, wildcard boundaries, SAN parsing ambiguity, unsupported-server rejection without plaintext fallback, and the shared handshake deadline. Private fixture keys are removed after the test class completes.
+
+To run integration tests with TLS, use a dedicated disposable database because the suite replaces fixture tables:
+
+```bash
+export MYSQLI_TEST_TLS_MODE=verify_identity
+export MYSQLI_TEST_TLS_CA_FILE=/secure/mysql/ca.pem
+# Optional: MYSQLI_TEST_TLS_CA_PATH, MYSQLI_TEST_TLS_SERVER_NAME
+# Optional mutual TLS: MYSQLI_TEST_TLS_CERT_FILE, MYSQLI_TEST_TLS_KEY_FILE,
+# MYSQLI_TEST_TLS_KEY_PASSPHRASE
+composer test:integration
+```
+
+All existing integration tests and their child processes inherit these settings. With no TLS environment variables, integration connections remain unencrypted, preserving the existing default.

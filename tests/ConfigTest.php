@@ -126,6 +126,14 @@ final class ConfigTest extends TestCase
             'charset' => 'utf8mb4',
             'maxConnectTime' => 1.0,
             'compress' => false,
+            'tlsMode' => 'disabled',
+            'tlsCaFile' => '',
+            'tlsCaPath' => '',
+            'tlsCertFile' => '',
+            'tlsKeyFile' => '',
+            'tlsKeyPassphrase' => '',
+            'tlsServerName' => '',
+            'tlsVersions' => ['TLSv1.2', 'TLSv1.3'],
         ], (new Config())->toArray());
     }
 

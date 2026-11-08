@@ -64,6 +64,38 @@ var_dump($builder->getLastBindParams());
 //[2]
 ```
 
+### 条件值与原始表达式：`ConditionValue::Raw`
+
+`where()`、`orWhere()`、`having()`、`orHaving()`、`joinWhere()` 和 `joinOrWhere()`
+统一使用 `EasySwoole\Mysqli\ConditionValue::Raw` 表示“不追加比较运算或绑定值的完整 SQL 条件”。
+省略条件值时默认使用此枚举；显式传入的字符串 `'DBNULL'` 不再是控制标记，会作为普通字符串绑定。
+
+```php
+use EasySwoole\Mysqli\ConditionValue;
+use EasySwoole\Mysqli\QueryBuilder;
+
+$builder = new QueryBuilder();
+$builder->where('tenantId', 'DBNULL')->where('enabled', true)->get('orders');
+// SELECT * FROM `orders` WHERE `tenantId` = ? AND `enabled` = ?
+// 绑定参数：['DBNULL', true]
+
+$builder->where('payments.orderId = orders.id')->get('payments');
+// 单参数写法：整个条件是原始 SQL。
+
+$builder->where('payments.orderId = orders.id', ConditionValue::Raw)->get('payments');
+// 显式枚举写法，含义与上面的单参数写法相同。
+
+$builder->having('COUNT(*) > 0', ConditionValue::Raw)->get('orders', null, 'COUNT(*)');
+$builder->join('users u', 'u.id = o.userId', 'LEFT')
+    ->joinWhere('users u', 'u.enabled = 1', ConditionValue::Raw)->get('orders o');
+```
+
+- `Raw` 是构造器控制标记，不是数据库值；`true`、`false`、`0`、`'0'`、空字符串和 `'DBNULL'` 都按普通值绑定，不会取消条件。
+- 数据库 NULL 使用 PHP `null`；判断 NULL 请使用 `whereNull()` / `whereNotNull()`。此修复不改变旧的 `where('column', null)` 所指定的比较运算符，不会自动把 `= NULL` 改为 `IS NULL`。
+- `Raw` 或单参数条件会原样写入 SQL，不引用整个表达式、不追加运算符、不绑定值。仅用于代码中固定或经过严格白名单检查的表达式，不拼接请求参数。
+- 迁移：旧的 `where('a.id = b.id', 'DBNULL')` 改为 `where('a.id = b.id')` 或显式传 `ConditionValue::Raw`；HAVING、JOIN 及 OR 方法同理。旧的字符串控制标记不再兼容。
+- 枚举只用于上述条件方法的“值”参数，不作为 INSERT/UPDATE 写入值或 Statement 绑定参数使用；不需要把布尔值转换为枚举。
+
 ## 常用查询语法糖
 
 新增方法保留原有 `where()`、`orWhere()`、`orderBy()`、`selectForUpdate()` 等接口及行为。

@@ -179,12 +179,12 @@ class QueryBuilder
      * TODO Where支持数组条件查询(索引数组和kv数组两种方式)
      * TODO Where支持字符串条件，支持字符串直接预绑定(在Where条件上直接绑定参数)
      * @param $whereProp
-     * @param string $whereValue
+     * @param mixed $whereValue 值会绑定；ConditionValue::Raw 表示完整 SQL 条件。
      * @param string $operator
      * @param string $cond
      * @return $this
      */
-    public function where($whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND')
+    public function where($whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
     {
         if (count($this->_where) == 0) {
             $cond = '';
@@ -196,11 +196,11 @@ class QueryBuilder
     /**
      * WhereOr条件
      * @param $whereProp
-     * @param string $whereValue
+     * @param mixed $whereValue 值会绑定；ConditionValue::Raw 表示完整 SQL 条件。
      * @param string $operator
      * @return QueryBuilder
      */
-    public function orWhere($whereProp, $whereValue = 'DBNULL', $operator = '=')
+    public function orWhere($whereProp, $whereValue = ConditionValue::Raw, $operator = '=')
     {
         return $this->where($whereProp, $whereValue, $operator, 'OR');
     }
@@ -209,7 +209,7 @@ class QueryBuilder
     public function whereIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
     {
         if ($values === []) {
-            return $this->where('0 = 1', 'DBNULL', '=', $cond);
+            return $this->where('0 = 1', ConditionValue::Raw, '=', $cond);
         }
         $this->validateConditionSubquery($values);
         return $this->where($column, $values, 'IN', $cond);
@@ -219,7 +219,7 @@ class QueryBuilder
     public function whereNotIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
     {
         if ($values === []) {
-            return $this->where('1 = 1', 'DBNULL', '=', $cond);
+            return $this->where('1 = 1', ConditionValue::Raw, '=', $cond);
         }
         $this->validateConditionSubquery($values);
         return $this->where($column, $values, 'NOT IN', $cond);
@@ -246,7 +246,7 @@ class QueryBuilder
     /** pattern 由调用方提供，% 和 _ 保持 SQL 通配符含义。 */
     public function whereLike(string $column, string $pattern, string $cond = 'AND'): QueryBuilder
     {
-        // Use an explicit placeholder so the legacy DBNULL sentinel is also a valid pattern.
+        // Quote each identifier segment and bind the complete LIKE pattern.
         return $this->where(implode('.', array_map(
             static fn(string $part): string => '`' . str_replace('`', '``', $part) . '`',
             explode('.', $column)
@@ -365,12 +365,12 @@ class QueryBuilder
      * Having条件
      * TODO Having支持字符串原语查询
      * @param $havingProp
-     * @param string $havingValue
+     * @param mixed $havingValue 值会绑定；ConditionValue::Raw 表示完整 SQL 条件。
      * @param string $operator
      * @param string $cond
      * @return $this
      */
-    public function having($havingProp, $havingValue = 'DBNULL', $operator = '=', $cond = 'AND')
+    public function having($havingProp, $havingValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
     {
         if (is_array($havingValue) && ($key = key($havingValue)) != "0") {
             $operator = $key;
@@ -390,7 +390,7 @@ class QueryBuilder
      * @param null $operator
      * @return QueryBuilder
      */
-    public function orHaving($havingProp, $havingValue = 'DBNULL', $operator = '=')
+    public function orHaving($havingProp, $havingValue = ConditionValue::Raw, $operator = '=')
     {
         return $this->having($havingProp, $havingValue, $operator, 'OR');
     }
@@ -423,12 +423,12 @@ class QueryBuilder
      * Join xx where xx
      * @param $whereJoin
      * @param $whereProp
-     * @param string $whereValue
+     * @param mixed $whereValue 值会绑定；ConditionValue::Raw 表示完整 SQL 条件。
      * @param string $operator
      * @param string $cond
      * @return $this
      */
-    public function joinWhere($whereJoin, $whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND')
+    public function joinWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
     {
         $this->_joinAnd[$this->prefix . $whereJoin][] = Array($cond, $whereProp, $operator, $whereValue);
         return $this;
@@ -439,12 +439,12 @@ class QueryBuilder
      * Join xx or where xx
      * @param $whereJoin
      * @param $whereProp
-     * @param string $whereValue
+     * @param mixed $whereValue 值会绑定；ConditionValue::Raw 表示完整 SQL 条件。
      * @param string $operator
      * @param string $cond
      * @return QueryBuilder
      */
-    public function joinOrWhere($whereJoin, $whereProp, $whereValue = 'DBNULL', $operator = '=', $cond = 'AND')
+    public function joinOrWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
     {
         return $this->joinWhere($whereJoin, $whereProp, $whereValue, $operator, 'OR');
     }
@@ -1236,6 +1236,9 @@ REGEX;
      */
     private function conditionToSql($operator, $val)
     {
+        if ($val === ConditionValue::Raw) {
+            return;
+        }
         switch (strtolower($operator)) {
             case 'not in':
             case 'in':
@@ -1264,7 +1267,7 @@ REGEX;
                     $this->_bindParams($val);
                 else if ($val === null)
                     $this->_query .= $operator . " NULL";
-                else if ($val != 'DBNULL' || $val == '0')
+                else if ($val !== ConditionValue::Raw)
                     $this->_query .= $this->_buildPair($operator, $val);
         }
     }
@@ -1518,18 +1521,21 @@ REGEX;
 
             $this->currentOpColumn = $varName;
 
-            if (strpos($varName, '.') !== false && $val !== 'DBNULL' && strpos($varName, '(') === false && strpos($varName, '?') === false){
-                // DBNULL是纯字符串条件，也不能有()函数调用
+            if (strpos($varName, '.') !== false && $val !== ConditionValue::Raw && strpos($varName, '(') === false && strpos($varName, '?') === false){
+                // Raw 条件为完整 SQL 表达式，不对其引用字段名。
                 $varNameArray = explode('.', $varName);
                 $varName = "`{$varNameArray[0]}`.`{$varNameArray[1]}`";
             }else{
                 // 不是字符串条件，也没有包含()函数调用
-                if ($val !== 'DBNULL' && strpos($varName, '(') === false && strpos($varName, '?') === false){
+                if ($val !== ConditionValue::Raw && strpos($varName, '(') === false && strpos($varName, '?') === false){
                     $varName = "`{$varName}`";
                 }
             }
 
             $this->_query .= " " . $concat . " " . $varName;
+            if ($val === ConditionValue::Raw) {
+                continue;
+            }
             switch (strtolower($operator)) {
                 case 'not in':
                 case 'in':
@@ -1566,7 +1572,7 @@ REGEX;
                         $this->_bindParams($val);
                     } elseif ($val === null) {
                         $this->_query .= ' ' . $operator . " NULL";
-                    } elseif ($val != 'DBNULL' || $val == '0') {
+                    } elseif ($val !== ConditionValue::Raw) {
                         $this->_query .= $this->_buildPair($operator, $val);
                     }
             }

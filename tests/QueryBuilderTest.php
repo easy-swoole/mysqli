@@ -5,6 +5,7 @@ namespace EasySwoole\Mysqli\Tests;
 
 
 use EasySwoole\Mysqli\QueryBuilder;
+use EasySwoole\Mysqli\ConditionValue;
 use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderTest extends TestCase
@@ -144,6 +145,66 @@ final class QueryBuilderTest extends TestCase
         self::assertStringEndsWith('FOR UPDATE NOWAIT', $this->builder->getLastPrepareQuery());
         $this->builder->skipLocked()->forUpdate(false)->get('items');
         self::assertSame('SELECT * FROM `items`', $this->normalizedSql($this->builder));
+    }
+
+    public function testLiteralConditionValuesAreAlwaysBound(): void
+    {
+        foreach (['DBNULL', true, false, 0, '0', ''] as $value) {
+            $this->builder->where('tenantId', $value)->orWhere('enabled', $value)->get('orders');
+            self::assertSame('SELECT * FROM `orders` WHERE `tenantId` = ? OR `enabled` = ?', $this->normalizedSql($this->builder));
+            self::assertSame([$value, $value], $this->builder->getLastBindParams());
+            $this->builder->having('tenantId', $value)->orHaving('enabled', $value)->get('orders');
+            self::assertSame('SELECT * FROM `orders` HAVING `tenantId` = ? OR `enabled` = ?', $this->normalizedSql($this->builder));
+            self::assertSame([$value, $value], $this->builder->getLastBindParams());
+            $this->builder->join('users u', 'u.id = o.userId', 'LEFT')
+                ->joinWhere('users u', 'u.name', $value)->joinOrWhere('users u', 'u.enabled', $value)->get('orders o');
+            self::assertSame('SELECT * FROM orders o LEFT JOIN users u on u.id = o.userId AND u.name = ? OR u.enabled = ?', $this->normalizedSql($this->builder));
+            self::assertSame([$value, $value], $this->builder->getLastBindParams());
+        }
+    }
+
+    public function testExplicitRawMarkerAndSingleArgumentConditions(): void
+    {
+        foreach ([false, true] as $explicit) {
+            $q = new QueryBuilder();
+            if ($explicit) {
+                $q->where('a.id = b.id', ConditionValue::Raw)->orWhere('a.id > 0', ConditionValue::Raw)
+                    ->having('COUNT(*) > 0', ConditionValue::Raw)->orHaving('COUNT(*) = 0', ConditionValue::Raw)
+                    ->joinWhere('users b', 'b.enabled = 1', ConditionValue::Raw)
+                    ->joinOrWhere('users b', 'b.enabled = 2', ConditionValue::Raw);
+            } else {
+                $q->where('a.id = b.id')->orWhere('a.id > 0')
+                    ->having('COUNT(*) > 0')->orHaving('COUNT(*) = 0')
+                    ->joinWhere('users b', 'b.enabled = 1')->joinOrWhere('users b', 'b.enabled = 2');
+            }
+            $q->join('users b', 'b.id = a.id', 'LEFT')->get('orders a');
+            self::assertSame('SELECT * FROM orders a LEFT JOIN users b on b.id = a.id AND b.enabled = 1 OR b.enabled = 2 WHERE a.id = b.id OR a.id > 0 HAVING COUNT(*) > 0 OR COUNT(*) = 0', $this->normalizedSql($q));
+            self::assertSame([], $q->getLastBindParams());
+        }
+    }
+
+    public function testTenantStringAndBooleanConditionsSurviveWritesAndGroups(): void
+    {
+        $this->builder->where('tenantId', 'DBNULL')->update('orders', ['enabled' => true]);
+        self::assertSame('UPDATE `orders` SET `enabled` = ? WHERE `tenantId` = ?', $this->normalizedSql($this->builder));
+        self::assertSame([true, 'DBNULL'], $this->builder->getLastBindParams());
+        $this->builder->where('tenantId', 'DBNULL')->delete('orders');
+        self::assertSame('DELETE FROM `orders` WHERE `tenantId` = ?', $this->normalizedSql($this->builder));
+        self::assertSame(['DBNULL'], $this->builder->getLastBindParams());
+        $this->builder->whereGroup(static function (QueryBuilder $q): void {
+            $q->where('tenantId', 'DBNULL')->where('enabled', true)->where('disabled', false)
+                ->whereNull('deleted_at')->where('userId IS NOT NULL', ConditionValue::Raw);
+        })->get('orders');
+        self::assertSame('SELECT * FROM `orders` WHERE ( `tenantId` = ? AND `enabled` = ? AND `disabled` = ? AND `deleted_at` IS NULL AND userId IS NOT NULL)', $this->normalizedSql($this->builder));
+        self::assertSame(['DBNULL', true, false], $this->builder->getLastBindParams());
+    }
+
+    public function testMarkerChangePreservesNullAndEmptySetHelpers(): void
+    {
+        $this->builder->whereNull('deleted_at')->whereNotNull('paid_at')->whereIn('id', [])
+            ->whereNotIn('status', [])->get('orders');
+        self::assertSame('SELECT * FROM `orders` WHERE `deleted_at` IS NULL AND `paid_at` IS NOT NULL AND 0 = 1 AND 1 = 1', $this->normalizedSql($this->builder));
+        self::assertSame([], $this->builder->getLastBindParams());
     }
 
     public function testGet(): void

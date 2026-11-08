@@ -8,6 +8,9 @@ use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Exception\ProtocolException;
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use Swoole\Coroutine\Socket;
+use Swoole\Coroutine\Client as SocketClient;
+use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\TlsMode;
 
 /** @internal Owns socket I/O, framing, compression and packet sequence numbers. */
 final class PacketStream
@@ -15,24 +18,83 @@ final class PacketStream
     private const MAX_PACKET_PAYLOAD = 0xffffff;
 
     private ?Socket $socket = null;
+    // Retain the owner to access getPeerCert(); exported Socket performs all packet I/O.
+    private ?SocketClient $tlsClient = null;
+    private bool $tlsEnabled = false;
     private int $sequence = 0;
     private int $compressedSequence = 0;
     private bool $compressionEnabled = false;
     private string $decompressedBuffer = '';
     private int $decompressedOffset = 0;
 
-    public function connect(string $host, int $port, Deadline $deadline): void
+    public function connect(string $host, int $port, Deadline $deadline, bool $tls = false): void
     {
         if (\Swoole\Coroutine::getCid() < 0) {
             throw new Exception('The coroutine MySQL client must run inside a Swoole coroutine');
         }
         $this->close();
-        $this->socket = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
         $timeout = $deadline->remaining();
-        if (!$this->socket->connect($host, $port, $timeout)) {
-            throw $this->ioException('connect', $timeout);
+        if ($tls) {
+            if (!method_exists(SocketClient::class, 'getPeerCert') || !method_exists(Socket::class, 'sslHandshake')) {
+                throw new Exception('TLS requires Swoole built with OpenSSL support');
+            }
+            $this->tlsClient = new SocketClient(SWOOLE_SOCK_TCP);
+            if (!$this->tlsClient->connect($host, $port, $timeout)) {
+                $code = $this->tlsClient->errCode;
+                $message = $this->tlsClient->errMsg;
+                throw $this->ioException('connect', $timeout, $code, $message);
+            }
+            $this->socket = $this->tlsClient->exportSocket();
+        } else {
+            $this->socket = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            if (!$this->socket->connect($host, $port, $timeout)) {
+                throw $this->ioException('connect', $timeout);
+            }
         }
     }
+
+    /** Upgrade the connected TCP stream; MySQL SSLRequest must already have been sent. */
+    public function enableTls(Config $config, Deadline $deadline): void
+    {
+        $socket = $this->socket;
+        if ($socket === null || $this->tlsClient === null) {
+            throw new \LogicException('TLS transport was not initialized');
+        }
+        $options = TlsOptions::fromConfig($config);
+        if (!$socket->setProtocol($options)) {
+            throw new Exception('Unable to configure MySQL TLS');
+        }
+        $remaining = $deadline->remaining();
+        $seconds = (int) $remaining;
+        if (!$socket->setOption(SOL_SOCKET, SO_RCVTIMEO, ['sec' => $seconds, 'usec' => max(1, (int) (($remaining - $seconds) * 1_000_000))])) {
+            throw new Exception('Unable to configure TLS handshake timeout');
+        }
+        $expired = false;
+        // A peer can otherwise prolong a multi-step TLS handshake by repeatedly making progress.
+        $timer = \Swoole\Timer::after(max(1, (int) ceil($remaining * 1000)), static function () use ($socket, &$expired): void {
+            $expired = true;
+            $socket->cancel(SWOOLE_EVENT_READ);
+            $socket->cancel(SWOOLE_EVENT_WRITE);
+        });
+        if ($timer === false) { throw new Exception('Unable to schedule TLS handshake deadline'); }
+        try {
+            $ok = @$socket->sslHandshake();
+            if ($expired) { throw new TimeoutException('MySQL TLS handshake timed out', 110); }
+            if (!$ok) { throw $this->ioException('TLS handshake', $remaining); }
+            $deadline->remaining();
+            if ($config->getTlsMode() === TlsMode::VerifyIdentity) {
+                $certificate = $this->tlsClient->getPeerCert();
+                if ($certificate === false) { throw new Exception('TLS peer certificate is unavailable'); }
+                CertificateIdentity::verify($certificate, $config->getTlsServerName() !== '' ? $config->getTlsServerName() : $config->getHost());
+            }
+            $deadline->remaining();
+            $this->tlsEnabled = true;
+        } finally {
+            if (\Swoole\Timer::exists($timer)) { \Swoole\Timer::clear($timer); }
+        }
+    }
+
+    public function isTlsEnabled(): bool { return $this->tlsEnabled && $this->isOpen(); }
 
     public function isOpen(): bool
     {
@@ -58,6 +120,8 @@ final class PacketStream
             $this->socket->close();
             $this->socket = null;
         }
+        $this->tlsClient = null;
+        $this->tlsEnabled = false;
         $this->sequence = 0;
         $this->enableCompression(false);
     }

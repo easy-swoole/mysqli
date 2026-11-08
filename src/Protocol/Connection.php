@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\TlsMode;
 use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
 use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Exception\Exception;
@@ -18,6 +19,7 @@ final class Connection
     private const CLIENT_LONG_FLAG = 0x00000004;
     private const CLIENT_CONNECT_WITH_DB = 0x00000008;
     private const CLIENT_COMPRESS = 0x00000020;
+    private const CLIENT_SSL = 0x00000800;
     private const CLIENT_PROTOCOL_41 = 0x00000200;
     private const CLIENT_TRANSACTIONS = 0x00002000;
     private const CLIENT_SECURE_CONNECTION = 0x00008000;
@@ -74,7 +76,9 @@ final class Connection
         $this->connect_errno = 0;
         $deadline = $deadline->cappedBy($this->config->getMaxConnectTime());
         try {
-            $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline);
+            $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
+            if ($tls) { TlsOptions::fromConfig($this->config); }
+            $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tls);
             $handshake = $this->stream->readPacket($deadline, 'handshake');
             $this->authenticate($handshake, $deadline);
             $charset = $this->config->getCharset();
@@ -111,9 +115,10 @@ final class Connection
         return $this->busy;
     }
 
-    /**
-     * 获取实际协商后的协议压缩状态。
-     */
+    /** 当前有效连接是否已完成 TLS 握手和所配置的证书校验。 */
+    public function isTlsEnabled(): bool { return $this->stream->isTlsEnabled(); }
+
+    /** 获取实际协商后的协议压缩状态。 */
     public function isCompressionEnabled(): bool
     {
         return $this->stream->isCompressionEnabled();
@@ -456,14 +461,25 @@ final class Connection
             }
             $capabilities |= self::CLIENT_COMPRESS;
         }
+        $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
+        if ($tls) {
+            if (($this->serverCapabilities & self::CLIENT_SSL) === 0) {
+                throw new Exception('MySQL server does not support TLS; plaintext fallback is disabled');
+            }
+            $capabilities |= self::CLIENT_SSL;
+        }
         $capabilities &= $this->serverCapabilities;
         $useCompression = ($capabilities & self::CLIENT_COMPRESS) !== 0;
         $token = $this->authToken($plugin, $this->config->getPassword(), $scramble);
-        $payload = pack('V', $capabilities)
+        $header = pack('V', $capabilities)
             . pack('V', 0x01000000)
             . chr($charset ?: 45)
-            . str_repeat("\0", 23)
-            . $this->config->getUser() . "\0"
+            . str_repeat("\0", 23);
+        if ($tls) {
+            $this->stream->writePacket($header, $deadline, 'TLS request');
+            $this->stream->enableTls($this->config, $deadline);
+        }
+        $payload = $header . $this->config->getUser() . "\0"
             . chr(strlen($token)) . $token;
         if (($capabilities & self::CLIENT_CONNECT_WITH_DB) !== 0) {
             $payload .= $this->config->getDatabase() . "\0";
@@ -501,8 +517,8 @@ final class Connection
                 continue;
             }
             if ($header === 0x01 && ($packet[1] ?? '') === "\x04" && $plugin === 'caching_sha2_password') {
-                if ($this->config->getPassword() === '') {
-                    $this->stream->writePacket("\0", $deadline, 'full authentication');
+                if ($this->stream->isTlsEnabled() || $this->config->getPassword() === '') {
+                    $this->stream->writePacket($this->config->getPassword() . "\0", $deadline, 'full authentication');
                     continue;
                 }
                 $this->stream->writePacket("\x02", $deadline, 'public key request');

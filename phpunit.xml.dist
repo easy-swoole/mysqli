@@ -8,6 +8,7 @@
     <testsuites>
         <testsuite name="unit">
             <file>tests/ConfigTest.php</file>
+            <file>tests/TlsTest.php</file>
             <file>tests/DeadlineTest.php</file>
             <file>tests/SessionStateTest.php</file>
             <file>tests/FastDbApiCompatibilityTest.php</file>
@@ -18,6 +19,7 @@
             <file>tests/QueryBuilderTest.php</file>
         </testsuite>
         <testsuite name="integration">
+            <file>tests/TlsIntegrationTest.php</file>
             <file>tests/ClientTest.php</file>
             <file>tests/DataTypeTest.php</file>
             <file>tests/TemporalTest.php</file>
