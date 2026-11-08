@@ -426,3 +426,16 @@ TLS 根据 tlsServerName 或连接 DNS 名发送 SNI，IP 不发送 SNI；SNI �
 公开 QueryBuilder 保留链式 API 与构建结果管理，编译实现拆分到 src/QueryBuilder：QueryParts 输入快照、QueryCompiler 调度、ConditionCompiler 条件与子查询、SelectCompiler 查询子句、WriteCompiler 写入、SqlBuffer 参数与 SQL、TableReference 表名/索引、ExpressionFactory 表达式、SqlFormatter 调试展示。WHERE/HAVING 与 ON 共用运算符编译，移除未参与执行的 mysqli 参数类型字符串，区分待构建状态与最近构建结果。主文件由 1632 行缩减到 836 行。
 
 新增公开 API 快照测试，核对全部 71 个公开方法的名称、参数名/顺序/类型/默认值、返回类型、静态属性和公开常量，并验证子类工厂、链式调用、编译异常后的恢复和 reset/prefix 规则。单元测试 170 项、1809 次断言通过；独立临时数据库中的完整集成测试 83 项、1081 次断言通过，无跳过。另对重构前后执行 900 组确定性混合调用序列，精确 SQL、参数、展示 SQL、选项、事务标记、子查询元数据与复用状态全部一致，异常后 reset/raw 的状态也一致。临时数据库已清理，README 与 QueryBuilder 指南已补充内部职责说明。
+
+
+## 2026-11-08 QueryBuilder 常用场景补齐
+
+新增不可变 Expression 与 rawExpression()、selectRaw()、whereRaw()、havingRaw()、orderByRaw()，在 SELECT、JOIN、条件、排序和写入位置按最终 SQL 顺序绑定参数。原始条件自动加括号，防止局部 OR 越过外层 AND；表达式参数按值复制，避免外部 PHP 引用改变表达式。原有 func()/now()/inc()/dec()/not() 和整条 raw() 调用保留。
+
+新增 whereColumn()/havingColumn()/joinOn() 及 OR 版本，统一引用各段字段名，支持库、表、列三级引用及转义反引号。HAVING 与 ON 分组复用条件编译器，支持嵌套及子查询 JOIN 别名定位。修正字段名包含 using 时 JOIN 遗漏 ON 的问题，对 USING JOIN 追加 ON 条件的非法组合明确报错。
+
+新增 upsert()；批量 onDuplicate() 的隐式更新使用每行实际插入的新值，显式映射仍使用统一更新值。校验批量行非空、字段集合一致并按第一行重排，保留显式 NULL，先执行字段白名单过滤再校验。修正重复键更新中包含点、反引号或数字格式的字面字段名，以及内部行别名与目标表重名的边界。批量隐式更新使用 INSERT 行别名，需要 MySQL 8.0.19+；单行原有调用方式保留。
+
+公开 API 快照核对原有 71 个方法的签名及常量保持不变，新增 16 个方法。新增 37 项单元场景和 6 项真实数据库场景，README 与 queryBuilder.md 对应方法下已同步用法、参数顺序、可信 SQL、分组闭包、JOIN 定位和版本限制。
+
+在 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4 上通过 VerifyIdentity TLS 运行全套 296 项测试、3030 次断言，耗时 190.306 秒，无失败、错误或跳过。最后的参数引用隔离及字面字段边界修正后，再次验证全部单元测试 207 项、1939 次断言，以及 QueryBuilder 数据库专项 14 项、36 次断言，均通过。数据库测试使用独立随机测试库；新增写入场景使用连接级临时表，结束后已清理测试库。PHP 语法、13 段新增文档示例的语法、Markdown 围栏及 git diff --check 均通过。凭据仅通过进程环境变量传入，未修改远程服务器配置。

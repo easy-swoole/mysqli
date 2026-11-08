@@ -4,6 +4,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\ConditionValue;
+use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\Exception\Exception;
 
 /** @internal Compile WHERE, HAVING, JOIN values and nested conditions. */
@@ -13,24 +14,27 @@ final class ConditionCompiler
 
     public function pair($operator, $value)
     {
+        if ($value instanceof Expression) {
+            $this->buffer->bindAll($value->getParameters());
+            return ' ' . $operator . ' ' . $value->getSql() . ' ';
+        }
         if (!is_object($value)) {
             $this->buffer->bind($value);
             return ' ' . $operator . ' ? ';
         }
-        if($value instanceof QueryBuilder){
+        if ($value instanceof QueryBuilder) {
             $subQuery = $value->getSubQuery();
             $this->buffer->bindAll($subQuery['params']);
             return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
-        }else{
-            $type = get_class($value);
-            throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");
         }
+        $type = get_class($value);
+        throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");
     }
 
-    /** ON expressions are supplied by the caller; keep their field text unchanged. */
-    public function appendJoinValue($operator, $value): void
+    /** ON tuples keep their legacy field text; structured column nodes quote both identifiers. */
+    public function appendOn(array $conditions): void
     {
-        $this->appendValue($operator, $value);
+        $this->appendList($conditions, true);
     }
 
     public function append($operator, $conditions): void
@@ -38,12 +42,17 @@ final class ConditionCompiler
         if (empty($conditions)) {
             return;
         }
-        //Prepare the where portion of the query
         $this->buffer->sql .= ' ' . $operator;
+        $this->appendList($conditions, false);
+    }
+
+    /** The same condition tree can be compiled in WHERE, HAVING or a JOIN ON scope. */
+    private function appendList(array $conditions, bool $on): void
+    {
         foreach ($conditions as $cond) {
             if (isset($cond['group'])) {
-                $this->buffer->sql .= ' ' . $cond['concat'] . ' (';
-                $this->append('', $cond['group']);
+                $this->buffer->sql .= ' ' . $cond['concat'] . ' ( ';
+                $this->appendList($cond['group'], $on);
                 $this->buffer->sql .= ')';
                 continue;
             }
@@ -51,26 +60,29 @@ final class ConditionCompiler
                 $this->buffer->sql .= ' ' . $cond['concat'] . ' ' . $cond['operator'] . $this->pair('', $cond['exists']);
                 continue;
             }
-            list ($concat, $varName, $operator, $val) = $cond;
-
-            $this->buffer->column = $varName;
-
-            if (strpos($varName, '.') !== false && $val !== ConditionValue::Raw && strpos($varName, '(') === false && strpos($varName, '?') === false){
-                // Raw 条件为完整 SQL 表达式，不对其引用字段名。
-                $varNameArray = explode('.', $varName);
-                $varName = "`{$varNameArray[0]}`.`{$varNameArray[1]}`";
-            }else{
-                // 不是字符串条件，也没有包含()函数调用
-                if ($val !== ConditionValue::Raw && strpos($varName, '(') === false && strpos($varName, '?') === false){
-                    $varName = "`{$varName}`";
-                }
-            }
-
-            $this->buffer->sql .= " " . $concat . " " . $varName;
-            if ($val === ConditionValue::Raw) {
+            if (isset($cond['column'])) {
+                [$first, $operator, $second] = $cond['column'];
+                $this->buffer->sql .= ' ' . $cond['concat'] . ' ' . TableReference::column($first)
+                    . ' ' . $operator . ' ' . TableReference::column($second);
                 continue;
             }
-            $this->appendValue($operator, $val, $varName);
+            if (isset($cond['expression'])) {
+                $expression = $cond['expression'];
+                $this->buffer->sql .= ' ' . $cond['concat'] . ' (' . $expression->getSql() . ')';
+                $this->buffer->bindAll($expression->getParameters());
+                continue;
+            }
+            [$concat, $field, $operator, $value] = $cond;
+            $this->buffer->column = $field instanceof Expression ? $field->getSql() : $field;
+            if ($field instanceof Expression) {
+                $this->buffer->bindAll($field->getParameters());
+                $field = $field->getSql();
+            } elseif (!$on && $value !== ConditionValue::Raw
+                && strpos($field, '(') === false && strpos($field, '?') === false) {
+                $field = TableReference::column($field);
+            }
+            $this->buffer->sql .= ' ' . $concat . ' ' . $field;
+            $this->appendValue($operator, $value, $on ? null : $field);
         }
     }
 

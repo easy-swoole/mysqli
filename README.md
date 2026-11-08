@@ -270,6 +270,190 @@ $builder->join('users u', 'u.id = o.userId', 'LEFT')
 - 迁移：旧的 `where('a.id = b.id', 'DBNULL')` 改为 `where('a.id = b.id')` 或显式传 `ConditionValue::Raw`；HAVING、JOIN 及 OR 方法同理。旧的字符串控制标记不再兼容。
 - 枚举只用于上述条件方法的“值”参数，不作为 INSERT/UPDATE 写入值或 Statement 绑定参数使用；不需要把布尔值转换为枚举。
 
+### `Expression` / `rawExpression(string $sql, array $parameters = [])`
+
+```php
+use EasySwoole\Mysqli\Expression;
+use EasySwoole\Mysqli\QueryBuilder;
+
+$expression = QueryBuilder::rawExpression('COALESCE(name, ?) AS display_name', ['匿名']);
+// 等价：new Expression('COALESCE(name, ?) AS display_name', ['匿名'])
+$builder->fields(['id', $expression])->get('users');
+
+$builder->where('id', $id)->update('users', [
+    'score' => QueryBuilder::rawExpression('score + ?', [5]),
+]);
+```
+
+- `Expression` 是不可变的 SQL 片段与参数对象，可放入所选字段、普通比较条件的字段或值位置，以及 INSERT/UPDATE 的值中。SQL 和参数分别由 `getSql()`、`getParameters()` 读取。
+- SQL 片段必须来自可信代码，不能直接使用请求中的 SQL；绑定参数只保护值，不会让动态表名、字段名、运算符或 SQL 结构自动安全。
+- 使用位置占位符 `?`，不使用 `:name`；参数只能是标量或 `null`，数组/对象需要先转换成业务所需的字符串，例如 JSON 使用 `json_encode()`。占位符的数量和顺序应与参数一致。
+- SQL 不能为空或包含 NUL 字节；片段不自动添加别名、字段引用或运算符，需要时在可信片段内写明 `AS alias`。同一个 Expression 多处使用时，每个位置都会合并一次参数。
+- 原有 `QueryBuilder::func()`、`now()`、`inc()`、`dec()`、`not()` 及整条查询 `raw()` 继续可用，不需要迁移旧调用。
+
+### `getColumn($tableName, $columns = null, $numRows = null)` / `getScalar($tableName, $columns = null)`
+
+```php
+$builder->getColumn('users', QueryBuilder::rawExpression('COALESCE(name, ?)', ['匿名']));
+$builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status = ? THEN amount ELSE 0 END)', ['paid']));
+```
+
+- 两个方法的字段参数均可直接传入 Expression；表达式中的参数随 SELECT 合并，字段参数仍兼容原来的字符串用法。
+- 省略字段时沿用 `fields()` 中的第一项；`getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行。
+
+### `selectRaw(string $sql, array $parameters = [])`
+
+```php
+$builder->selectRaw('SUM(CASE WHEN status = ? THEN amount ELSE 0 END) AS paid_total', ['paid'])
+    ->where('tenantId', $tenantId)->get('orders');
+// SELECT SUM(CASE WHEN status = ? THEN amount ELSE 0 END) AS paid_total ...
+// 参数顺序：['paid', $tenantId]
+
+$builder->fields(['id'])->selectRaw('COALESCE(name, ?) AS name', ['匿名'])->get('users');
+```
+
+- 第一次调用替换未设置字段时的隐式默认 `*`，重复调用追加表达式。已经通过 `fields()` 显式选择的字段会保留；`fields('*')->selectRaw(...)` 会保留显式星号。
+- 之后再调用 `fields(...)` 会覆盖之前的选择。显式传给 `get()` 的第三个 `$columns` 参数也优先于待构建字段配置。
+- SELECT 表达式参数排在 JOIN、WHERE、HAVING、UNION 分支和 ORDER BY 参数之前，与方法调用先后无关。构建完成或 `reset()` 后清除。
+- 只传选择列表中的表达式，不传 `SELECT` 关键字或整条查询；有计算列时建议显式写别名。
+
+### `whereRaw(string $sql, array $parameters = [], string $cond = 'AND')`
+
+```php
+$builder->where('tenantId', $tenantId)
+    ->whereRaw('name = ? OR nickname = ?', [$keyword, $keyword])->get('users');
+// WHERE `tenantId` = ? AND (name = ? OR nickname = ?)
+```
+
+- 自动给该片段添加括号，以免片段内的 OR 越过外层 AND；只传条件本身，不传 `WHERE`、前置 AND/OR 或整条 SQL。
+- 第三个参数只能是 AND 或 OR（忽略大小写及两侧空白）；首个条件省略前置连接符。复杂的多层条件可与 `whereGroup()` 配合。
+- SQL 片段仍必须可信，所有外部值通过 `$parameters` 绑定；不需要手动加 SQL 引号。`whereRaw()` 不替代普通 `where()` 的字段和值比较。
+
+### `havingRaw(string $sql, array $parameters = [], string $cond = 'AND')`
+
+```php
+$builder->fields(['userId', 'SUM(amount) AS total_amount'])
+    ->groupBy('userId')->havingRaw('SUM(amount) > ? OR COUNT(*) >= ?', [1000, 5])->get('orders');
+```
+
+- 生成带括号的 HAVING 条件，连接符及可信 SQL 的规则与 `whereRaw()` 相同；不传 `HAVING` 关键字。
+- HAVING 参数在 WHERE 参数之后、UNION 分支及整体排序参数之前；组内筛选使用 `havingGroup()`。
+
+### `orderByRaw(string $sql, array $parameters = [])`
+
+```php
+$builder->orderByRaw('FIELD(status, ?, ?) DESC', ['paid', 'pending'])
+    ->orderByDesc('id')->get('orders');
+```
+
+- 传完整排序项，可在可信片段内写明 ASC/DESC；方法不会自动追加方向，不传 `ORDER BY` 关键字。
+- 外部值使用参数绑定，字段和方向仍由可信代码或白名单决定；绑定 `?` 不能代替字段标识符。
+- 可与普通 `orderBy()` 混用，按调用顺序排列；UNION 主构造器上的排序作用于整体结果。构建完成或 `reset()` 后清除。
+
+### `whereColumn($first, $second, $operator = '=', $cond = 'AND')` / `orWhereColumn()`
+
+```php
+$builder->whereColumn('orders.paid_amount', 'orders.total_amount', '>=')->get('orders');
+// WHERE `orders`.`paid_amount` >= `orders`.`total_amount`
+```
+
+- 两个参数都是字段引用，不绑定为字符串值；参数顺序是“左字段、右字段、运算符”，不是“左字段、运算符、右字段”。需要比较业务值时继续使用 `where()`。
+- 支持列名、`表或别名.列`、`库.表.列`，各段统一使用反引号引用；可接受正确的反引号引用，不接收函数、算术表达式或 `AS` 别名片段。这些表达式使用 Raw 方法或 Expression。
+- 支持 `=`、`<=>`、`<>`、`!=`、`>`、`<`、`>=`、`<=`；其他运算符、空字段段或畸形引用会报错。字段名仍应来自可信代码或白名单。
+- `orWhereColumn($first, $second, $operator = '=')` 以 OR 连接；AND/OR 组合需要括号时放入 `whereGroup()`。
+
+### `havingColumn($first, $second, $operator = '=', $cond = 'AND')` / `orHavingColumn()`
+
+```php
+$builder->fields(['userId', 'SUM(paid) AS paid_total', 'SUM(expected) AS expected_total'])
+    ->groupBy('userId')->havingColumn('paid_total', 'expected_total', '<')->get('orders');
+```
+
+- 用于 HAVING 中两个结果字段或别名的比较；参数顺序、字段引用、运算符和 OR 版本规则与 `whereColumn()` 相同。
+- 这里的两个参数都不是聚合表达式 SQL；需要直接写 `SUM(...)` 等计算时用 `havingRaw()` 或 Expression。
+
+### `joinOn($table, $first, $second, $operator = '=', $cond = 'AND')` / `joinOrOn()`
+
+```php
+$builder->join('users u', 'u.id=o.userId', 'LEFT')
+    ->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
+// LEFT JOIN users u on u.id=o.userId AND `u`.`tenantId` = `o`.`tenantId`
+```
+
+- 给已有 JOIN 的 ON 部分追加字段比较，不创建 JOIN，也不把右字段当值绑定；参数中的两个字段遵循 `whereColumn()` 的引用规则。
+- `$table` 与 `join()` 中的表名、别名写法保持一致；JOIN 子查询使用其别名定位。表前缀由构造器沿用现有规则处理，不手动重复添加。
+- `joinOrOn($table, $first, $second, $operator = '=')` 追加 OR。需要与常量值比较时使用 `joinWhere()`；需要括号时使用下面的 ON 分组。
+- 仅适用于 ON JOIN；初始条件为 `USING(...)` 的 JOIN 不能再追加 `joinOn()`、`joinWhere()` 或 ON 分组，否则会报错。需要追加条件时从 `join()` 开始就使用 ON 条件。
+
+### `havingGroup($callback)` / `orHavingGroup($callback)`
+
+```php
+$builder->fields(['userId', 'SUM(amount) AS total', 'COUNT(*) AS count'])
+    ->groupBy('userId')->havingGroup(function (QueryBuilder $q): void {
+        $q->having('total', 1000, '>')->orHaving('count', 5, '>=');
+    })->get('orders');
+// HAVING (`total` > ? OR `count` >= ?)
+```
+
+- 闭包内使用 `having()`、`orHaving()`、`havingColumn()`、`havingRaw()` 或嵌套 HAVING 分组；不要在此闭包用 `where()` 代替 HAVING 条件。
+- `havingGroup()` 以 AND 连接整个组，`orHavingGroup()` 以 OR 连接；作为首个 HAVING 条件时省略前置连接符。
+- 闭包仅收集 HAVING 条件，不调用 `get()`、`reset()` 或设置排序、分页、JOIN 等其他内容。返回值不参与构建；空组报错，闭包异常不会追加半成品组。
+
+### `joinWhereGroup($table, $callback)` / `joinOrWhereGroup($table, $callback)`
+
+```php
+$builder->join('users u', 'u.id=o.userId', 'LEFT')
+    ->joinWhereGroup('users u', function (QueryBuilder $q): void {
+        $q->where('u.status', 1)->orWhere('u.status', 2);
+    })->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
+// ... on u.id=o.userId AND (u.status = ? OR u.status = ?) AND `u`.`tenantId` = `o`.`tenantId`
+```
+
+- ON 分组闭包中使用 WHERE 条件方法：`where()`、`orWhere()`、`whereColumn()`、`whereRaw()`、`whereGroup()` 等；不在闭包中调用 `joinWhere()`、`joinOn()` 或 HAVING 方法。
+- `$table` 的定位规则与 `joinOn()` 相同。分组位于 ON 中，LEFT JOIN 下将这些条件移到外层 WHERE 会改变保留行范围。
+- 仅适用于 ON JOIN，不能向初始条件为 `USING(...)` 的 JOIN 追加分组。
+- `joinWhereGroup()` 以 AND 追加整个组，`joinOrWhereGroup()` 以 OR 追加；前面的初始 JOIN 条件不会自动被包进同一个组，需确认完整 ON 的优先级。
+- 闭包不构建/执行查询，仅收集条件；支持嵌套 WHERE 分组，空组或错误回调会报错且不追加半成品组。
+
+### `insertAll($tableName, $insertData, $option = [])` 的批量校验
+
+```php
+$builder->insertAll('users', [
+    ['id' => 1, 'name' => 'Alice', 'ignored' => 'x'],
+    ['name' => 'Bob', 'id' => 2],
+], ['field' => ['id', 'name']]);
+```
+
+- 数据必须是非空的关联行数组，每行也非空。启用 `$option['field']` 白名单时，先过滤白名单之外的字段，再按保留字段校验每行列集合一致。
+- 各行可以有不同的键顺序，绑定时统一按第一行的列顺序排列；缺列、多列或过滤后为空会抛出 `InvalidArgumentException`，不会自动补 NULL。
+- 显式 `null` 是实际待写入值，与缺少字段不同；是否允许该值由数据库列约束决定。字段名必须是非空字符串且不含 NUL，反引号会被转义。
+- `insertAll()` 本身仍只插入数据；需要重复键更新时配合 `onDuplicate()`，或使用 `upsert()`。原有单行 `insert()` 调用继续保留。
+
+### `upsert($tableName, array $rows, array $updateColumns)` / `onDuplicate($updateColumns)`
+
+```php
+$rows = [
+    ['id' => 1, 'name' => 'Alice'],
+    ['id' => 2, 'name' => 'Bob'],
+];
+$builder->upsert('users', $rows, ['name']);
+// 相同批量语义：$builder->onDuplicate(['name'])->insertAll('users', $rows);
+
+$builder->upsert('users', $rows, ['name' => '统一名称']);
+// 所有发生冲突的行都把 name 更新为同一个绑定值。
+
+$builder->upsert('users', $rows, ['name', 'status' => 'synced']);
+// name 使用每行的新值，status 使用统一固定值。
+```
+
+- 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回 Builder，实际执行交给 `Client::query()`。
+- 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
+- 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
+- `upsert()` 要求非空行数据和非空更新列，所有行的列集合一致；隐式更新列必须存在于每一行中。它不接受 `insertAll()` 的白名单选项，需要时先自行筛选行数据，或用带白名单的 `insertAll()` 配合 `onDuplicate()`。
+- 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
+- 重复键更新不是 REPLACE；不要把隐式新值更新与 `insertAll()` 的 REPLACE 选项组合使用。构建完成或 `reset()` 后，更新列设置自动清除。
+
+
 ### 通用调用规则
 
 - 先调用条件、排序、索引及锁方法，最后调用 `get()`、`getOne()`、`update()` 等构建方法，再交给 `$client->query($builder)` 执行。构建方法本身不访问数据库。
@@ -438,7 +622,7 @@ $builder->where('tenantId', $tenantId)->orderBy('name', 'DESC', "O'Reilly")->get
 ```
 
 - 第三个参数为字符串时按正则表达式值绑定，不直接拼进 SQL；不手动添加 SQL 引号或转义单引号。无效正则由数据库报错。
-- 参数按最终 SQL 顺序合并：JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
+- 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
 - 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
 - 字段名仍使用代码常量或白名单。通过 `Client::query()` 执行预处理 SQL；`getLastQuery()` 仅供调试展示，不用于重新拼接执行。
 
@@ -477,7 +661,8 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 ```
 
 - NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
-- 第一个参数与对应 `join()` 的表名、别名保持一致；条件位于 JOIN 的 ON 部分，不是外层 WHERE。LEFT JOIN 中移动条件到 WHERE 可能改变保留行范围。
+- 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`；JOIN 子查询则传其别名。条件位于 JOIN 的 ON 部分，不是外层 WHERE。LEFT JOIN 中移动条件到 WHERE 可能改变保留行范围。
+- 仅适用于 ON JOIN；初始条件为 `USING(...)` 时不能追加 `joinWhere()`、`joinOrWhere()`、`joinOn()` 或 ON 分组，需要追加条件时从 `join()` 开始使用 ON 条件。
 - 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
 
 ### `orderByAsc($column)`

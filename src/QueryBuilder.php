@@ -3,7 +3,7 @@
 namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exception\Exception;
-use EasySwoole\Mysqli\QueryBuilder\{ExpressionFactory, QueryCompiler, QueryParts, SelectCompiler, SqlBuffer, SqlFormatter, TableReference};
+use EasySwoole\Mysqli\QueryBuilder\{ExpressionFactory, QueryCompiler, QueryParts, SelectCompiler, SqlBuffer, SqlFormatter, TableReference, WriteCompiler};
 
 /** Public fluent API; SQL compilation is delegated to internal collaborators. */
 class QueryBuilder
@@ -131,6 +131,81 @@ class QueryBuilder
         return $this;
     }
 
+    /** Add a parameterized SELECT expression; the first call replaces the implicit default *. */
+    public function selectRaw(string $sql, array $parameters = []): QueryBuilder
+    {
+        $expression = new Expression($sql, $parameters);
+        $fields = $this->fields === '*' ? [] : (is_array($this->fields) ? $this->fields : [$this->fields]);
+        $fields[] = $expression;
+        $this->fields = $fields;
+        return $this;
+    }
+
+    public static function rawExpression(string $sql, array $parameters = []): Expression
+    {
+        return new Expression($sql, $parameters);
+    }
+
+    public function whereRaw(string $sql, array $parameters = [], string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addRawCondition($this->whereConditions, $sql, $parameters, $cond);
+    }
+
+    public function havingRaw(string $sql, array $parameters = [], string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addRawCondition($this->havingConditions, $sql, $parameters, $cond);
+    }
+
+    private function addRawCondition(array &$conditions, string $sql, array $parameters, string $cond): QueryBuilder
+    {
+        $concat = $this->conditionConjunction($cond);
+        $expression = new Expression($sql, $parameters);
+        $conditions[] = ['expression' => $expression, 'concat' => $conditions === [] ? '' : $concat];
+        return $this;
+    }
+
+    private function conditionConjunction(string $cond): string
+    {
+        $cond = strtoupper(trim($cond));
+        if (!in_array($cond, ['AND', 'OR'], true)) {
+            throw new \InvalidArgumentException('Condition conjunction must be AND or OR');
+        }
+        return $cond;
+    }
+
+    public function whereColumn(string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addColumnCondition($this->whereConditions, $first, $second, $operator, $cond);
+    }
+
+    public function orWhereColumn(string $first, string $second, string $operator = '='): QueryBuilder
+    {
+        return $this->whereColumn($first, $second, $operator, 'OR');
+    }
+
+    public function havingColumn(string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addColumnCondition($this->havingConditions, $first, $second, $operator, $cond);
+    }
+
+    public function orHavingColumn(string $first, string $second, string $operator = '='): QueryBuilder
+    {
+        return $this->havingColumn($first, $second, $operator, 'OR');
+    }
+
+    private function addColumnCondition(array &$conditions, string $first, string $second, string $operator, string $cond, bool $on = false): QueryBuilder
+    {
+        $operator = strtoupper(trim($operator));
+        if (!in_array($operator, ['=', '<=>', '<>', '!=', '>', '<', '>=', '<='], true)) {
+            throw new \InvalidArgumentException('Unsupported column comparison operator');
+        }
+        TableReference::column($first);
+        TableReference::column($second);
+        $concat = $this->conditionConjunction($cond);
+        $conditions[] = ['column' => [$first, $operator, $second], 'concat' => !$on && $conditions === [] ? '' : $concat];
+        return $this;
+    }
+
     /** 以数组形式获取当前字段配置。 */
     public function getField(): array
     {
@@ -247,13 +322,54 @@ class QueryBuilder
 
     private function addWhereGroup(callable $callback, string $concat): QueryBuilder
     {
+        return $this->addConditionGroup($this->whereConditions, $callback, $concat, 'whereConditions', 'WHERE');
+    }
+
+    public function havingGroup(callable $callback): QueryBuilder
+    {
+        return $this->addConditionGroup($this->havingConditions, $callback, 'AND', 'havingConditions', 'HAVING');
+    }
+
+    public function orHavingGroup(callable $callback): QueryBuilder
+    {
+        return $this->addConditionGroup($this->havingConditions, $callback, 'OR', 'havingConditions', 'HAVING');
+    }
+
+    public function joinWhereGroup(string $table, callable $callback): QueryBuilder
+    {
+        $key = $this->prefix . $table;
+        $conditions = $this->joinConditions[$key] ?? [];
+        $this->addConditionGroup($conditions, $callback, 'AND', 'whereConditions', 'ON', true);
+        $this->joinConditions[$key] = $conditions;
+        return $this;
+    }
+
+    public function joinOrWhereGroup(string $table, callable $callback): QueryBuilder
+    {
+        $key = $this->prefix . $table;
+        $conditions = $this->joinConditions[$key] ?? [];
+        $this->addConditionGroup($conditions, $callback, 'OR', 'whereConditions', 'ON', true);
+        $this->joinConditions[$key] = $conditions;
+        return $this;
+    }
+
+    private function addConditionGroup(array &$conditions, callable $callback, string $concat, string $source, string $label, bool $on = false): QueryBuilder
+    {
         $group = new static();
         $group->setPrefix($this->prefix);
         $callback($group);
-        if ($group->whereConditions === []) {
-            throw new \InvalidArgumentException('WHERE groups must contain at least one condition');
+        if ($group->{$source} === []) {
+            throw new \InvalidArgumentException($label . ' groups must contain at least one condition');
         }
-        $this->whereConditions[] = ['group' => $group->whereConditions, 'concat' => $this->whereConditions === [] ? '' : $concat];
+        $conditions[] = ['group' => $group->{$source}, 'concat' => !$on && $conditions === [] ? '' : $concat];
+        return $this;
+    }
+
+    public function orderByRaw(string $sql, array $parameters = []): QueryBuilder
+    {
+        $expression = new Expression($sql, $parameters);
+        $key = 'raw:' . serialize([$sql, $expression->getParameters()]);
+        $this->ordering[$key] = ['field' => $expression, 'direction' => '', 'params' => []];
         return $this;
     }
 
@@ -314,7 +430,12 @@ class QueryBuilder
         if (!is_object($joinTable)) {
             $joinTable = $this->prefix . $joinTable;
         }
-        $this->joins[] = [$joinType, $joinTable, $joinCondition];
+        $conditionKey = null;
+        if ($joinTable instanceof QueryBuilder) {
+            $alias = $joinTable->getSubQuery()['alias'] ?? null;
+            if ($alias !== null && $alias !== '') { $conditionKey = $this->prefix . $alias; }
+        }
+        $this->joins[] = [$joinType, $joinTable, $joinCondition, $conditionKey];
         return $this;
     }
 
@@ -329,6 +450,20 @@ class QueryBuilder
     public function joinOrWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
     {
         return $this->joinWhere($whereJoin, $whereProp, $whereValue, $operator, 'OR');
+    }
+
+    public function joinOn(string $table, string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    {
+        $key = $this->prefix . $table;
+        $conditions = $this->joinConditions[$key] ?? [];
+        $this->addColumnCondition($conditions, $first, $second, $operator, $cond, true);
+        $this->joinConditions[$key] = $conditions;
+        return $this;
+    }
+
+    public function joinOrOn(string $table, string $first, string $second, string $operator = '='): QueryBuilder
+    {
+        return $this->joinOn($table, $first, $second, $operator, 'OR');
     }
 
     /** 构建UNION语句 */
@@ -497,7 +632,9 @@ class QueryBuilder
         if ($columns == null) {
             $columns = $this->fields;
         }
-        $column = is_array($columns) ? implode(', ', $columns) : $columns;
+        $select = new SqlBuffer('', $this->pendingParameters, $tableName);
+        $column = SelectCompiler::columns($columns, $select);
+        $this->pendingParameters = $select->parameters;
 
         $this->tableName = $tableName;
         $this->pendingSql = 'SELECT ' . implode(' ', $this->queryOptions) . ' ' .
@@ -526,10 +663,11 @@ class QueryBuilder
     /** SELECT 获取某一列的数据 */
     public function getColumn($tableName, $columns = null, $numRows = null): ?QueryBuilder
     {
-        if (!is_string($columns)) {
+        if (!is_string($columns) && !($columns instanceof Expression)) {
             $columns = $this->fields;
             if (is_array($columns) && count($columns) > 0) {
-                $columns = explode(',', str_replace(' ', '', reset($columns)))[0];
+                $first = reset($columns);
+                $columns = $first instanceof Expression ? $first : explode(',', str_replace(' ', '', $first))[0];
             }
         }
         return $this->get($tableName, $numRows, $columns);
@@ -559,21 +697,43 @@ class QueryBuilder
     /** 构造使用多个 VALUES 分组的批量插入语句。 */
     public function insertAll($tableName, $insertData, $option = [])
     {
-        $allowFields = $option['field'] ?? [];
-		// 过滤掉不允许的字段
-		if (!empty($allowFields)) {
-			foreach ($insertData as $key => $data){
-				foreach ($data as $data_k => $data_v){
-					if (!in_array($data_k, $allowFields)){
-						unset($insertData[$key][$data_k]);
-					}
-				}
-			}
+        if (!is_array($insertData) || $insertData === []) {
+            throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
+        foreach ($insertData as $row) {
+            if (!is_array($row) || $row === []) {
+                throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
+            }
+        }
+        $allowFields = $option['field'] ?? [];
+        if (!empty($allowFields)) {
+            foreach ($insertData as &$row) {
+                foreach ($row as $column => $value) {
+                    if (!in_array($column, $allowFields, true)) { unset($row[$column]); }
+                }
+            }
+            unset($row);
+        }
+        $insertData = WriteCompiler::normalizeBatch($insertData);
 
         $this->buildInsert($tableName, $insertData, isset($option['replace']) ? 'REPLACE' : 'INSERT');
         $this->reset();
         return $this;
+    }
+
+    /** Batch insert/update using the table's primary/unique key constraints. */
+    public function upsert($tableName, array $rows, array $updateColumns): QueryBuilder
+    {
+        $rows = WriteCompiler::normalizeBatch($rows);
+        if ($updateColumns === []) { throw new \InvalidArgumentException('Upsert requires update columns'); }
+        foreach ($updateColumns as $key => $value) {
+            TableReference::identifier(is_int($key) ? $value : $key);
+            if (is_int($key) && (!is_string($value) || !array_key_exists($value, $rows[0]))) {
+                throw new \InvalidArgumentException('Implicit upsert columns must exist in every row');
+            }
+        }
+        $this->onDuplicate($updateColumns);
+        return $this->insertAll($tableName, $rows);
     }
 
     /** REPLACE插入 */

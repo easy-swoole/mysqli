@@ -3,6 +3,7 @@
 namespace EasySwoole\Mysqli\QueryBuilder;
 
 use EasySwoole\Mysqli\Exception\Exception;
+use EasySwoole\Mysqli\Expression;
 
 /** @internal Compile JOIN, GROUP, UNION, ORDER and LIMIT clauses. */
 final class SelectCompiler
@@ -19,16 +20,21 @@ final class SelectCompiler
                 $joinStr = $this->conditions->pair("", $joinTable);
             else
                 $joinStr = $joinTable;
-            $this->buffer->sql .= " " . $joinType . " JOIN " . $joinStr .
-                (false !== stripos($joinCondition, 'using') ? " " : " on ")
-                . $joinCondition;
-            // Add join and query
-            if (!empty($joinConditions) && isset($joinConditions[$joinStr])) {
-                foreach ($joinConditions[$joinStr] as $join_and_cond) {
-                    list ($concat, $varName, $operator, $val) = $join_and_cond;
-                    $this->buffer->sql .= " " . $concat . " " . $varName;
-                    $this->conditions->appendJoinValue($operator, $val);
-                }
+            $using = is_string($joinCondition) && preg_match('/\A\s*USING\s*\(/i', $joinCondition) === 1;
+            $conditionKey = $data[3] ?? $joinStr;
+            if ($using && !empty($joinConditions[$conditionKey])) {
+                throw new \InvalidArgumentException('USING joins cannot have additional ON conditions');
+            }
+            if ($joinCondition instanceof Expression) {
+                $this->buffer->sql .= ' ' . $joinType . ' JOIN ' . $joinStr . ' on (' . $joinCondition->getSql() . ')';
+                $this->buffer->bindAll($joinCondition->getParameters());
+            } else {
+                $this->buffer->sql .= " " . $joinType . " JOIN " . $joinStr .
+                    ($using ? " " : " on ")
+                    . $joinCondition;
+            }
+            if (!empty($joinConditions) && isset($joinConditions[$conditionKey])) {
+                $this->conditions->appendOn($joinConditions[$conditionKey]);
             }
         }
     }
@@ -66,7 +72,11 @@ final class SelectCompiler
         foreach ($ordering as $order) {
             $prop = $order['field'];
             $value = $order['direction'];
-            if (strtolower(str_replace(" ", "", $prop)) == 'rand()') {
+            if ($prop instanceof Expression) {
+                $this->buffer->sql .= $prop->getSql() . ($value !== '' ? ' ' . $value : '') . ', ';
+                $this->buffer->bindAll($prop->getParameters());
+                $this->buffer->bindAll($order['params']);
+            } elseif (strtolower(str_replace(" ", "", $prop)) == 'rand()') {
                 $this->buffer->sql .= "rand(), ";
             } else {
                 $this->buffer->sql .= $prop . " " . $value . ", ";
@@ -86,6 +96,28 @@ final class SelectCompiler
         } else {
             $this->buffer->sql .= ' LIMIT ' . (int)$numRows;
         }
+    }
+
+    /** SELECT expressions bind before JOIN, WHERE and other clauses. */
+    public static function columns($columns, SqlBuffer $buffer): string
+    {
+        if ($columns instanceof Expression) {
+            $buffer->bindAll($columns->getParameters());
+            return $columns->getSql();
+        }
+        if (!is_array($columns)) {
+            return (string) $columns;
+        }
+        $rendered = [];
+        foreach ($columns as $column) {
+            if ($column instanceof Expression) {
+                $rendered[] = $column->getSql();
+                $buffer->bindAll($column->getParameters());
+            } else {
+                $rendered[] = $column;
+            }
+        }
+        return implode(', ', $rendered);
     }
 
     public static function order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $prefix, $tableName): array
