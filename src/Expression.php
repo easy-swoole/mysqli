@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli;
 
-/** Immutable trusted SQL fragment with separately bound scalar values. */
+/** 不可变的可信 SQL 片段，标量值通过独立参数绑定。 */
 final class Expression
 {
     private readonly array $parameters;
@@ -19,7 +19,7 @@ final class Expression
             if ($value !== null && !is_scalar($value)) {
                 throw new \InvalidArgumentException('Expression parameters must be scalar values or null');
             }
-            // Copy values individually so caller-owned PHP references cannot mutate this expression.
+            // 逐个复制参数值，避免调用方持有的 PHP 引用修改此表达式。
             $values[] = $value;
         }
         $this->parameters = $values;

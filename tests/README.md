@@ -31,7 +31,7 @@ Protocol recovery tests also cover deadlock state before any explicit rollback, 
 
 ## TLS tests
 
-`TlsTest` is part of the unit suite. It generates disposable certificates using the PHP OpenSSL extension and starts local fake MySQL servers. It covers opt-in defaults, SSLRequest framing and sequence numbers, full caching_sha2 authentication inside TLS, untrusted/expired certificates, DNS/IP identity validation, wildcard boundaries, SAN parsing ambiguity, unsupported-server rejection without plaintext fallback, and the shared handshake deadline. Private fixture keys are removed after the test class completes.
+`TlsTest` is part of the unit suite. It generates disposable certificates using the PHP OpenSSL extension and starts local fake MySQL servers. It covers opt-in defaults, SSLRequest framing and sequence numbers, full caching_sha2 authentication inside TLS, untrusted/expired certificates, DNS/IP identity validation, wildcard boundaries, SAN parsing ambiguity, unsupported-server rejection without plaintext fallback, and the shared handshake deadline. It also verifies root/intermediate/leaf chains: full served chains succeed, while missing or untrusted intermediates send no MySQL credentials. The OpenSSL precheck confirms the chain fixture cannot pass a leaf-only verification against the root. Private fixture keys are removed after the test class completes.
 
 To run integration tests with TLS, use a dedicated disposable database because the suite replaces fixture tables:
 
@@ -68,7 +68,7 @@ With Docker running, execute `bash tests/docker/run-matrix.sh --all`, or select 
 
 The four lanes cover PHP 8.1.34/Swoole 5.1.8 on MySQL 8.0.46 in plaintext, plus PHP 8.4.27/Swoole 6.2.4 on MySQL 8.0.46, 8.4.13 and 9.7.4 with VerifyIdentity TLS. Compression is exercised both disabled and enabled without multiplying the matrix. The server uses strict SQL modes, a dedicated disposable database, and temporary certificates. Unit tests run once for each PHP/Swoole runtime; database tests run on every lane. The plaintext lane excludes only TLS-specific integration tests, and selected tests fail on unexpected skips.
 
-`bash tests/docker/self-check.sh` validates the harness without starting containers. Passing this check does not establish that the Docker image builds or the database matrix passes. The current machine has no Docker runtime, so container execution remains to be verified in CI or on a Docker-enabled machine. A pinned dependency snapshot under `tests/docker/` is used only in temporary test workspaces; the root composer.lock policy is unchanged.
+`bash tests/docker/self-check.sh` validates the harness without starting containers. Passing this check does not establish that the Docker image builds or the database matrix passes. The current machine has no Docker runtime. In [the first CI run](https://github.com/easy-swoole/mysqli/actions/runs/42572640475), the PHP 8.4 lanes on MySQL 8.0/8.4/9.7 passed; PHP 8.1/Swoole 5.1 failed DNS/SNI certificate verification unit tests. That failure was reproduced locally with PHP 8.1.34/Swoole 5.1.8 and fixed without disabling chain verification. Both supported runtime branches now pass the local unit suite and live TLS checks; the corrected PHP 8.1 container lane still needs a new CI run. A pinned dependency snapshot under `tests/docker/` is used only in temporary test workspaces; the root composer.lock policy is unchanged.
 
 ## Prepared-statement reuse benchmark
 

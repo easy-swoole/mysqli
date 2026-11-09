@@ -6,7 +6,7 @@ use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal Compile INSERT/REPLACE values, UPDATE assignments and duplicate-key updates. */
+/** @internal 编译 INSERT/REPLACE 值、UPDATE 赋值及重复键更新。 */
 final class WriteCompiler
 {
     /** @var list<string>|null */
@@ -15,7 +15,7 @@ final class WriteCompiler
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
 
     /**
-     * Validate and align rows before SQL emission; row ordering and NULL values are preserved.
+     * 生成 SQL 前校验并对齐各行字段，保留行顺序及 NULL 值。
      * @return non-empty-list<non-empty-array<string, mixed>>
      */
     public static function normalizeBatch(mixed $rows): array

@@ -6,7 +6,7 @@ namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal Match a verified peer certificate to a DNS name or IP address. */
+/** @internal 将已通过验证的对端证书与 DNS 名称或 IP 地址匹配。 */
 final class CertificateIdentity
 {
     public static function verify(string $certificate, string $expectedName): void
@@ -22,7 +22,7 @@ final class CertificateIdentity
             if ($tag === 0x82) { $dnsNames[] = $value; }
         }
         if ($ip === false) {
-            // Never fall back to CN when a DNS subjectAltName is present.
+            // 存在 DNS subjectAltName 时，不回退到 CN。
             $names = $dnsNames !== [] ? $dnsNames : (array) ($info['subject']['commonName'] ?? []);
             foreach ($names as $name) {
                 if (self::matchesDns($name, $expectedName)) { return; }
@@ -31,7 +31,7 @@ final class CertificateIdentity
         throw new Exception('TLS certificate does not match the expected server identity');
     }
 
-    /** Read SANs as DER bytes: formatted openssl_x509_parse text is ambiguous for commas in names. */
+    /** 以 DER 字节读取 SAN；openssl_x509_parse 的格式化文本无法明确区分名称内的逗号。 */
     private static function subjectAltNames(string $certificate): array
     {
         if (!openssl_x509_export($certificate, $pem)) {
@@ -69,7 +69,7 @@ final class CertificateIdentity
         return [];
     }
 
-    /** Minimal bounded DER reader for the certificate's subjectAltName extension. */
+    /** 用于证书 subjectAltName 扩展的最小 DER 读取器，并校验读取边界。 */
     private static function element(string $der, int &$offset, ?int $expectedTag = null): array
     {
         if (strlen($der) - $offset < 2) { throw new Exception('Truncated TLS certificate'); }
@@ -97,7 +97,7 @@ final class CertificateIdentity
         $name = strtolower(rtrim($name, '.'));
         if (str_contains($pattern, "\0") || $pattern === '' || $name === '') { return false; }
         if (!str_contains($pattern, '*')) { return $pattern === $name; }
-        // A wildcard occupies the complete left-most label, matching exactly one label.
+        // 通配符占据最左侧的完整标签，并且仅匹配一个标签。
         if (!str_starts_with($pattern, '*.') || substr_count($pattern, '*') !== 1
             || substr_count($pattern, '.') < 2) { return false; }
         $dot = strpos($name, '.');

@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\{Client, Config, Expression, QueryBuilder};
 use EasySwoole\Mysqli\QueryBuilder\{ComparisonOperator, ConditionConjunction, JoinType, LockWaitPolicy, SortDirection};
 use PHPUnit\Framework\TestCase;
 
-/** Every fixture is connection-local and is removed when the client closes. */
+/** 所有测试夹具仅在当前连接内有效，客户端关闭时自动清理。 */
 final class QueryBuilderAdvancedIntegrationTest extends TestCase
 {
     private ?Client $client = null;

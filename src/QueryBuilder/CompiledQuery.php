@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Immutable completed output, kept independently of the next query's pending state. */
+/** @internal 不可变的已构建结果，与下一条查询的待构建状态分开保存。 */
 final class CompiledQuery
 {
     public function __construct(

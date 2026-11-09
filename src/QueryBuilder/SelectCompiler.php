@@ -6,7 +6,7 @@ use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Expression;
 
 /**
- * @internal Compile JOIN, GROUP, UNION, ORDER and LIMIT clauses.
+ * @internal 编译 JOIN、GROUP、UNION、ORDER 及 LIMIT 子句。
  * @phpstan-type JoinNode array{0: string, 1: mixed, 2: mixed, 3?: string|null}
  * @phpstan-type UnionNode array{0: string|null, 1: array<array-key, mixed>, 2: mixed, 3: bool}
  * @phpstan-type OrderNode array{field: string|Expression, direction: string, params: array<array-key, mixed>}
@@ -117,7 +117,7 @@ final class SelectCompiler
         }
     }
 
-    /** SELECT expressions bind before JOIN, WHERE and other clauses. */
+    /** SELECT 表达式的参数先于 JOIN、WHERE 等子句绑定。 */
     public static function columns(mixed $columns, SqlBuffer $buffer): string
     {
         if ($columns instanceof Expression) {
@@ -145,9 +145,9 @@ final class SelectCompiler
         $orderbyDirection = $orderbyDirection instanceof SortDirection ? $orderbyDirection->value : strtoupper(trim($orderbyDirection));
         $direction = SortDirection::tryFrom($orderbyDirection);
         $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"%`]+/i", '', $orderByField);
-        // Add table prefix to orderByField if needed.
-        //FIXME: We are adding prefix only if table is enclosed into `` to distinguish aliases
-        // from table names
+        // 按需给 orderByField 添加表前缀。
+        //FIXME: 仅对反引号包裹的表名添加前缀，以区分别名
+        // 和真实表名。
         $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_%`\']*\.)/', '\1' . $prefix . '\2', $orderByField);
         if ($direction === null) {
             throw new Exception("Wrong order direction: {$orderbyDirection} for column {$orderByField} in table {$tableName}");
@@ -165,7 +165,7 @@ final class SelectCompiler
             }
             $orderByField = 'FIELD (' . $orderByField . ', ' . implode(', ', array_fill(0, count($orderParams), '?')) . ')';
         } elseif (is_string($customFieldsOrRegExp)) {
-            // Keep the pattern as a value, never as SQL text. Distinct patterns retain distinct order entries.
+            // 将正则模式作为值绑定；不同模式保留为独立排序项。
             $orderParams = [$customFieldsOrRegExp];
             $orderByField .= ' REGEXP ?';
         } elseif ($customFieldsOrRegExp !== null) {

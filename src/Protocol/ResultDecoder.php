@@ -6,7 +6,7 @@ namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Exception\ProtocolException;
 
-/** Decode complete result packets without owning sockets or connection state. */
+/** 解码完整的结果报文，不持有 Socket 或连接状态。 */
 final class ResultDecoder
 {
     /**
@@ -131,8 +131,8 @@ final class ResultDecoder
         if (!$unsigned || $value >= 0) {
             return $value;
         }
-        // PHP stores the bit pattern as a signed integer. %u converts that
-        // exact pattern to decimal without passing through a float.
+        // PHP 将该位模式保存为有符号整数；%u 将原始位模式转换为
+        // 十进制文本，无需经过浮点数。
         return sprintf('%u', $value);
     }
 

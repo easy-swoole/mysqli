@@ -2,13 +2,13 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Preserve table-prefix rules and validate/render index identifiers. */
+/** @internal 保留表前缀规则，并校验及渲染索引标识符。 */
 final class TableReference
 {
     public static function parse(mixed &$tableName, mixed $prefix): mixed
     {
         $source = trim($tableName);
-        // Derived tables and table-valued expressions contain SQL, rather than a table name to prefix.
+        // 派生表和表值表达式包含 SQL，不作为普通表名添加前缀。
         if (str_starts_with($source, '(') || preg_match('/\A[^\s`(]+\s*\(/', $source) === 1) {
             return $tableName;
         }
@@ -35,12 +35,12 @@ final class TableReference
                 $tableName = $quoted . $suffix;
                 return $tableName;
             }
-            // Keep the existing spelling of ordinary aliases/trusted tails and unquoted table metadata.
+            // 保留普通别名、可信尾部片段及未引用表名元数据的原有拼写。
             $tableName = ($unqualified ? $prefix . $match['table'] : $match['table']) . $suffix;
             return $suffix !== '' ? $tableName : $quoted;
         }
 
-        // Preserve trusted legacy SQL fragments, such as table hints, outside the identifier grammar.
+        // 对标识符语法之外的可信旧 SQL 片段（例如表提示）保持原有处理。
         if (strpos($tableName, '.') === false) {
             $tableName = $prefix . $tableName;
         }
@@ -74,7 +74,7 @@ final class TableReference
         return $sql;
     }
 
-    /** Quote a literal identifier, without interpreting dots as separators. */
+    /** 引用单个字面标识符，不将其中的点解释为分隔符。 */
     public static function identifier(mixed $name): string
     {
         if (!is_string($name) || trim($name) === '' || str_contains($name, "\0")) {
@@ -83,7 +83,7 @@ final class TableReference
         return '`' . str_replace('`', '``', $name) . '`';
     }
 
-    /** Quote each component of a column reference, accepting correctly backtick-quoted components. */
+    /** 逐段引用字段名，接受已正确使用反引号引用的各段。 */
     public static function column(string $name): string
     {
         $parts = [];

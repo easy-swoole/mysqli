@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-// SELECT-only benchmark. Uses the same MYSQLI_TEST_* environment variables as tests/bootstrap.php.
+// 只执行 SELECT 的基准测试，使用与 tests/bootstrap.php 相同的 MYSQLI_TEST_* 环境变量。
 require dirname(__DIR__) . '/bootstrap.php';
 
 use EasySwoole\Mysqli\{Client, Config, QueryBuilder};
@@ -28,7 +28,7 @@ Swoole\Coroutine\run(static function () use ($iterations): void {
                 $check($client->query($builder));
                 $check($statement->execute([42]));
             }
-            // Alternate the order across rounds to reduce one-sided warmup or load effects.
+            // 在各轮交替执行顺序，减少单边预热或负载变化带来的影响。
             $elapsed = ['builder_prepare_execute_close' => 0.0, 'manual_prepared_reuse' => 0.0];
             for ($round = 0; $round < 3; $round++) {
                 $modes = $round % 2 === 0 ? array_keys($elapsed) : array_reverse(array_keys($elapsed));

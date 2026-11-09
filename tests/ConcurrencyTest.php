@@ -32,7 +32,7 @@ final class ConcurrencyTest extends TestCase
             throw $error;
         }
 
-        // Measure query concurrency independently of remote handshake latency.
+        // 独立测量查询并发行为，避免远程握手延迟影响结果。
         $results = new Channel(2);
         $startedAt = microtime(true);
         foreach ($clients as $seconds => $client) {

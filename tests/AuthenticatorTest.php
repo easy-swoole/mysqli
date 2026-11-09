@@ -85,7 +85,7 @@ final class AuthenticatorTest extends TestCase
         try { $connection->query('CALL unsupported()', 0.0); self::fail('Expected CALL rejection'); }
         catch (UnsupportedOperationException) { self::addToAssertionCount(1); }
 
-        // iterate() historically creates the shared deadline before starting its stream guard.
+        // iterate() 原本会先创建共享截止时间，再进入结果流的并发保护。
         try { $connection->iterate('CALL unsupported()', 0.0); self::fail('Expected timeout validation'); }
         catch (\InvalidArgumentException $error) { self::assertSame('Query timeout must be greater than zero', $error->getMessage()); }
         self::assertFalse($connection->isBusy());

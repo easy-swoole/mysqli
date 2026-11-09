@@ -2,17 +2,17 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Read SQL lists without splitting quoted text, comments or nested expressions. */
+/** @internal 解析 SQL 列表时，不拆分已引用文本、注释或嵌套表达式。 */
 final class SqlList
 {
-    /** Keep a trailing SQL line comment from swallowing a closing parenthesis. */
+    /** 避免 SQL 尾部行注释吞掉闭括号。 */
     public static function parenthesized(string $sql): string
     {
         return '(' . implode(',', self::items($sql)) . ')';
     }
 
     /**
-     * Split only top-level commas, retaining every expression's original text.
+     * 仅在顶层逗号处分隔，并保留每个表达式的原始文本。
      * @return list<string>
      */
     public static function items(string $sql): array
@@ -27,7 +27,7 @@ final class SqlList
         return $items;
     }
 
-    /** Keep the first top-level item, including its original whitespace and aliases. */
+    /** 保留首个顶层列表项及其原有空白和别名。 */
     public static function first(string $sql): string
     {
         $length = strlen($sql);
@@ -70,7 +70,7 @@ final class SqlList
                 return substr($sql, 0, $position);
             }
         }
-        // Terminate a trailing line comment before the caller appends another SQL clause.
+        // 在调用方追加其他 SQL 子句之前结束尾部行注释。
         return $lineComment ? $sql . "\n" : $sql;
     }
 }

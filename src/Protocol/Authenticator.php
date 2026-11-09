@@ -57,7 +57,7 @@ final class Authenticator
             throw new Exception('Old MySQL authentication protocol is not supported');
         }
         $charset = Codec::int1($handshake, $offset);
-        Codec::int2($handshake, $offset); // server status, currently not needed
+        Codec::int2($handshake, $offset); // 服务端状态，当前流程无需使用。
         $highCapabilities = Codec::int2($handshake, $offset);
         $serverCapabilities = $lowCapabilities | ($highCapabilities << 16);
         $authLength = Codec::int1($handshake, $offset);

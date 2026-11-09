@@ -7,7 +7,7 @@ namespace EasySwoole\Mysqli\Tests;
 use EasySwoole\Mysqli\{Client, Config, QueryBuilder};
 use PHPUnit\Framework\TestCase;
 
-/** All queries use derived constants, leaving existing database contents untouched. */
+/** 所有查询均使用派生常量，不修改数据库中的现有内容。 */
 final class QueryBuilderIntegrationTest extends TestCase
 {
     private ?Client $client = null;

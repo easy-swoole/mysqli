@@ -7,7 +7,7 @@ namespace EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Protocol\{Deadline, Statement};
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal One Client operation's shared budget, success timestamp and owned statement. */
+/** @internal 保存单次 Client 操作的共享超时预算、成功回调使用的开始时间和自建语句。 */
 final class ExecutionContext
 {
     private readonly Deadline $deadline;
@@ -38,7 +38,7 @@ final class ExecutionContext
     }
 
     /**
-     * Buffered paths share SQL error wrapping and finally cleanup; observer errors stay outside it.
+     * 缓冲查询共用 SQL 异常包装和 finally 清理；成功回调异常不参与包装。
      * @param callable(): (bool|array<array-key, mixed>) $operation
      * @return bool|array<array-key, mixed>
      */
@@ -57,14 +57,14 @@ final class ExecutionContext
         return $result;
     }
 
-    /** Buffered execution keeps its existing finally semantics: cleanup errors propagate. */
+    /** 缓冲执行保留原有 finally 语义：清理异常继续向外抛出。 */
     public function closeOwnedStatement(): void
     {
         $this->statement?->close($this->deadline->remainingOrZero());
         $this->statement = null;
     }
 
-    /** Stream startup failures keep their original error even if cleanup also fails. */
+    /** 流式查询启动失败时保留原始异常，即使清理同时失败也不覆盖。 */
     public function discardOwnedStatement(): void
     {
         try { $this->closeOwnedStatement(); } catch (\Throwable) {}
@@ -76,7 +76,7 @@ final class ExecutionContext
         ($this->notify)($result, $this->startedAt);
     }
 
-    /** Registered as an owned stream's close callback, after protocol/metadata completion. */
+    /** 注册为自建语句结果流的关闭回调，在协议处理和元数据更新后执行。 */
     public function finishStream(bool $complete): void
     {
         $this->closeOwnedStatement();

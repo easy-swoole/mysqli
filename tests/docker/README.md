@@ -33,6 +33,12 @@ STRICT_TRANS_TABLES,ONLY_FULL_GROUP_BY,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBS
 
 源代码以只读方式挂载，Composer 安装和测试在容器的临时工作区中执行，既不覆盖主机 vendor，也不写主机 composer.lock。退出、失败或中断会删除本次创建的容器、卷、网络及临时证书；镜像保留以便下次复用缓存。
 
+## 首次 CI 与兼容性修复
+
+[2026-11-09 首次运行](https://github.com/easy-swoole/mysqli/actions/runs/42572640475)中，PHP 8.4 的 MySQL 8.0、8.4、9.7 三组全部通过。PHP 8.1/Swoole 5.1 的镜像构建、依赖安装及明文/压缩探测通过，但单元测试中 DNS/SNI 的 CA 验证有两项错误和一项失败，因此未进入该组后续集成套件。
+
+修复后在隔离构建的 PHP 8.1.34/Swoole 5.1.8 和本机 PHP 8.4.27/Swoole 6.2.4 上，各有 408 项单元测试、4 项真实 TLS 集成测试通过，包含完整中间链、身份不匹配、超时和重连。此次没有在本机执行 Docker；修复后的 PHP 8.1 容器结果仍需新提交触发 CI 确认。
+
 ## 固定测试依赖
 
 `dependencies.lock.json` 是当前 Composer 锁文件的测试专用快照，容器会将它复制为临时工作区的 composer.lock，然后检查快照与 composer.json 一致并安装依赖。根目录 composer.lock 继续保持原先不跟踪的策略。

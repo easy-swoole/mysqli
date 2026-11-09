@@ -32,9 +32,9 @@ final class ProtocolTest extends TestCase
             self::sendPacket($peer, self::handshake(), 0);
             self::receivePacket($peer);
             self::sendPacket($peer, self::ok(), 2);
-            self::receivePacket($peer); // SET NAMES
+            self::receivePacket($peer); // 设置字符集（SET NAMES）。
             self::sendPacket($peer, self::ok(), 1);
-            self::receivePacket($peer); // query that deliberately receives no response
+            self::receivePacket($peer); // 故意不返回响应的查询。
             Coroutine::sleep(0.15);
             $peer->close();
             $listener->close();
@@ -208,7 +208,7 @@ final class ProtocolTest extends TestCase
                 if ($session === 0) {
                     self::assertSame("\x01", $command);
                 } else {
-                    // Neither execute nor close from the old Statement may reach this session.
+                    // 旧 Statement 的执行和关闭命令均不得发送到此会话。
                     self::assertSame(0x17, ord($command[0]));
                     self::sendPacket($peer, self::ok(), 1);
                     [, $command] = self::receivePacket($peer);
@@ -278,7 +278,7 @@ final class ProtocolTest extends TestCase
         self::assertTrue($connection->isConnected());
         $release->push(true);
         self::assertTrue($result->pop(1.0));
-        $statement->close(); // Retry after a rejected close must still send COM_STMT_CLOSE.
+        $statement->close(); // 关闭被拒绝后再次尝试，仍须发送 COM_STMT_CLOSE。
         $this->assertServerCompleted($completed);
         $client->close();
     }
@@ -381,7 +381,7 @@ final class ProtocolTest extends TestCase
             self::acceptSession($peer);
             self::receivePacket($peer);
             self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
-            // An exhausted cleanup budget must close the stream without another command.
+            // 清理预算耗尽时必须关闭数据流，不能再发送命令。
             self::assertSame('', $peer->recvAll(4, 1.0));
             $peer->close();
         });
@@ -404,7 +404,7 @@ final class ProtocolTest extends TestCase
             self::assertSame('', $peer->recvAll(1, 1.0));
             $peer->close();
             $peer = $listener->accept(1.0);
-            // Longer than the first explicit timeout, but within configured maxConnectTime.
+            // 等待时间超过首次显式超时，但仍处于配置的 maxConnectTime 上限内。
             Coroutine::sleep(0.06);
             self::acceptSession($peer);
             [, $quit] = self::receivePacket($peer);
@@ -711,11 +711,11 @@ final class ProtocolTest extends TestCase
             self::acceptSession($peer);
             foreach ([1062, 1205, 1213] as $code) {
                 self::receivePacket($peer);
-                self::sendPacket($peer, self::ok(3), 1); // BEGIN
+                self::sendPacket($peer, self::ok(3), 1); // 开始事务（BEGIN）。
                 self::receivePacket($peer);
                 self::sendPacket($peer, "\xff" . pack('v', $code) . '#HY000simulated error', 1);
             }
-            self::receivePacket($peer); // QUIT
+            self::receivePacket($peer); // 退出连接（QUIT）。
             $peer->close();
         });
         try {
@@ -744,8 +744,8 @@ final class ProtocolTest extends TestCase
             self::acceptSession($peer);
             self::receivePacket($peer);
             self::sendResultHeader($peer, 'v', 3, false);
-            self::sendPacket($peer, "\xfc\x05\0x", 4); // Declares 5 bytes, contains only one.
-            self::sendPacket($peer, self::eof(), 5); // Must never leak into the next command.
+            self::sendPacket($peer, "\xfc\x05\0x", 4); // 声明有 5 个字节，实际只有 1 个。
+            self::sendPacket($peer, self::eof(), 5); // 绝不能泄漏到下一条命令。
             $peer->recvAll(1, 1.0);
             $peer->close();
             $peer = $listener->accept(1.0);
@@ -778,7 +778,7 @@ final class ProtocolTest extends TestCase
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             self::receivePacket($peer);
-            self::sendPacket($peer, self::ok(), 9); // Response must start with sequence 1.
+            self::sendPacket($peer, self::ok(), 9); // 响应必须从序号 1 开始。
             $peer->close();
         });
         try {
@@ -802,7 +802,7 @@ final class ProtocolTest extends TestCase
             Coroutine::sleep(0.06);
             self::sendPacket($peer, self::handshake(), 0);
             self::receivePacket($peer);
-            // Each individual wait fits 0.1s, but their combined duration does not.
+            // 每次等待都未超过 0.1 秒，但累计时长会超过该预算。
             Coroutine::sleep(0.07);
             $peer->close();
         }, $operation === 'connect' ? 0.1 : 0.5);

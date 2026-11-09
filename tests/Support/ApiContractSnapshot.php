@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Tests\Support;
 
-/** Reflection helpers shared by the API guard and its one-time baseline generator. */
+/** 由接口兼容性检查和一次性基线生成器共用的反射辅助方法。 */
 final class ApiContractSnapshot
 {
     public static function capture(string $source): array
@@ -44,7 +44,7 @@ final class ApiContractSnapshot
         return ['format' => 1, 'classes' => $classes];
     }
 
-    /** Union order and nullable spelling are presentation details, rather than API differences. */
+    /** 联合类型的顺序和可空类型的写法属于展示差异，不代表接口发生变化。 */
     public static function type(?\ReflectionType $type): ?array
     {
         if ($type === null) { return null; }
@@ -76,7 +76,7 @@ final class ApiContractSnapshot
         throw new \RuntimeException('Unsupported API default value ' . get_debug_type($value));
     }
 
-    /** New declarations are allowed only at previously untyped positions; existing domains cannot shrink. */
+    /** 只允许在原先未声明类型的位置补充声明；已有参数的取值范围不能缩小。 */
     public static function keepsExistingType(?array $before, ?array $after): bool
     {
         if ($before === null) { return true; }

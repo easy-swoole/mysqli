@@ -3,7 +3,7 @@
 namespace EasySwoole\Mysqli\QueryBuilder;
 
 /**
- * @internal Snapshot of pending clauses; no access to the public builder state.
+ * @internal 待构建子句的快照；不直接访问公开构造器的状态。
  * @phpstan-import-type ConditionNode from ConditionCompiler
  * @phpstan-import-type JoinNode from SelectCompiler
  * @phpstan-import-type UnionNode from SelectCompiler

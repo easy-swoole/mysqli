@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\TlsMode;
 use EasySwoole\Mysqli\TlsVersion;
 
-/** @internal Build only supported TLS options; validate before any credentials are sent. */
+/** @internal 生成受支持的 TLS 选项，在发送任何凭据前完成配置校验。 */
 final class TlsOptions
 {
     public static function fromConfig(Config $config): array
@@ -18,13 +18,14 @@ final class TlsOptions
         if (str_contains($name, "\0") || preg_match('/\s/', $name)) {
             throw new \InvalidArgumentException('TLS server name must not contain NUL bytes or whitespace');
         }
-        // RFC 6066 SNI carries DNS names, not IP literals. Normalize a DNS root dot.
+        // 按 RFC 6066，SNI 只携带 DNS 名，不发送 IP 字面量；同时去除 DNS 名末尾的根域点。
         $serverName = filter_var($name, FILTER_VALIDATE_IP) !== false ? '' : rtrim($name, '.');
         $options = [
             'open_ssl' => true,
             'ssl_verify_peer' => in_array($mode, [TlsMode::VerifyCA, TlsMode::VerifyIdentity], true),
             'ssl_allow_self_signed' => false,
-            // Identity validation is separate from SNI, including on Swoole 5.1.
+            // SWOOLE_SNI_COMPAT：身份校验与 SNI 分开；5.1.8、6.2.4 仍需 PacketStream 补充分离逻辑。
+            // 此处选项及独立 CertificateIdentity 校验不是停止支持 5.1 后就能直接删除的代码。
             'ssl_verify_host' => false,
             'ssl_host_name' => $serverName,
         ];
@@ -36,6 +37,7 @@ final class TlsOptions
                 TlsVersion::Tls12 => 'SWOOLE_SSL_TLSv1_2',
                 TlsVersion::Tls13 => 'SWOOLE_SSL_TLSv1_3',
             };
+            // 检查当前 Swoole 的 TLS 编译能力，与是否继续支持 5.1 无关。
             if (!defined($constant)) {
                 throw new \RuntimeException("Swoole does not support {$version}");
             }

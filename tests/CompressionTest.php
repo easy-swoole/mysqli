@@ -78,7 +78,7 @@ final class CompressionTest extends TestCase
             try {
                 $this->client->rawQuery("DROP TABLE IF EXISTS {$quotedTable}");
             } catch (\Throwable) {
-                // Preserve the original protocol or assertion failure.
+                // 保留原始协议异常或断言失败。
             }
         }
     }

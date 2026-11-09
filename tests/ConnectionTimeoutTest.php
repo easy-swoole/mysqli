@@ -61,7 +61,7 @@ final class ConnectionTimeoutTest extends TestCase
                 if (!$peer instanceof Socket) {
                     throw new \RuntimeException('Fake server did not accept the connection');
                 }
-                // No handshake: the client must disconnect when its budget expires.
+                // 不发送握手数据；预算耗尽时客户端必须断开连接。
                 $completed->push($peer->recvAll(1, 1.0));
                 $peer->close();
             } finally {

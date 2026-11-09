@@ -5,7 +5,7 @@ set -euo pipefail
 : "${MYSQLI_EXPECT_PHP_VERSION:?Set the exact expected PHP version}"
 : "${MYSQLI_EXPECT_SWOOLE_VERSION:?Set the exact expected Swoole version}"
 mkdir -p /workspace/project /results
-# Neither Composer nor PHPUnit may write into the host checkout.
+# Composer 和 PHPUnit 均不得写入主机上的仓库检出目录。
 tar -C /source --exclude='./.git' --exclude='./vendor' --exclude='./tests/docker/results' -cf - . \
     | tar -C /workspace/project -xf -
 cd /workspace/project
@@ -19,8 +19,8 @@ if [ "${MYSQLI_MATRIX_RUN_UNIT:-0}" = 1 ]; then
 fi
 integration_arguments=(--testsuite integration --fail-on-skipped --do-not-cache-result --log-junit /results/integration.xml)
 if [ "$MYSQLI_MATRIX_TLS_MODE" = disabled ]; then
-    # These tests explicitly require TLS. Exclude them before execution, so every
-    # remaining integration test must actually run rather than silently skip.
+    # 这些测试明确要求 TLS，执行前先排除，确保其余所有
+    # 集成测试都实际运行，而不会被静默跳过。
     integration_arguments+=(--filter '/^(?!.*TlsIntegrationTest)/')
 fi
 php tests/run.php "${integration_arguments[@]}"

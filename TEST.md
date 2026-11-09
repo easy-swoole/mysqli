@@ -487,3 +487,23 @@ Connection 将握手、能力协商、TLS 升级与认证抽出到 Authenticator
 最终验证环境为 PHP 8.4.27、Swoole 6.2.4、真实 MySQL 9.7.4，VerifyIdentity TLS。单元套件 404 项、5886 次断言全部通过（4.183 秒，18.00 MB）；数据库集成套件 105 项、1176 次断言全部通过（238.779 秒，92.31 MB），合计 509 项、7062 次断言，无错误、失败或跳过。首轮集成初始化出现 7 次 1 秒 TCP 建连超时；保留原超时及源码，串行重跑完整集成套件通过。测试使用独立随机库，结束后已删除；凭据仅经环境变量传入，未修改服务器全局配置。
 
 106 个 PHP 文件通过本机语法及 PHP 8.1 目标语法解析，132 段文档 PHP 示例及 Markdown 围栏检查通过；git diff --check 通过。容器/CI 脚本自检再次通过；本机未运行 Docker 矩阵，PHP 8.1 运行时与 MySQL 8.0/8.4 的实际运行结果仍以该矩阵执行为准，不能以本次 9.7.4 回归替代。
+
+## 2026-11-09 修复 CI 暴露的 Swoole 5.1 DNS/SNI 证书验证
+
+GitHub Actions run 42572640475 的 PHP 8.4/MySQL 8.0、8.4、9.7 三组通过。PHP 8.1.34/Swoole 5.1.8 组构建、Composer、环境与明文/压缩探测通过，单元测试中的 DNS 正常身份、VerifyCA 不要求匹配身份、IdentityMismatch 三项出现 2 errors / 1 failure，原因都是提前关闭验证导致的 CA 验证失败；该 lane 未进入集成套件。
+
+官方 Swoole 5.1.8 到 sslHandshake 时才创建 SSL_CTX，且仅在 verify_peer=true 时加载 CA；6.2.4 则无条件加载。原逻辑错误地认为 setProtocol 已经加载 CA，在 DNS/SNI 路径提前关闭验证，造成 5.1 信任库为空，握手后再开启也不能补做原生链构建。现保持验证开启，通过 Client::set（不提前 open_ssl）存储完整 TLS 设置，再由 enableSSL 创建上下文和发布真实原生错误。仅当 DNS 分离路径遇到原生验证错误时，清除已发送 SNI 对应的原生主机名检查，要求 peer 证书存在且原生完整链验证成功，再完成原生握手；之后仍执行独立 CertificateIdentity 及原 Deadline 检查，全部通过才发送 MySQL 凭据。未关闭 CA 验证、未以叶证书用途校验替换原生完整链、未新建连接或延长超时，默认 TLS 关闭及公开接口不变。
+
+新增 4 项中间链回归：root→intermediate→leaf 完整链的 DNS VerifyIdentity、VerifyCA 错名正例，以及缺 intermediate、不受信任链的无认证数据负例。正例另确认只把 leaf 交给 PHP 并信任 root 无法通过，提供 intermediate 后才能通过，确保测试可发现 leaf-only 的错误替代实现。README 补充中间证书链配置要求，测试说明记录实际 CI 运行状态。
+
+在工作区隔离构建 PHP 8.1.34、Swoole 5.1.8、OpenSSL 3.5.9，未修改系统安装；PHP 发行源码 SHA256 与 php.net 发布元数据一致。以修复前源码重跑原三项，准确复现 2 errors / 1 failure；修复后 17 项 TLS 测试、644 次断言全部通过。最终两个本地运行时分别通过 408 项单元测试、6002 次断言（8.1/5.1 耗时 4.189 秒，8.4/6.2 耗时 4.347 秒，均 18.00 MB），无失败或跳过。
+
+两个运行时分别在真实 MySQL 9.7.4 上通过 4 项 TLS 集成测试、21 次断言：证书身份验证、CA-only 与 SNI、超时重连、预处理 Unicode 结果、TLS 1.2/1.3 指定协商均通过。只执行会话及只读查询，未创建测试库、修改业务表或服务器全局配置。CI 的 Linux/Bookworm 使用 OpenSSL 3.0，本地隔离 8.1 使用 OpenSSL 3.5.9；修复后的 PHP 8.1 Docker lane 仍需新 CI 运行确认，不能把本地对照测试写成云端已经通过。
+
+## 2026-11-09 中文注释与 Swoole 兼容清理说明
+
+将源码、第一方 PHP 测试及 Shell 脚本的自然语言注释统一为中文，保留 PHPDoc 标签、类型表达式、类名和协议名等技术标识。README 新增“Swoole 版本兼容与清理”，源码以 SWOOLE_51_COMPAT、SWOOLE_SNI_COMPAT 标明不同兼容约束，Dockerfile 以 SWOOLE_51_BUILD 标明 5.x 构建分支的移除条件。
+
+明确记录：运行时没有按 Swoole 版本号分流；5.1 的 CA 加载时机属于专用初始化约束，SNI/主机名分离在 5.1.8 和 6.2.4 均需要，不能随 5.1 支持一起删除。OpenSSL 能力检查、完整证书链、独立身份校验和共享超时继续保留；构建分支只有确认矩阵不再构建任何 5.x 版本后才可删除，PHP 最低版本与 Swoole 最低版本分别维护。
+
+对本轮修改前后 106 个 PHP 文件逐项比较，去除注释和排版空白后的所有 Token 完全一致，捕获的 PHPDoc 声明保持一致；Shell/Dockerfile 排除纯注释行后的内容完全一致。106 个 PHP 文件通过真实 PHP 8.1 语法解析，修改的 Shell 脚本通过 bash -n，文档围栏及 git diff --check 通过。本轮仅修改注释和说明，未重复运行数据库回归。

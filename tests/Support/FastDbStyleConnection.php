@@ -10,7 +10,7 @@ use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\QueryBuilder;
 
 /**
- * Exercises FastDb-style calls with subclasses adapted to the current Client API.
+ * 通过适配当前 Client 接口的子类，验证 FastDb 风格的调用。
  */
 final class FastDbStyleConnection extends Client
 {

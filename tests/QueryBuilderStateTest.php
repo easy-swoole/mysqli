@@ -274,7 +274,7 @@ final class QueryBuilderStateTest extends TestCase
     {
         $sub = QueryBuilder::subQuery()->where('state', 'initial')->get('items', null, 'id');
         $branch = (new QueryBuilder())->where('state', 'branch_initial')->get('archive', null, 'id');
-        // An unused legacy null prefix must not be rejected by the extracted SELECT planner.
+        // 抽离后的 SELECT 规划器不得拒绝原先可用的 null 空前缀。
         $from = (new QueryBuilder())->setPrefix(null)->fromSub($sub, 's');
         $union = (new QueryBuilder())->union($branch);
         $in = (new QueryBuilder())->whereIn('id', $sub)->whereNotIn('otherId', $sub);

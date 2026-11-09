@@ -6,7 +6,7 @@ namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Exception\TimeoutException;
 
-/** @internal A monotonic operation budget shared by connection, authentication and packet I/O. */
+/** @internal 连接、认证及报文 I/O 共用的操作超时预算，基于单调时钟计算。 */
 final class Deadline
 {
     private function __construct(private readonly float $expiresAt)

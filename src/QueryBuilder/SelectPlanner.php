@@ -7,7 +7,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Expression;
 
 /**
- * @internal Stateless SELECT planning; the public builder retains factories and virtual calls.
+ * @internal 无状态 SELECT 查询规划；公开构造器保留工厂及可重写方法的调用。
  * @phpstan-import-type State from PendingQuery
  */
 final class SelectPlanner
@@ -57,7 +57,7 @@ final class SelectPlanner
     }
 
     /**
-     * Transform a COW state copy; the facade still clones itself and calls the clone's get().
+     * 转换写时复制的状态副本；公开入口仍克隆自身并调用副本的 get()。
      * @param State $state
      * @return array{state: State, quotedAlias: string}
      */
@@ -92,7 +92,7 @@ final class SelectPlanner
         return ['state' => $state, 'quotedAlias' => $quotedAlias];
     }
 
-    /** The alias comes from countInput(); parameters remain in the completed source's SQL order. */
+    /** 别名来自 countInput()；参数保持已构建来源查询中的 SQL 顺序。 */
     public static function countSql(string $sourceSql, string $quotedAlias): string
     {
         return 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($sourceSql)
@@ -115,7 +115,7 @@ final class SelectPlanner
     }
 
     /**
-     * Return only normalized inputs; cursor predicates and sorting still use facade methods.
+     * 仅返回规范化输入；游标条件及排序仍通过公开入口方法设置。
      * @param State $state
      * @return array{where: array, quotedColumn: string}
      */
@@ -134,7 +134,7 @@ final class SelectPlanner
         return ['where' => self::keysetWhere($state['whereConditions']), 'quotedColumn' => $quoted];
     }
 
-    /** Group the clone's current predicates after the facade has invoked the subclass's __clone(). */
+    /** 公开入口调用子类 __clone() 后，再将副本的当前条件组成一组。 */
     public static function keysetWhere(array $where): array
     {
         return $where === [] ? [] : [['group' => $where, 'concat' => '']];

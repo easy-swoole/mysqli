@@ -45,7 +45,7 @@ CNF);
         $ca = openssl_csr_sign($caCsr, null, $caKey, 2, ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => 'ca']);
         openssl_x509_export_to_file($ca, self::$directory . '/ca.pem');
         $key = openssl_pkey_new(['private_key_bits' => 2048]);
-        // CN must not be accepted when DNS SANs exist.
+        // 存在 DNS SAN 时，不得使用 CN 进行匹配。
         $csr = openssl_csr_new(['commonName' => 'cn-only.invalid'], $key, ['config' => $config, 'digest_alg' => 'sha256']);
         $cert = openssl_csr_sign($csr, $ca, $caKey, 1, ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => 'server']);
         $expired = openssl_csr_sign($csr, $ca, $caKey, 0, ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => 'server']);
@@ -54,6 +54,20 @@ CNF);
         file_put_contents(self::$directory . '/server.pem', self::$certificate);
         openssl_pkey_export_to_file($key, self::$directory . '/server.key');
         chmod(self::$directory . '/server.key', 0600);
+
+        // 客户端只信任根证书，对端必须提供此中间颁发者证书。
+        $intermediateKey = openssl_pkey_new(['private_key_bits' => 2048]);
+        $intermediateCsr = openssl_csr_new(['commonName' => 'Test Intermediate CA'], $intermediateKey,
+            ['config' => $config, 'digest_alg' => 'sha256']);
+        $intermediate = openssl_csr_sign($intermediateCsr, $ca, $caKey, 2,
+            ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => 'ca']);
+        openssl_x509_export_to_file($intermediate, self::$directory . '/intermediate.pem');
+        $chainLeaf = openssl_csr_sign($csr, $intermediate, $intermediateKey, 1,
+            ['config' => $config, 'digest_alg' => 'sha256', 'x509_extensions' => 'server']);
+        openssl_x509_export($chainLeaf, $chainCertificate);
+        openssl_x509_export($intermediate, $intermediateCertificate);
+        file_put_contents(self::$directory . '/chain-leaf.pem', $chainCertificate);
+        file_put_contents(self::$directory . '/chain.pem', $chainCertificate . $intermediateCertificate);
     }
 
     public static function tearDownAfterClass(): void
@@ -174,13 +188,65 @@ CNF);
         $this->completed($completed);
     }
 
+    public function testDnsIdentityVerifiesTheCompleteServedIntermediateChain(): void
+    {
+        $leaf = file_get_contents(self::$directory . '/chain-leaf.pem');
+        $ca = [self::$directory . '/ca.pem'];
+        $withoutIntermediate = openssl_x509_checkpurpose($leaf, X509_PURPOSE_SSL_SERVER, $ca);
+        self::assertFalse($withoutIntermediate === true || $withoutIntermediate === 1,
+            'The chain fixture must fail a leaf-only verification against the root CA');
+        $withIntermediate = openssl_x509_checkpurpose($leaf, X509_PURPOSE_SSL_SERVER, $ca,
+            self::$directory . '/intermediate.pem');
+        self::assertTrue($withIntermediate === true || $withIntermediate === 1);
+        [$client, $completed] = $this->server('chain', ['host' => 'localhost',
+            'tlsMode' => TlsMode::VerifyIdentity, 'tlsCaFile' => self::$directory . '/ca.pem']);
+        self::assertTrue($client->connect());
+        self::assertTrue($client->mysqlClient()->isTlsEnabled());
+        $client->close();
+        $this->completed($completed);
+    }
+
+    public function testDnsVerifyCaAcceptsTheServedIntermediateChainWithoutMatchingIdentity(): void
+    {
+        [$client, $completed] = $this->server('chain', ['tlsMode' => TlsMode::VerifyCA,
+            'tlsCaFile' => self::$directory . '/ca.pem', 'tlsServerName' => 'wrong.invalid']);
+        self::assertTrue($client->connect());
+        self::assertTrue($client->mysqlClient()->isTlsEnabled());
+        $client->close();
+        $this->completed($completed);
+    }
+
+    public function testMissingIntermediateWithDnsIdentitySendsNoCredentials(): void
+    {
+        [$client, $completed] = $this->server('chain_missing', ['host' => 'localhost',
+            'tlsMode' => TlsMode::VerifyIdentity, 'tlsCaFile' => self::$directory . '/ca.pem']);
+        try { $client->connect(); self::fail('Missing intermediate issuer accepted'); }
+        catch (Exception $error) {
+            self::assertStringContainsString('TLS', $error->getMessage());
+            self::assertNull($client->mysqlClient());
+        }
+        $this->completed($completed);
+    }
+
+    public function testUntrustedIntermediateChainWithDnsIdentitySendsNoCredentials(): void
+    {
+        [$client, $completed] = $this->server('chain_reject', ['host' => 'localhost',
+            'tlsMode' => TlsMode::VerifyIdentity]);
+        try { $client->connect(); self::fail('Untrusted intermediate chain accepted'); }
+        catch (Exception $error) {
+            self::assertStringContainsString('TLS', $error->getMessage());
+            self::assertNull($client->mysqlClient());
+        }
+        $this->completed($completed);
+    }
+
     private static function clientHelloServerNames(string $hello): array
     {
         self::assertSame(1, ord($hello[0]));
         $offset = 4 + 2 + 32;
-        $offset += 1 + ord($hello[$offset]); // session ID
-        $offset += 2 + unpack('n', substr($hello, $offset, 2))[1]; // cipher suites
-        $offset += 1 + ord($hello[$offset]); // compression methods
+        $offset += 1 + ord($hello[$offset]); // 会话 ID。
+        $offset += 2 + unpack('n', substr($hello, $offset, 2))[1]; // 密码套件。
+        $offset += 1 + ord($hello[$offset]); // 压缩方法。
         $end = $offset + 2 + unpack('n', substr($hello, $offset, 2))[1];
         $offset += 2;
         $names = [];
@@ -259,7 +325,7 @@ CNF);
 
     public function testExpiredCertificateSendsNoCredentials(): void
     {
-        // The zero-day fixture expires at its creation second; advance beyond that second.
+        // 有效期为零天的测试证书会在创建当秒过期；等待至该秒之后。
         Coroutine::sleep(1.05);
         [$client, $completed] = $this->server('expired', ['tlsMode' => TlsMode::VerifyIdentity, 'tlsServerName' => 'localhost',
             'tlsCaFile' => self::$directory . '/ca.pem']);
@@ -325,10 +391,13 @@ CNF);
                         if ($scenario === 'stall') {
                             Coroutine::sleep(0.15);
                         } else {
-                            self::assertTrue($peer->setProtocol(['open_ssl' => true, 'ssl_cert_file' => self::$directory . ($scenario === 'expired' ? '/expired.pem' : '/server.pem'),
+                            $certificate = $scenario === 'expired' ? '/expired.pem' : '/server.pem';
+                            if (in_array($scenario, ['chain', 'chain_reject'], true)) { $certificate = '/chain.pem'; }
+                            elseif ($scenario === 'chain_missing') { $certificate = '/chain-leaf.pem'; }
+                            self::assertTrue($peer->setProtocol(['open_ssl' => true, 'ssl_cert_file' => self::$directory . $certificate,
                                 'ssl_key_file' => self::$directory . '/server.key', 'ssl_verify_peer' => false]));
                             $tls = @$peer->sslHandshake();
-                            if (in_array($scenario, ['reject', 'expired'], true)) {
+                            if (in_array($scenario, ['reject', 'expired', 'chain_reject', 'chain_missing'], true)) {
                                 if ($tls) { self::assertSame('', @$peer->recv(1)); }
                             } else {
                                 self::assertTrue($tls);
@@ -338,7 +407,7 @@ CNF);
                                 if ($scenario === 'native') {
                                     self::send($peer, self::ok(), 3);
                                 } else {
-                                    // Force a cache miss: send the password only inside verified TLS.
+                                    // 强制缓存未命中；仅在已验证的 TLS 连接内发送密码。
                                     self::send($peer, "\x01\x04", 3);
                                     self::assertSame(["secret\0", 4], self::receive($peer));
                                     self::send($peer, self::ok(), 5);
@@ -346,7 +415,7 @@ CNF);
                             }
                         }
                     }
-                    if (in_array($scenario, ['ok', 'native', 'plaintext'], true)) {
+                    if (in_array($scenario, ['ok', 'native', 'plaintext', 'chain'], true)) {
                         [$query, $sequence] = self::receive($peer);
                         self::assertSame("\x03SET NAMES utf8mb4", $query);
                         self::assertSame(0, $sequence);

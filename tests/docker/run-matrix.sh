@@ -30,7 +30,7 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 lane_id=$1
-# Parsing a local JSON record avoids evaluating matrix fields as shell code.
+# 解析本地 JSON 记录，避免将矩阵字段作为 Shell 代码执行。
 lane_values=$(python3 - "$script_directory/matrix.json" "$lane_id" <<'PY'
 import json, re, sys
 lanes = json.load(open(sys.argv[1]))['include']
@@ -60,7 +60,7 @@ done
 docker info >/dev/null
 results_directory="$script_directory/results/$lane_id"
 mkdir -p "$results_directory"
-# Resource names are unique even when local invocations run concurrently.
+# 即使本地并发运行多次，各次创建的资源名称也保持唯一。
 run_id="mysqli-ci-$(date +%s)-$$"
 network_name="$run_id-net"
 database_container="$run_id-mysql"
@@ -92,15 +92,15 @@ docker image inspect "$runtime_image" "$mysql_image" \
 docker network create --label "mysqli.test.run=$run_id" "$network_name" >/dev/null
 docker volume create --label "mysqli.test.run=$run_id" "$certificate_volume" >/dev/null
 docker volume create --label "mysqli.test.run=$run_id" "$data_volume" >/dev/null
-# Resolve the mysql UID inside this exact server image; do not assume uid 999.
-# Only the server key, certificate and CA enter this temporary volume.
+# 在当前服务端镜像中查询 mysql 用户的 UID，不假定其为 999。
+# 此临时卷仅包含服务端私钥、证书和 CA 证书。
 docker run --rm --user 0 --entrypoint bash \
     --mount "type=bind,src=$certificate_directory,dst=/input,readonly" \
     --mount "type=volume,src=$certificate_volume,dst=/certs" "$mysql_image" -ec \
     'cp /input/ca.pem /input/server-cert.pem /input/server-key.pem /certs/; chown -R mysql:mysql /certs; chmod 700 /certs; chmod 600 /certs/server-key.pem; chmod 644 /certs/ca.pem /certs/server-cert.pem'
 secure_transport=ON
 if [ "$tls_mode" = disabled ]; then secure_transport=OFF; fi
-# These credentials only exist inside the disposable, unexposed Docker network.
+# 这些测试凭据仅用于未向外暴露的一次性 Docker 网络。
 ci_root_password=container_test_root_password
 ci_password=container_test_password
 docker run -d --name "$database_container" --network "$network_name" --network-alias mysql \

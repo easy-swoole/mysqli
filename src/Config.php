@@ -170,7 +170,7 @@ class Config extends SplBean
         $this->compress = $compress;
     }
 
-    /** Defaults to Disabled. Invalid mode names are rejected, never downgraded. */
+    /** 默认禁用 TLS。无效模式名称会被拒绝，不会降级连接。 */
     public function getTlsMode(): TlsMode
     {
         return $this->tlsMode instanceof TlsMode ? $this->tlsMode : TlsMode::from($this->tlsMode);

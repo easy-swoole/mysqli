@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\Exception\ProtocolException;
 
 final class Codec
 {
-    /** Validate a read before indexing or unpacking packet bytes. */
+    /** 在按下标读取或解包报文字节之前，校验读取范围。 */
     public static function requireBytes(string $data, int $offset, int $length): void
     {
         if ($offset < 0 || $length < 0 || $offset > strlen($data) || $length > strlen($data) - $offset) {

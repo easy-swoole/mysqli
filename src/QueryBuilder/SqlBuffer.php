@@ -2,7 +2,7 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Ordered SQL and parameter output for one compilation. */
+/** @internal 保存单次编译的 SQL 及按顺序排列的参数。 */
 final class SqlBuffer
 {
     public ?string $column = null;

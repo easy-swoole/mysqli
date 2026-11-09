@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\Exception\Exception;
 
 /**
- * @internal Compile WHERE, HAVING, JOIN values and nested conditions.
+ * @internal 编译 WHERE、HAVING、JOIN 条件值及嵌套条件。
  * @phpstan-type ConditionNode array{0: string, 1: mixed, 2: string, 3: mixed}|array{group: array, concat: string}|array{exists: QueryBuilder, operator: string, concat: string}|array{column: array{string, string, string}, concat: string}|array{expression: Expression, concat: string}
  */
 final class ConditionCompiler
@@ -35,7 +35,7 @@ final class ConditionCompiler
     }
 
     /**
-     * ON tuples keep their legacy field text; structured column nodes quote both identifiers.
+     * ON 条件元组保留旧字段文本；结构化字段比较节点对两侧标识符加引用。
      * @param array<array-key, ConditionNode> $conditions
      */
     public function appendOn(array $conditions): void
@@ -54,7 +54,7 @@ final class ConditionCompiler
     }
 
     /**
-     * The same condition tree can be compiled in WHERE, HAVING or a JOIN ON scope.
+     * 同一条件树可在 WHERE、HAVING 或 JOIN ON 作用域中编译。
      * @param array<array-key, ConditionNode> $conditions
      */
     private function appendList(array $conditions, bool $on): void
@@ -96,7 +96,7 @@ final class ConditionCompiler
         }
     }
 
-    /** Shared operator handling keeps WHERE/HAVING and ON binding semantics consistent. */
+    /** 共用运算符处理，保持 WHERE/HAVING 与 ON 的参数绑定语义一致。 */
     private function appendValue(mixed $operator, mixed $value, ?string $conditionField = null): void
     {
         if ($value === ConditionValue::Raw) {

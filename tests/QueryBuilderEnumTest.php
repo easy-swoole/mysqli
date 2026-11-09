@@ -17,7 +17,7 @@ use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderEnumTest extends TestCase
 {
-    /** Compare the exact public build result, including spacing and transaction flags. */
+    /** 精确比较公开构建结果，包括空白和事务标记。 */
     private function buildResult(QueryBuilder $builder): array
     {
         return [$builder->getLastPrepareQuery(), $builder->getLastBindParams(),
@@ -124,7 +124,7 @@ final class QueryBuilderEnumTest extends TestCase
             'havingRaw' => fn($q, $c) => $q->havingRaw('SUM(amount) > ?', [1], $c),
             'havingColumn' => fn($q, $c) => $q->havingColumn('paid', 'total', '=', $c),
             'joinWhere' => fn($q, $c) => $q->joinWhere('users u', 'u.active', true, '=', $c),
-            // Keep the old OR convenience method's accepted but ignored cond argument.
+            // 保留原有 OR 便捷方法接受但忽略 cond 参数的行为。
             'joinOrWhere' => fn($q, $c) => $q->joinOrWhere('users u', 'u.active', true, '=', $c),
             'joinOn' => fn($q, $c) => $q->joinOn('users u', 'u.tenantId', 'o.tenantId', '=', $c),
         ];
@@ -286,7 +286,7 @@ final class QueryBuilderEnumTest extends TestCase
             $expected = (new QueryBuilder())->setPrefix('app_')->setLockTableMode(strtolower($string))->lockTable(['users', 'orders']);
             self::assertSame($this->buildResult($expected), $this->buildResult($actual));
             self::assertSame(QueryBuilder::TS_OP_LOCK_TABLE, $actual->getLastTransactionOp());
-            // The existing table lock mode survives reset, unlike SELECT lock state.
+            // 原有表锁模式在重置后仍会保留；SELECT 行锁状态则会清除。
             $actual->lockTable('users');
             $expected->lockTable('users');
             self::assertSame($this->buildResult($expected), $this->buildResult($actual));

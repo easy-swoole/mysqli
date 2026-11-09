@@ -3,6 +3,8 @@ ARG PHP_IMAGE=php:8.4.27-cli-bookworm
 FROM ${PHP_IMAGE}
 ARG SWOOLE_VERSION=6.2.4
 COPY --from=composer:2.11.1 /usr/bin/composer /usr/local/bin/composer
+# SWOOLE_51_BUILD：下方 RUN 中的 5.* 版本分支为 Swoole 5.1 显式启用 OpenSSL。
+# 确认矩阵不再构建任何 5.x 版本后，可删除该 case 分支；继续保留 TLS 能力检查。
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \

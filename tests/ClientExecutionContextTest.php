@@ -26,7 +26,7 @@ final class ClientExecutionContextTest extends TestCase
         }
     }
 
-    /** Guard/dispatch fixture: an open local socket descriptor, without binding or network I/O. */
+    /** 并发保护与调用分派的测试夹具：仅创建本地套接字描述符，不绑定端口或进行网络读写。 */
     private function connected(bool $busy = false): Connection
     {
         $connection = new Connection(new Config());

@@ -40,7 +40,7 @@ final class ApiContractTest extends TestCase
                     $label . ': existing return type was removed or narrowed');
             }
         }
-        // New internal classes/methods are deliberately not rejected by this historical contract.
+        // 此历史兼容性契约允许新增内部类和方法。
     }
 
     public function testTypePolicyAllowsAuthorizedDeclarationsButRejectsExistingTypeNarrowing(): void

@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\QueryBuilder;
 
 /**
- * @internal Defaults for the builder's copy-on-write pending state.
- * Arrays preserve PHP clone isolation without requiring a subclass to call parent::__clone().
+ * @internal 构造器写时复制的待构建状态默认值。
+ * 使用数组保持 PHP 克隆隔离，无需子类调用 parent::__clone()。
  * @phpstan-type State array{
  *   transactionOp: ?int, joins: list<array>, whereConditions: list<array>,
  *   unionBranches: list<array>, joinConditions: array<array-key, array>, havingConditions: list<array>,

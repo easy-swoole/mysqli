@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Protocol;
 
-/** Keep string parameters as separate parts instead of copying a full execute payload. */
+/** 字符串参数保留为独立片段，避免复制完整的执行载荷。 */
 final class ParameterEncoder
 {
     /**

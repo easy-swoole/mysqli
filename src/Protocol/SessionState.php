@@ -6,7 +6,7 @@ namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Exception\TransactionLostException;
 
-/** @internal Server-confirmed session state; transport details belong to PacketStream. */
+/** @internal 服务端已确认的会话状态；传输细节由 PacketStream 负责。 */
 final class SessionState
 {
     private const SERVER_STATUS_IN_TRANS = 0x0001;
@@ -37,7 +37,7 @@ final class SessionState
 
     public function applyServerError(int $code): void
     {
-        // InnoDB rolls back the complete transaction for 1213; 1205 normally affects only the statement.
+        // InnoDB 在错误 1213 时回滚整个事务；错误 1205 通常仅影响当前语句。
         if ($code === 1213) {
             $this->inTransaction = false;
         }

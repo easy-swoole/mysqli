@@ -4,7 +4,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 
 use EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Coordinate clause compilers in SQL and binding order. */
+/** @internal 按照 SQL 及参数绑定顺序协调各子句编译器。 */
 final class QueryCompiler
 {
     public function compile(SqlBuffer $buffer, QueryParts $parts, mixed $numRows, mixed $tableData): ?int

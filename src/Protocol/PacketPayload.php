@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Protocol;
 
-/** Assemble at most one classic packet payload at a time. */
+/** 每次最多组装一个经典协议报文的载荷。 */
 final class PacketPayload
 {
     /** @param list<string> $parts @return \Generator<int, string> */

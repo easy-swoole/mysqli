@@ -7,7 +7,7 @@ namespace EasySwoole\Mysqli\Tests;
 use EasySwoole\Mysqli\QueryBuilder;
 use PHPUnit\Framework\TestCase;
 
-/** Lock the public contract while allowing the implementation to move into internal collaborators. */
+/** 固定公开接口契约，同时允许将实现迁移到内部协作类。 */
 final class QueryBuilderPublicApiTest extends TestCase
 {
     public function testPublicSignaturesAndConstantsRemainCompatible(): void

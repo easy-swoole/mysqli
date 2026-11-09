@@ -594,7 +594,7 @@ final class QueryBuilderTest extends TestCase
             $this->builder->getLastPrepareQuery()
         );
         self::assertSame([1, 2], $this->builder->getLastBindParams());
-        // Reusing the outer builder preserves the completed subquery and clears only the outer hint.
+        // 复用外层构造器时，保留已构建的子查询，仅清除外层索引提示。
         $this->builder->where('id', $sub, 'in')->get('users');
         self::assertStringNotContainsString('FORCE INDEX (`PRIMARY`)', $this->builder->getLastPrepareQuery());
         self::assertStringContainsString('FORCE INDEX (`idx_qty`)', $this->builder->getLastPrepareQuery());

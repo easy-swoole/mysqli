@@ -5,7 +5,7 @@
 ## 环境要求
 
 - PHP 8.1 或更高版本。
-- Swoole 5.1 或更高版本。
+- Swoole 5.1 或更高版本；兼容代码及后续清理条件见 [Swoole 版本兼容与清理](#swoole-版本兼容与清理)。
 - OpenSSL、Sockets 和 zlib 扩展。
 - MySQL 服务端 8.0 或更高版本；容器兼容矩阵与执行状态见 [测试说明](tests/README.md)。
 
@@ -102,6 +102,7 @@ $config->setTlsCaPath('/secure/mysql/ca-directory');
 ```
 
 - 分别为可读的 PEM CA 文件和 CA 目录；VerifyCA / VerifyIdentity 未指定时使用 Swoole/OpenSSL 的默认信任库。
+- 服务端使用中间 CA 时，应发送叶证书和必要的中间证书链。客户端由 OpenSSL 验证完整链；仅有可信根 CA 不会自动补齐服务端遗漏的中间证书，缺链或不受信任的链都会拒绝连接。
 - 私有 CA、自签 CA 通常需要显式配置。通过可信渠道取得 CA，不使用从未验证连接中临时下载的证书建立信任。
 - 显式指定但不存在、不可读或类型不正确的路径会报错。Required 不验证证书链，即使提供 CA 文件也不会自动变成 VerifyCA。
 
@@ -1127,6 +1128,30 @@ $builder->where('id', $id)->nowait()->get('orders');
 收到格式错误或截断的协议数据时，抛出 `EasySwoole\Mysqli\Exception\ProtocolException` 并立即关闭连接，避免下一条查询读取遗留报文。非事务连接可在下一次查询时重新建立；事务内发生协议错误时，仍遵循上述事务丢失保护。
 
 预处理参数采用分段编码与分包发送，避免将多个大字符串重复拼成整条执行报文。结果字段及行解码由 `Protocol\ResultDecoder` 负责；压缩接收缓冲区使用读取游标，减少逐行读取时的字符串复制。
+
+## Swoole 版本兼容与清理
+
+当前最低要求为 `ext-swoole >=5.1`。TLS 运行时代码没有按版本号分流，而是根据可用方法、验证模式、SNI 和原生错误码处理。`tests/docker/Dockerfile` 中的 `case "$SWOOLE_VERSION" in 5.*)` 才是构建时的版本判断。
+
+相关注释使用以下标记，便于检索兼容原因与移除边界：
+
+| 标记或位置 | 保留原因 | 停止支持 5.1 后的处理 |
+| --- | --- | --- |
+| `SWOOLE_51_COMPAT`，`PacketStream::enableTls()` 初始化 | 5.1 在握手时才创建 SSL_CTX，且只有开启验证才加载 CA；因此握手前始终保持验证开启 | 可重新评估初始化流程。当前 `Client::enableSSL()` 还负责可靠提供原生错误码；只要继续使用该方法，保存配置前移除 `open_ssl` 的步骤在 6.2 中也必须保留，不能单独删除 |
+| `SWOOLE_51_BUILD`，Dockerfile 的 `5.*` 分支 | 为 5.1 构建显式添加 `--enable-openssl` | 确认矩阵不再构建任何 5.x 版本后，可以删除该 `case` 分支，继续校验目标运行时具有 OpenSSL/TLS 能力 |
+| `SWOOLE_SNI_COMPAT`，TLS 握手恢复、`verifyTlsCertificate()`、`TlsOptions` | 已验证 5.1.8 和 6.2.4 都会根据 SNI 执行原生主机名检查，需要分开实现 VerifyCA 和 VerifyIdentity | 继续保留。只有目标 Swoole 已正确支持 SNI 与身份校验分离，并通过相应用例后，才能简化此流程；停止支持 5.1 本身不足以删除这些分支 |
+| `method_exists()`、TLS 常量检查 | 检查扩展是否编译了所需 OpenSSL 方法和协议能力 | 属于通用能力检查，继续保留 |
+
+```bash
+rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
+```
+
+后续提高 Swoole 最低版本时，按以下顺序清理：
+
+1. 更新 `composer.json` 的 `ext-swoole` 约束和环境说明；PHP 的最低版本独立维护。移除 Swoole 5.1 不代表同时移除 PHP 8.1。
+2. 移除或替换 `tests/docker/matrix.json` 中使用 Swoole 5.1.8 的条目，确认不再构建任何 5.x 版本后再删除 Dockerfile 中对应的分支；仍支持 PHP 8.1 时，为它保留受支持的 Swoole 测试组合。依赖约束变化后按测试说明重新生成依赖快照。
+3. 对照上述标记审查运行时逻辑。完整证书链验证、独立 `CertificateIdentity` 校验、共享 `Deadline` 和默认关闭 TLS 的规则继续保留；只有经过目标版本验证的兼容实现才可简化。
+4. 执行单元套件、`TlsIntegrationTest` 和更新后的容器矩阵，保留 DNS/SNI、VerifyCA 错名正例、VerifyIdentity 错名负例、完整/缺失中间链、过期/不受信任证书、认证前拒绝、超时及压缩覆盖。相关测试描述的是功能和安全约束，不随 5.1 矩阵一起删除。
 
 ## 内部职责划分
 

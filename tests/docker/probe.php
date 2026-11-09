@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use EasySwoole\Mysqli\{Client, Config};
 
-/** Validate the transport and server actually used, rather than trusting image names. */
+/** 校验实际使用的传输方式和服务端，不能只依赖镜像名称。 */
 function validateMatrixEnvironment(array $actual, string $version, bool $tls, bool $compress): void
 {
     if (preg_match('/^' . preg_quote($version, '/') . '(?:[-+]|$)/', $actual['server_version']) !== 1) {

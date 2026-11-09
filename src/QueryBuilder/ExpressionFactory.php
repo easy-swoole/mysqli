@@ -4,7 +4,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal Build the existing write-expression descriptors and time intervals. */
+/** @internal 构建既有写入表达式描述及时间间隔。 */
 final class ExpressionFactory
 {
     /** @return array{'[F]': array{0: mixed}} */

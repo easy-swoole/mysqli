@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Pagination metadata without converting unsigned counts to floating point. */
+/** @internal 计算分页元数据，不将无符号计数转换为浮点数。 */
 final class Pagination
 {
     public static function offset(int $perPage, int $page): int

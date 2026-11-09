@@ -109,7 +109,7 @@ final class MetadataTest extends TestCase
         self::assertSame($expected, $this->client->mysqlClient()->insert_id);
         self::assertSame(1, $this->client->getLastAffectRows());
         self::assertSame(1, $this->client->mysqlClient()->affected_rows);
-        // CAST verifies the exact decimal value independently of the client integer decoder.
+        // 通过 CAST 独立校验精确十进制值，避免依赖客户端整数解码器。
         self::assertSame([['id' => $id]], $this->client->rawQuery("SELECT CAST(id AS CHAR) AS id FROM `{$this->table}`"));
     }
 

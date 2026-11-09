@@ -24,7 +24,7 @@ use EasySwoole\Mysqli\QueryBuilder\{
 };
 
 /**
- * Public fluent API; planning and SQL compilation are delegated to internal collaborators.
+ * 公开链式接口；查询规划和 SQL 编译委托给内部协作类。
  * @phpstan-import-type State from PendingQuery
  */
 class QueryBuilder
@@ -35,10 +35,10 @@ class QueryBuilder
     private ?string $subQueryAlias = '';
     private bool $lastUnionOperandNeedsParentheses = true;
 
-    /** @var State Copy-on-write state; clones never share a mutable state object. */
+    /** @var State 写时复制状态；克隆对象不会共享可变状态对象。 */
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
-    // Debug SQL becomes visible before a virtual reset() publishes the executable snapshot.
+    // 在可重写的 reset() 发布可执行快照之前，调试 SQL 已可读取。
     private mixed $lastRenderedQuery = null;
 
     const TS_OP_START = 1;
@@ -120,7 +120,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** Add a parameterized SELECT expression; the first call replaces the implicit default *. */
+    /** 添加带绑定参数的 SELECT 表达式；首次调用替换隐式默认字段 *。 */
     public function selectRaw(string $sql, array $parameters = []): QueryBuilder
     {
         $expression = new Expression($sql, $parameters);
@@ -156,7 +156,7 @@ class QueryBuilder
     private function conditionConjunction(ConditionConjunction|string $cond, bool $strict = true): string
     {
         if ($cond instanceof ConditionConjunction) { return $cond->value; }
-        // Legacy WHERE/HAVING/ON strings retain their spelling and extensible SQL syntax.
+        // 旧 WHERE/HAVING/ON 字符串保留原有拼写及可扩展的 SQL 语法。
         if (!$strict) { return $cond; }
         $conjunction = ConditionConjunction::tryFrom(strtoupper(trim($cond)));
         if ($conjunction === null) {
@@ -168,7 +168,7 @@ class QueryBuilder
     private function comparisonOperator(ComparisonOperator|string $operator, bool $strict = false): string
     {
         if ($operator instanceof ComparisonOperator) { return $operator->value; }
-        // Ordinary predicates also accept LIKE, IN, BETWEEN and other existing SQL operators.
+        // 普通条件也接受 LIKE、IN、BETWEEN 等已有 SQL 运算符。
         if (!$strict) { return $operator; }
         $comparison = ComparisonOperator::tryFrom(strtoupper(trim($operator)));
         if ($comparison === null) {
@@ -180,7 +180,7 @@ class QueryBuilder
     private function lockWaitOption(LockWaitPolicy|string $option): string
     {
         if ($option instanceof LockWaitPolicy) { return $option->value; }
-        // Preserve legacy SQL tails (such as OF table_name); only known policies are normalized.
+        // 保留旧 SQL 尾部片段（例如 OF table_name）；仅规范化已知策略。
         return LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option;
     }
 
@@ -225,7 +225,7 @@ class QueryBuilder
         return $field;
     }
 
-    /** Where条件 */
+    /** WHERE 条件。 */
     public function where(mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $operator = $this->comparisonOperator($operator);
@@ -237,7 +237,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** WhereOr条件 */
+    /** 通过 OR 连接的 WHERE 条件。 */
     public function orWhere(mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->where($whereProp, $whereValue, $operator, 'OR');
@@ -390,7 +390,7 @@ class QueryBuilder
         return $this->orderBy($column, SortDirection::Desc);
     }
 
-    /** OrderBy条件 */
+    /** ORDER BY 排序条件。 */
     public function orderBy(mixed $orderByField, SortDirection|string $orderbyDirection = "DESC", mixed $customFieldsOrRegExp = null): QueryBuilder
     {
         [$key, $order] = SelectCompiler::order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $this->prefix, $this->pending['tableName']);
@@ -416,7 +416,7 @@ class QueryBuilder
         return $page->reorder()->orderByRaw($quoted . ' ASC')->limit($size);
     }
 
-    /** GroupBy条件 */
+    /** GROUP BY 分组条件。 */
     public function groupBy(mixed $groupByField): QueryBuilder
     {
         $groupByField = preg_replace("/[^-a-z0-9\.\(\),_\* <>=!%`\']+/i", '', $groupByField);
@@ -424,7 +424,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** Having条件 */
+    /** HAVING 聚合筛选条件。 */
     public function having(mixed $havingProp, mixed $havingValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $operator = $this->comparisonOperator($operator);
@@ -440,13 +440,13 @@ class QueryBuilder
         return $this;
     }
 
-    /** OrHaving条件 */
+    /** 通过 OR 连接的 HAVING 条件。 */
     public function orHaving(mixed $havingProp, mixed $havingValue = ConditionValue::Raw, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->having($havingProp, $havingValue, $operator, 'OR');
     }
 
-    /** Join查询 */
+    /** JOIN 关联查询。 */
     public function join(mixed $joinTable, mixed $joinCondition, JoinType|string $joinType = ''): QueryBuilder
     {
         $joinType = $joinType instanceof JoinType ? $joinType->value : strtoupper(trim($joinType));
@@ -465,7 +465,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** 为关联表添加 AND 条件。 Join xx where xx */
+    /** 为关联表的 ON 子句追加 AND 条件。 */
     public function joinWhere(mixed $whereJoin, mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $operator = $this->comparisonOperator($operator);
@@ -474,7 +474,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** 为关联表添加 OR 条件。 Join xx or where xx */
+    /** 为关联表的 ON 子句追加 OR 条件。 */
     public function joinOrWhere(mixed $whereJoin, mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->joinWhere($whereJoin, $whereProp, $whereValue, $operator, 'OR');
@@ -501,13 +501,13 @@ class QueryBuilder
             $this->pending['unionBranches'][] = [$cond->getLastPrepareQuery(), $cond->getLastBindParams(), $isUnionAll,
                 $cond->lastUnionOperandNeedsParentheses];
         } elseif (is_string($cond)) {
-            // Raw SQL may already contain local ordering, pagination or another UNION.
+            // 原始 SQL 可能已包含局部排序、分页或其他 UNION。
             $this->pending['unionBranches'][] = [$cond, [], $isUnionAll, true];
         }
         return $this;
     }
 
-    /** LockInShareModel锁定(InnoDb) */
+    /** InnoDB 共享行锁。 */
     public function lockInShareMode(mixed $isLock = true): QueryBuilder
     {
         if ($isLock) {
@@ -518,7 +518,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** SELECT FOR UPDATE锁定(InnoDb) */
+    /** InnoDB 排他行锁（SELECT FOR UPDATE）。 */
     public function selectForUpdate(mixed $isLock = true, LockWaitPolicy|string|null $option = null): QueryBuilder
     {
         if ($isLock) {
@@ -569,9 +569,9 @@ class QueryBuilder
     {
         $this->pending['transactionOp'] = self::TS_OP_LOCK_TABLE;
         $this->pending['sql'] = "LOCK TABLES";
-        // Is the table an array?
+        // 判断是否传入了表名数组。
         if (gettype($table) == "array") {
-            // Loop trough it and attach it to the query
+            // 遍历表名并追加到查询中。
             foreach ($table as $key => $value) {
                 if (gettype($value) == "string") {
                     if ($key > 0) {
@@ -582,9 +582,9 @@ class QueryBuilder
                 }
             }
         } else {
-            // Build the table prefix
+            // 添加表前缀。
             $table = $this->prefix . $table;
-            // Build the query
+            // 构建查询。
             $this->pending['sql'] = "LOCK TABLES " . $table . " " . $this->tableLockMethod;
             $this->lastRenderedQuery = $this->pending['sql'];
         }
@@ -696,7 +696,7 @@ class QueryBuilder
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
     public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
     {
-        // Validate before cloning; apply the plan after any subclass __clone() has run.
+        // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
         TableReference::identifier($alias);
         $source = clone $this;
         $plan = SelectPlanner::countInput($source->pending, $alias);
@@ -801,7 +801,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** Batch insert/update using the table's primary/unique key constraints. */
+    /** 依据表的主键或唯一键约束执行批量插入或更新。 */
     public function upsert(mixed $tableName, array $rows, array $updateColumns): QueryBuilder
     {
         $rows = WriteCompiler::normalizeBatch($rows);
@@ -824,14 +824,14 @@ class QueryBuilder
         return $this;
     }
 
-    /** onDuplicate插入 */
+    /** 设置插入时的重复键更新（onDuplicate）。 */
     public function onDuplicate(mixed $updateColumns): QueryBuilder
     {
         $this->pending['updateColumns'] = $updateColumns;
         return $this;
     }
 
-    /** update查询 */
+    /** UPDATE 更新查询。 */
     public function update(mixed $tableName, mixed $tableData, mixed $numRows = null): ?QueryBuilder
     {
         if ($this->isSubQuery) {
@@ -852,7 +852,7 @@ class QueryBuilder
         return $this;
     }
 
-    /** delete查询 */
+    /** DELETE 删除查询。 */
     public function delete(mixed $tableName, mixed $numRows = null): ?QueryBuilder
     {
         if ($this->isSubQuery) {
@@ -887,31 +887,31 @@ class QueryBuilder
         return $this;
     }
 
-    /** MysqlFunc/Now 快捷方法 */
+    /** MySQL 函数及当前时间表达式的快捷方法。 */
     public static function now(mixed $diff = null, mixed $func = "NOW()"): array
     {
         return ExpressionFactory::now($diff, $func);
     }
 
-    /** MysqlInc表达式 */
+    /** MySQL 递增表达式。 */
     public static function inc(mixed $num = 1): array
     {
         return ExpressionFactory::inc($num);
     }
 
-    /** MysqlDec表达式 */
+    /** MySQL 递减表达式。 */
     public static function dec(mixed $num = 1): array
     {
         return ExpressionFactory::dec($num);
     }
 
-    /** MysqlNot表达式 */
+    /** MySQL 逻辑取反表达式。 */
     public static function not(mixed $col = null): array
     {
         return ExpressionFactory::not($col);
     }
 
-    /** MysqlFunc表达式 */
+    /** MySQL 函数表达式。 */
     public static function func(mixed $expr, mixed $bindParams = null): array
     {
         return ExpressionFactory::func($expr, $bindParams);

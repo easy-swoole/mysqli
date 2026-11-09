@@ -2,14 +2,14 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal Render diagnostic SQL without changing executable SQL or parameters. */
+/** @internal 生成调试展示 SQL，不修改可执行 SQL 或参数。 */
 final class SqlFormatter
 {
-    /** @return string|array<array-key, string>|null Preserve preg_replace_callback's subject/result shape. */
+    /** @return string|array<array-key, string>|null 保留 preg_replace_callback 输入与结果的类型形状。 */
     public static function render(mixed $str, mixed $vals): string|array|null
     {
         $i = 0;
-        // Match quoted literals and comments before matching actual placeholders.
+        // 先匹配已引用的字面量及注释，再匹配实际占位符。
         $pattern = <<<'REGEX'
 ~'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
 REGEX;

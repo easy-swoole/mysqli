@@ -269,7 +269,7 @@ final class Connection
      */
     public function closeStatement(int $statementId, ?int $generation = null, ?float $timeout = null): void
     {
-        // A stale statement must never send its ID to another server session.
+        // 已失效的语句不得将自身 ID 发送到其他服务端会话。
         if (!$this->isConnected() || ($generation !== null && $generation !== $this->state->generation())) {
             return;
         }

@@ -278,7 +278,7 @@ class Client
         }
     }
 
-    /** Create the operation budget before clearing metadata, preserving invalid-timeout behavior. */
+    /** 先创建本次操作的超时预算，再清除元数据，保留无效超时参数的原有行为。 */
     private function beginExecution(?float $timeout): ExecutionContext
     {
         $execution = new ExecutionContext($timeout ?? $this->config->getTimeout(),
