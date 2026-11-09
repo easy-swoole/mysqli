@@ -120,7 +120,7 @@ final class ConditionCompiler
                 $this->buffer->sql .= $operator . $this->pair('', $value);
                 break;
             default:
-                if ($conditionField !== null && in_array($operator, ['=', '<=>', '<>', '!=', '>', '<', '>=', '<='])
+                if ($conditionField !== null && ComparisonOperator::tryFrom($operator) !== null
                     && is_array($value) && strpos($conditionField, '?') === false) {
                     throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} can not be array");
                 }

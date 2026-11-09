@@ -131,15 +131,20 @@ $config->setTlsKeyPassphrase(getenv('MYSQL_TLS_KEY_PASSPHRASE') ?: '');
 - 口令用于解密客户端私钥，不是数据库密码；客户端证书也不代替 MySQL 用户名和数据库密码。
 - 不将私钥、解密口令或数据库密码提交到代码仓库；限制私钥文件读取权限。Config 的序列化包含配置值，不要把完整 Config 打到日志。
 
-### `tlsVersions`
+### `tlsVersions` / `setTlsVersions(array $versions): void`
 
 ```php
-$config->setTlsVersions(['TLSv1.2', 'TLSv1.3']); // 默认值
-$config->setTlsVersions(['TLSv1.3']);            // 仅允许 TLS 1.3
+use EasySwoole\Mysqli\TlsVersion;
+
+$config->setTlsVersions([TlsVersion::Tls12, TlsVersion::Tls13]); // 等价于默认版本列表
+$config->setTlsVersions([TlsVersion::Tls13]);                  // 仅允许 TLS 1.3
+$config->setTlsVersions(['TLSv1.2', TlsVersion::Tls13]);        // 可混用原字符串
+$config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', 'TLSv1.3']
 ```
 
-- 只接受 TLSv1.2、TLSv1.3，列表不能是空数组；不支持或无效的版本配置会报错，不允许降级到旧 TLS 协议。
-- 实际可用版本取决于 Swoole/OpenSSL 编译能力以及服务端配置；没有共同版本时连接失败。
+- `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与 setter 均可混用枚举、字符串；默认值和 getter 的字符串数组返回格式不变。
+- setter 仍只保存列表，不立即校验版本名。getter 将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
+- 只允许 TLS 1.2、TLS 1.3，不能降级到旧协议；实际可用版本取决于 Swoole/OpenSSL 编译能力及服务端配置。TLS 默认关闭，版本列表本身不会开启 TLS。
 - TLS 握手计入 `maxConnectTime`，也计入触发自动连接的单次查询总超时，不会获得独立的新超时预算。
 
 ### 认证、查询与重连
@@ -268,7 +273,76 @@ $builder->join('users u', 'u.id = o.userId', 'LEFT')
 - 数据库 NULL 使用 PHP `null`；判断 NULL 请使用 `whereNull()` / `whereNotNull()`。此修复不改变旧的 `where('column', null)` 所指定的比较运算符，不会自动把 `= NULL` 改为 `IS NULL`。
 - `Raw` 或单参数条件会原样写入 SQL，不引用整个表达式、不追加运算符、不绑定值。仅用于代码中固定或经过严格白名单检查的表达式，不拼接请求参数。
 - 迁移：旧的 `where('a.id = b.id', 'DBNULL')` 改为 `where('a.id = b.id')` 或显式传 `ConditionValue::Raw`；HAVING、JOIN 及 OR 方法同理。旧的字符串控制标记不再兼容。
-- 枚举只用于上述条件方法的“值”参数，不作为 INSERT/UPDATE 写入值或 Statement 绑定参数使用；不需要把布尔值转换为枚举。
+- `ConditionValue::Raw` 只用于上述条件方法的“值”参数，不作为 INSERT/UPDATE 写入值或 Statement 绑定参数使用；不需要把布尔值转换为枚举。下文的比较、连接符枚举用于其他结构参数。
+
+### `where()` / `orWhere()`：比较运算符与连接符枚举
+
+```php
+use EasySwoole\Mysqli\QueryBuilder\ComparisonOperator;
+use EasySwoole\Mysqli\QueryBuilder\ConditionConjunction;
+
+$builder->where(whereProp: 'amount', whereValue: 100,
+        operator: ComparisonOperator::GreaterThanOrEqual, cond: ConditionConjunction::And)
+    ->where('status', 'pending', ComparisonOperator::Equal, ConditionConjunction::Or)->get('orders');
+```
+
+`$operator` 接受 `ComparisonOperator|string`，默认仍为字符串 `'='`；`$cond` 接受 `ConditionConjunction|string`，默认仍为字符串 `'AND'`。第一个 WHERE 条件不输出前置连接符；`orWhere()` 固定使用 OR。
+
+| `ComparisonOperator` | 对应 SQL |
+| --- | --- |
+| `Equal` | `=` |
+| `NullSafeEqual` | `<=>` |
+| `NotEqual` | `<>` |
+| `NotEqualAlt` | `!=` |
+| `GreaterThan` | `>` |
+| `LessThan` | `<` |
+| `GreaterThanOrEqual` | `>=` |
+| `LessThanOrEqual` | `<=` |
+
+- `ConditionConjunction::And` / `Or` 分别对应 AND / OR。枚举用于 SQL 结构参数，不放入条件值、INSERT/UPDATE 数据或 Statement 的绑定参数。
+- 普通 `where()` 仍原样保留字符串 `$operator` / `$cond` 的大小写、空白及旧扩展写法，例如 `'REGEXP'`、`'LIKE'`、`'IN'`、`'BETWEEN'`、`'XOR'`。这些 SQL 结构必须来自可信代码或白名单，字符串兼容不表示构造器已验证其完整 SQL 语法。
+- `ConditionValue::Raw` 继续表示完整原始条件；PHP `null`、`true`、`false` 继续按原规则使用，不新增 NULL 或布尔值枚举，也不需要转换。比较 NULL 优先使用 `whereNull()` / `whereNotNull()`。
+- `ComparisonOperator`、`ConditionConjunction`、`SortDirection`、`JoinType`、`TableLockMode`、`LockWaitPolicy` 均位于 `EasySwoole\Mysqli\QueryBuilder` 命名空间；TLS 版本枚举另见 `EasySwoole\Mysqli\TlsVersion`。
+- 此次扩展保留现有参数名、默认值和返回类型，枚举与相应字符串生成相同 SQL、绑定参数及事务标记。重写相关方法的子类应核对父类的新联合参数类型；将参数仅限定为 `string` 会不兼容，需接受相应 `枚举|string`（`selectForUpdate()` 的 `$option` 还接受 `null`）。未限定参数类型的更宽声明仍可兼容。
+
+### `having()` / `orHaving()`：聚合条件中的枚举
+
+```php
+$builder->groupBy('userId')
+    ->having('SUM(amount)', 100, ComparisonOperator::GreaterThan, ConditionConjunction::And)
+    ->having('COUNT(*)', 5, ComparisonOperator::GreaterThanOrEqual, ConditionConjunction::Or)->get('orders');
+
+// 保留旧的关联数组写法；数组键中的运算符覆盖第三个参数。
+$builder->groupBy('userId')->having('COUNT(*)', ['>=' => 5], ComparisonOperator::Equal)->get('orders');
+```
+
+- `$operator` / `$cond` 的枚举、字符串及默认值规则与普通 `where()` 一致；`orHaving()` 固定以 OR 连接。首个 HAVING 条件不输出前置连接符。
+- 旧的关联数组条件继续使用字符串键，例如 `['>=' => 5]`；PHP 枚举对象不能作为数组键。数组内运算符仍按旧规则覆盖 `$operator`，不要同时传入互相矛盾的两套写法。
+- HAVING 分组回调内使用 `having()` 等 HAVING 方法，可直接传这些枚举；值、原始条件和参数顺序规则不变。
+
+### `join($joinTable, $joinCondition, JoinType|string $joinType = '')`
+
+```php
+use EasySwoole\Mysqli\QueryBuilder\JoinType;
+
+$builder->join(joinTable: 'users u', joinCondition: 'u.id=o.userId', joinType: JoinType::Left)
+    ->get('orders o');
+$builder->join('users', '', JoinType::Natural)->get('orders');
+// SELECT * FROM `orders` NATURAL JOIN users
+```
+
+| `JoinType` | 对应原字符串 |
+| --- | --- |
+| `Default` | `''`，输出不带类型前缀的 JOIN |
+| `Inner` | `'INNER'` |
+| `Left` / `Right` | `'LEFT'` / `'RIGHT'` |
+| `LeftOuter` / `RightOuter` | `'LEFT OUTER'` / `'RIGHT OUTER'` |
+| `Natural` | `'NATURAL'` |
+
+- 默认仍为原字符串 `''`；既有大小写和首尾空白处理不变，例如 `' left outer '` 仍可用。固定类型字符串通过枚举的 `tryFrom()` 校验；无效类型在追加 JOIN 前报错。
+- 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
+- `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
+- 其他类型的 `$joinCondition` 仍是原有 ON / USING 条件或 Expression，JOIN 类型枚举不负责字段引用、值绑定或自动生成条件。表名、别名及条件继续由可信代码提供。
 
 ### `Expression` / `rawExpression(string $sql, array $parameters = [])`
 
@@ -317,7 +391,7 @@ $builder->fields(['id'])->selectRaw('COALESCE(name, ?) AS name', ['匿名'])->ge
 - SELECT 表达式参数排在 JOIN、WHERE、HAVING、UNION 分支和 ORDER BY 参数之前，与方法调用先后无关。构建完成或 `reset()` 后清除。
 - 只传选择列表中的表达式，不传 `SELECT` 关键字或整条查询；有计算列时建议显式写别名。
 
-### `whereRaw(string $sql, array $parameters = [], string $cond = 'AND')`
+### `whereRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND')`
 
 ```php
 $builder->where('tenantId', $tenantId)
@@ -329,7 +403,9 @@ $builder->where('tenantId', $tenantId)
 - 第三个参数只能是 AND 或 OR（忽略大小写及两侧空白）；首个条件省略前置连接符。复杂的多层条件可与 `whereGroup()` 配合。
 - SQL 片段仍必须可信，所有外部值通过 `$parameters` 绑定；不需要手动加 SQL 引号。`whereRaw()` 不替代普通 `where()` 的字段和值比较。
 
-### `havingRaw(string $sql, array $parameters = [], string $cond = 'AND')`
+- `$cond` 也可传 `ConditionConjunction::And` / `Or`，例如 `whereRaw('score > ?', [100], ConditionConjunction::Or)`。字符串仍只接受 AND / OR，忽略大小写及首尾空白并通过 `tryFrom()` 校验；不继承普通 `where()` 的扩展连接符兼容。
+
+### `havingRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND')`
 
 ```php
 $builder->fields(['userId', 'SUM(amount) AS total_amount'])
@@ -338,6 +414,8 @@ $builder->fields(['userId', 'SUM(amount) AS total_amount'])
 
 - 生成带括号的 HAVING 条件，连接符及可信 SQL 的规则与 `whereRaw()` 相同；不传 `HAVING` 关键字。
 - HAVING 参数在 WHERE 参数之后、UNION 分支及整体排序参数之前；组内筛选使用 `havingGroup()`。
+
+- `$cond` 同样支持 `ConditionConjunction`，例如 `havingRaw('SUM(amount) > ?', [100], ConditionConjunction::Or)`；只接受 AND / OR 的严格范围保持不变。
 
 ### `orderByRaw(string $sql, array $parameters = [])`
 
@@ -362,6 +440,13 @@ $builder->whereColumn('orders.paid_amount', 'orders.total_amount', '>=')->get('o
 - 支持 `=`、`<=>`、`<>`、`!=`、`>`、`<`、`>=`、`<=`；其他运算符、空字段段或畸形引用会报错。字段名仍应来自可信代码或白名单。
 - `orWhereColumn($first, $second, $operator = '=')` 以 OR 连接；AND/OR 组合需要括号时放入 `whereGroup()`。
 
+```php
+$builder->whereColumn('orders.paid_amount', 'orders.total_amount',
+    ComparisonOperator::GreaterThanOrEqual, ConditionConjunction::And)->get('orders');
+```
+
+- `$operator` 接受 `ComparisonOperator|string`，`$cond` 接受 `ConditionConjunction|string`，默认值仍为 `'='` / `'AND'`；OR 版本同样接受比较枚举。字符串经去除首尾空白及大小写归一化后，仍严格限制为上述八种运算符和 AND / OR，不接受普通 `where()` 的扩展运算符或 XOR。
+
 ### `havingColumn($first, $second, $operator = '=', $cond = 'AND')` / `orHavingColumn()`
 
 ```php
@@ -371,6 +456,8 @@ $builder->fields(['userId', 'SUM(paid) AS paid_total', 'SUM(expected) AS expecte
 
 - 用于 HAVING 中两个结果字段或别名的比较；参数顺序、字段引用、运算符和 OR 版本规则与 `whereColumn()` 相同。
 - 这里的两个参数都不是聚合表达式 SQL；需要直接写 `SUM(...)` 等计算时用 `havingRaw()` 或 Expression。
+
+- `$operator` / `$cond` 也可传 `ComparisonOperator` / `ConditionConjunction`，例如 `havingColumn('paid_total', 'expected_total', ComparisonOperator::LessThan, ConditionConjunction::Or)`；字符串的严格八种比较和 AND / OR 范围与 `whereColumn()` 相同。
 
 ### `joinOn($table, $first, $second, $operator = '=', $cond = 'AND')` / `joinOrOn()`
 
@@ -384,6 +471,8 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 - `$table` 与 `join()` 中的表名、别名写法保持一致；JOIN 子查询使用其别名定位。表前缀由构造器沿用现有规则处理，不手动重复添加。
 - `joinOrOn($table, $first, $second, $operator = '=')` 追加 OR。需要与常量值比较时使用 `joinWhere()`；需要括号时使用下面的 ON 分组。
 - 仅适用于 ON JOIN；初始条件为 `USING(...)` 的 JOIN 不能再追加 `joinOn()`、`joinWhere()` 或 ON 分组，否则会报错。需要追加条件时从 `join()` 开始就使用 ON 条件。
+
+- `$operator` / `$cond` 同样接受 `ComparisonOperator` / `ConditionConjunction`，例如 `joinOn('users u', 'u.tenantId', 'o.tenantId', ComparisonOperator::Equal, ConditionConjunction::And)`；OR 版本接受比较枚举，严格范围与 `whereColumn()` 相同。
 
 ### `havingGroup($callback)` / `orHavingGroup($callback)`
 
@@ -459,7 +548,7 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 - 先调用条件、排序、索引及锁方法，最后调用 `get()`、`getOne()`、`update()` 等构建方法，再交给 `$client->query($builder)` 执行。构建方法本身不访问数据库。
 - `get()` 等方法完成构建时就会清除当前设置，并非等到执行后才清除；已生成的 SQL 和绑定参数保留。表前缀不会自动清除。
 - 字段名、索引名、SQL 表达式和 AND/OR 连接符使用代码常量或白名单；参数绑定只保护条件值，不保护 SQL 结构。
-- 集合、范围和 LIKE 方法的第三个参数是 `$cond`；NULL 和 EXISTS 方法的第二个参数是 `$cond`，默认均为 `'AND'`。只传 `'AND'` 或 `'OR'`，首个条件的连接符自动省略。
+- 集合、范围和 LIKE 方法的第三个参数是 `$cond`；NULL 和 EXISTS 方法的第二个参数是 `$cond`，默认均为 `'AND'`。可用 `ConditionConjunction::And` / `Or` 或原字符串；建议仅使用 AND / OR，首个条件的连接符自动省略。
 - AND/OR 仍遵循 SQL 的优先级，需要括号时使用条件组。这些 WHERE 方法也可用于 UPDATE、DELETE，写入前应确认条件范围。
 
 ### `forceIndex($indexes)`
@@ -511,6 +600,8 @@ $builder->whereIn('userId', $sub)->get('orders');
 - 子查询在外层构建前不要重建或修改，外层构建时才读取它的 SQL 和参数。
 - 旧写法 `where('id', [], 'IN')` 保持原行为，空数组保护仅适用于此新方法。
 
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereIn(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
 ### `whereNotIn($column, $values, $cond = 'AND')`
 
 ```php
@@ -522,6 +613,8 @@ $builder->whereNotIn('status', ['cancelled', 'closed'])->get('orders');
 - 列表或子查询结果包含 NULL 时，遵循 SQL 的 NULL 比较规则，可能导致原本预期保留的行也不返回；需要排除集合中的 NULL，或明确设计 NULL 条件。
 - 旧的 `where(..., 'NOT IN')` 不增加空数组保护。
 
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereNotIn(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
 ### `whereNull($column, $cond = 'AND')`
 
 ```php
@@ -532,6 +625,8 @@ $builder->whereNull('deleted_at')->get('orders');
 - `$cond` 是第二个参数，例如 `whereNull('deleted_at', 'OR')`。需要与其他条件组成一个整体时放入 `whereGroup()`。
 - 该方法不改变旧的 `where($column, null)` 行为；判断 NULL 时优先使用明确的 NULL 方法。
 
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereNull(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
 ### `whereNotNull($column, $cond = 'AND')`
 
 ```php
@@ -540,6 +635,8 @@ $builder->whereNotNull('paid_at')->get('orders');
 
 - 生成 `IS NOT NULL`，不绑定值；空字符串和 0 仍可能满足条件。如果还要排除这些值，需要另加条件。
 - `$cond` 是第二个参数；字段名使用固定值或白名单。
+
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereNotNull(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
 
 ### `whereBetween($column, [$min, $max], $cond = 'AND')`
 
@@ -551,6 +648,8 @@ $builder->whereBetween('amount', [100, 500])->get('orders');
 - 包含两端边界，不能表达“含起点、不含终点”。时间范围需要半开区间时使用原有 `where('created_at', $start, '>=')->where('created_at', $end, '<')`。
 - 使用与字段类型匹配的值；日期时间字符串的格式、精度和时区由调用方统一。NULL 边界遵循 SQL 的 NULL 比较规则。
 
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereBetween(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
 ### `whereLike($column, $pattern, $cond = 'AND')`
 
 ```php
@@ -561,6 +660,8 @@ $builder->whereLike('u.name', '%手机%')->get('users u');
 - 不自动添加 `%`，也不转义 `%`、`_`；它们仍是通配符。要按字面量搜索这些字符时，由调用方按会话的 SQL 转义规则处理。
 - pattern 整体通过参数绑定，不需要手动添加 SQL 引号；字符串 `'DBNULL'` 也会正常绑定。
 - 是否区分大小写由字段和表达式的排序规则决定，前置 `%` 的匹配需要关注查询成本。
+
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereLike(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
 
 ### `whereExists($subquery, $cond = 'AND')`
 
@@ -576,6 +677,8 @@ $builder->whereExists($sub)->get('orders');
 - 关联列比较应使用代码中固定的 SQL 表达式，如示例的单参数 `where()`；`where('payments.orderId', 'orders.id')` 会把后者当字符串值绑定。
 - 内外层别名要与各自 SQL 一致。子查询在外层构建前不要重建或修改，参数会在外层构建时按 SQL 顺序合并。
 
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereExists(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
 ### `whereNotExists($subquery, $cond = 'AND')`
 
 ```php
@@ -585,6 +688,8 @@ $builder->whereNotExists($sub)->get('orders');
 - 子查询、别名、关联条件及参数合并要求与 `whereExists()` 相同；这里的 `$sub` 可使用上一节构建的子查询。
 - 表示子查询没有符合条件的记录；没有关联条件时，可能使整个外层查询全部满足或全部不满足，而不是逐条判断关联关系。
 - `$cond` 是第二个参数。用于写入时，应先确认关联条件和最终 WHERE 范围。
+
+- `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereNotExists(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
 
 ### `whereGroup($callback)`
 
@@ -613,7 +718,7 @@ $builder->where('status', 'pending')
 - 闭包及嵌套要求与 `whereGroup()` 相同，只是以 OR 连接整个分组；作为首个条件时省略前置 OR。
 - 它不会把之前的条件一起括起来。例如租户限制后直接 OR 一个组，可能使该组绕开租户限制；需要 `tenantId AND (A OR B)` 时，把 A、B 都放入同一个 `whereGroup()`。
 
-### `orderBy($column, $direction = 'DESC', $customFieldsOrRegExp = null)`
+### `orderBy($orderByField, SortDirection|string $orderbyDirection = 'DESC', $customFieldsOrRegExp = null)`
 
 ```php
 $builder->where('tenantId', $tenantId)->orderBy('name', 'DESC', "O'Reilly")->get('users');
@@ -625,6 +730,16 @@ $builder->where('tenantId', $tenantId)->orderBy('name', 'DESC', "O'Reilly")->get
 - 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
 - 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
 - 字段名仍使用代码常量或白名单。通过 `Client::query()` 执行预处理 SQL；`getLastQuery()` 仅供调试展示，不用于重新拼接执行。
+
+```php
+use EasySwoole\Mysqli\QueryBuilder\SortDirection;
+
+$builder->orderBy(orderByField: 'created_at', orderbyDirection: SortDirection::Desc)->get('orders');
+$builder->orderBy('name', SortDirection::Asc, '^A')->get('users');
+```
+
+- `$orderbyDirection` 接受 `SortDirection|string`，`Asc` / `Desc` 对应 ASC / DESC；默认仍为字符串 `'DESC'`。`orderByAsc()` / `orderByDesc()` 原调用保持不变。
+- 字符串仍忽略大小写并去除首尾空白，例如 `' asc '`；固定方向通过 `SortDirection::tryFrom()` 校验，无效方向在覆盖已有排序项前报错。自定义排序、绑定值及排序顺序保持原规则。
 
 ### `union($query, $isUnionAll = false)`
 
@@ -665,6 +780,14 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 - 仅适用于 ON JOIN；初始条件为 `USING(...)` 时不能追加 `joinWhere()`、`joinOrWhere()`、`joinOn()` 或 ON 分组，需要追加条件时从 `join()` 开始使用 ON 条件。
 - 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
 
+```php
+$builder->join('users u', 'u.id=o.userId', JoinType::Left)
+    ->joinWhere('users u', 'u.active', true, ComparisonOperator::Equal, ConditionConjunction::And)
+    ->get('orders o');
+```
+
+- `$operator` / `$cond` 接受 `ComparisonOperator|string` / `ConditionConjunction|string`，默认仍为 `'='` / `'AND'`；普通字符串保留原大小写、空白及扩展语法兼容。`joinOrWhere()` 仍固定 OR，保留的 `$cond` 参数不改变其 OR 行为。NULL、布尔值及显式 `ConditionValue::Raw` 的含义不变。
+
 ### `orderByAsc($column)`
 
 ```php
@@ -683,6 +806,45 @@ $builder->orderByDesc('mapId')->get('order_mapping', 10);
 
 - 等价于旧的 `orderBy($column, 'DESC')`；字段安全、多字段顺序和同字段覆盖规则与 `orderByAsc()` 相同。
 - `orderByAsc('id')->orderByDesc('id')` 最终按 `id DESC`，不会同时生成两个相反方向。构建完成后排序设置自动清除。
+
+### `selectForUpdate($isLock = true, LockWaitPolicy|string|null $option = null)`
+
+```php
+use EasySwoole\Mysqli\QueryBuilder\LockWaitPolicy;
+
+$builder->selectForUpdate(isLock: true, option: LockWaitPolicy::Nowait)->get('orders');
+$builder->selectForUpdate(true, LockWaitPolicy::SkipLocked)->get('orders');
+// 保留 FOR UPDATE，显式清除先前的 SKIP LOCKED / NOWAIT。
+$builder->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('orders');
+```
+
+- `Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。`$isLock` 默认仍为 `true`，`$option` 默认仍为 `null`，返回类型不变。
+- 显式枚举 `Default` 会清除已设置的等待策略；兼容旧调用，省略 `$option`、传 `null` 或字符串 `''` 不覆盖已有策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
+- 已知策略字符串继续接受，并按大小写无关及去除首尾空白的结果映射，例如 `' nowait '` 输出 NOWAIT。未知字符串尾部按旧接口原样保留，例如已有的 `OF ...` 片段；只能来自可信代码，是否能执行由目标服务端决定，不代表支持了新的数据库方言。
+- 方法仅构建 SQL，不开启事务或立即申请锁；在同一客户端连接的业务事务中执行。SELECT 锁标记和等待策略在构建完成或 `reset()` 后清除。
+
+### `setSelectLockOption(LockWaitPolicy|string $option)`
+
+```php
+$builder->setSelectLockOption(LockWaitPolicy::SkipLocked)->forUpdate()->get('orders');
+$builder->skipLocked()->setSelectLockOption(LockWaitPolicy::Default)->get('orders');
+```
+
+- 只设置等待策略，不自动开启 FOR UPDATE；可与 `forUpdate()` / `selectForUpdate()` 配合。枚举 `Default` 或字符串 `''` 在本方法中都会清除旧策略。
+- 已知策略字符串归一化及未知可信尾部的兼容规则与 `selectForUpdate()` 相同；不要将请求参数直接用作锁选项。
+
+### `setLockTableMode(TableLockMode|string $method)` / `lockTable($table)`
+
+```php
+use EasySwoole\Mysqli\QueryBuilder\TableLockMode;
+
+$builder->setLockTableMode(method: TableLockMode::Write)->lockTable(['users', 'orders']);
+$builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
+```
+
+- `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
+- 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
+- 表锁模式沿用原有持久行为，构建完成或 `reset()` 不恢复为 READ；复用构造器时需要显式切回。表前缀处理和事务操作标记不变。
 
 ### `forUpdate($isLock = true)`
 
@@ -740,7 +902,7 @@ $builder->where('id', $id)->nowait()->get('orders');
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。
 - `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。
 
-上述辅助类属于内部实现。`Client`、`Connection`、`Statement` 和 `QueryBuilder` 的既有公开方法签名保持不变。
+上述辅助类属于内部实现。`Client`、`Connection`、`Statement` 的既有公开方法签名保持不变。`QueryBuilder` 的相关结构参数扩展为枚举与字符串联合类型；方法名、参数名、默认值、返回类型及旧字符串调用保留，子类重写注意事项见上文。
 
 ## QueryBuilder 内部职责
 

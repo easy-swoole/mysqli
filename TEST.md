@@ -439,3 +439,16 @@ TLS 根据 tlsServerName 或连接 DNS 名发送 SNI，IP 不发送 SNI；SNI �
 公开 API 快照核对原有 71 个方法的签名及常量保持不变，新增 16 个方法。新增 37 项单元场景和 6 项真实数据库场景，README 与 queryBuilder.md 对应方法下已同步用法、参数顺序、可信 SQL、分组闭包、JOIN 定位和版本限制。
 
 在 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4 上通过 VerifyIdentity TLS 运行全套 296 项测试、3030 次断言，耗时 190.306 秒，无失败、错误或跳过。最后的参数引用隔离及字面字段边界修正后，再次验证全部单元测试 207 项、1939 次断言，以及 QueryBuilder 数据库专项 14 项、36 次断言，均通过。数据库测试使用独立随机测试库；新增写入场景使用连接级临时表，结束后已清理测试库。PHP 语法、13 段新增文档示例的语法、Markdown 围栏及 git diff --check 均通过。凭据仅通过进程环境变量传入，未修改远程服务器配置。
+
+
+## 2026-11-09 SQL 结构参数支持枚举与字符串
+
+新增 QueryBuilder 命名空间下的 SortDirection、JoinType、ConditionConjunction、TableLockMode、LockWaitPolicy、ComparisonOperator 六个字符串枚举，以及根命名空间的 TlsVersion；所有 case 均附中文说明。相关公开结构参数接受对应 Enum|string，固定选项按原大小写/空白规则通过 tryFrom() 校验。普通 WHERE/HAVING/ON 的字符串运算符与连接符仍保留原始文本和扩展语法，Raw/Column 严格校验范围不变。原生 null/true/false、ConditionValue::Raw 及 Expression 语义不变。
+
+LockWaitPolicy::Default 显式清除此前的 NOWAIT/SKIP LOCKED；selectForUpdate() 省略选项、null 或旧空字符串的行为保留，setSelectLockOption() 的空字符串仍清除策略。TLS 配置支持字符串与 TlsVersion 混合数组，getter 继续返回字符串数组、保留键；版本名和空数组仍在构建 TLS 选项时校验。TLS 默认关闭，证书校验和协议版本能力位不变。
+
+核对全部 87 个公开方法，其中 27 个方法扩大参数类型；方法及参数名、参数顺序/默认值、返回类型和公开常量保持不变。子类重写原 string 参数的方法需要同步接受相应联合类型；README 和 QueryBuilder 指南已在对应方法下注明迁移要求及每项枚举的用法。顺带修复既有 NATURAL JOIN 错误追加 ON 的问题，使用空初始条件按同名列自然连接，拒绝附加 ON/USING 条件，参照 [MySQL JOIN 语法](https://dev.mysql.com/doc/refman/8.4/en/join.html)。
+
+新增 44 项单元测试及 4 项真实数据库场景，覆盖枚举与字符串的精确 SQL/参数/标记一致、各条件入口、命名参数、失败不部分变更状态、锁策略重置、TLS 配置构造/restore/getter/错误路径、自然连接和 TLS 1.2/1.3 实际协商。QueryBuilder/TLS 数据库专项 21 项、69 次断言通过。16 个新增或修改 PHP 文件通过 PHP 8.4 语法检查及 PHP 8.1 目标语法解析（未在 PHP 8.1 运行时执行）；20 段枚举文档示例语法及 Markdown 围栏检查通过。
+
+最终在 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4 上通过 VerifyIdentity TLS 执行全套回归：344 项测试、3405 次断言全部通过，无错误、失败或跳过，耗时 207.830 秒，峰值内存 94.31 MB。其中单元测试 251 项，数据库集成测试 93 项。测试使用独立随机数据库，结束后已删除；凭据仅通过进程环境变量传入，未更改服务器配置。git diff --check 通过。

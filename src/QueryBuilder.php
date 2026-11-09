@@ -3,7 +3,22 @@
 namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exception\Exception;
-use EasySwoole\Mysqli\QueryBuilder\{ExpressionFactory, QueryCompiler, QueryParts, SelectCompiler, SqlBuffer, SqlFormatter, TableReference, WriteCompiler};
+use EasySwoole\Mysqli\QueryBuilder\{
+    ComparisonOperator,
+    ConditionConjunction,
+    ExpressionFactory,
+    JoinType,
+    LockWaitPolicy,
+    QueryCompiler,
+    QueryParts,
+    SelectCompiler,
+    SortDirection,
+    SqlBuffer,
+    SqlFormatter,
+    TableLockMode,
+    TableReference,
+    WriteCompiler
+};
 
 /** Public fluent API; SQL compilation is delegated to internal collaborators. */
 class QueryBuilder
@@ -146,17 +161,17 @@ class QueryBuilder
         return new Expression($sql, $parameters);
     }
 
-    public function whereRaw(string $sql, array $parameters = [], string $cond = 'AND'): QueryBuilder
+    public function whereRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addRawCondition($this->whereConditions, $sql, $parameters, $cond);
     }
 
-    public function havingRaw(string $sql, array $parameters = [], string $cond = 'AND'): QueryBuilder
+    public function havingRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addRawCondition($this->havingConditions, $sql, $parameters, $cond);
     }
 
-    private function addRawCondition(array &$conditions, string $sql, array $parameters, string $cond): QueryBuilder
+    private function addRawCondition(array &$conditions, string $sql, array $parameters, ConditionConjunction|string $cond): QueryBuilder
     {
         $concat = $this->conditionConjunction($cond);
         $expression = new Expression($sql, $parameters);
@@ -164,41 +179,60 @@ class QueryBuilder
         return $this;
     }
 
-    private function conditionConjunction(string $cond): string
+    private function conditionConjunction(ConditionConjunction|string $cond, bool $strict = true): string
     {
-        $cond = strtoupper(trim($cond));
-        if (!in_array($cond, ['AND', 'OR'], true)) {
+        if ($cond instanceof ConditionConjunction) { return $cond->value; }
+        // Legacy WHERE/HAVING/ON strings retain their spelling and extensible SQL syntax.
+        if (!$strict) { return $cond; }
+        $conjunction = ConditionConjunction::tryFrom(strtoupper(trim($cond)));
+        if ($conjunction === null) {
             throw new \InvalidArgumentException('Condition conjunction must be AND or OR');
         }
-        return $cond;
+        return $conjunction->value;
     }
 
-    public function whereColumn(string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    private function comparisonOperator(ComparisonOperator|string $operator, bool $strict = false): string
+    {
+        if ($operator instanceof ComparisonOperator) { return $operator->value; }
+        // Ordinary predicates also accept LIKE, IN, BETWEEN and other existing SQL operators.
+        if (!$strict) { return $operator; }
+        $comparison = ComparisonOperator::tryFrom(strtoupper(trim($operator)));
+        if ($comparison === null) {
+            throw new \InvalidArgumentException('Unsupported column comparison operator');
+        }
+        return $comparison->value;
+    }
+
+    private function lockWaitOption(LockWaitPolicy|string $option): string
+    {
+        if ($option instanceof LockWaitPolicy) { return $option->value; }
+        // Preserve legacy SQL tails (such as OF table_name); only known policies are normalized.
+        return LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option;
+    }
+
+    public function whereColumn(string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addColumnCondition($this->whereConditions, $first, $second, $operator, $cond);
     }
 
-    public function orWhereColumn(string $first, string $second, string $operator = '='): QueryBuilder
+    public function orWhereColumn(string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->whereColumn($first, $second, $operator, 'OR');
     }
 
-    public function havingColumn(string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    public function havingColumn(string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addColumnCondition($this->havingConditions, $first, $second, $operator, $cond);
     }
 
-    public function orHavingColumn(string $first, string $second, string $operator = '='): QueryBuilder
+    public function orHavingColumn(string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->havingColumn($first, $second, $operator, 'OR');
     }
 
-    private function addColumnCondition(array &$conditions, string $first, string $second, string $operator, string $cond, bool $on = false): QueryBuilder
+    private function addColumnCondition(array &$conditions, string $first, string $second, ComparisonOperator|string $operator, ConditionConjunction|string $cond, bool $on = false): QueryBuilder
     {
-        $operator = strtoupper(trim($operator));
-        if (!in_array($operator, ['=', '<=>', '<>', '!=', '>', '<', '>=', '<='], true)) {
-            throw new \InvalidArgumentException('Unsupported column comparison operator');
-        }
+        $operator = $this->comparisonOperator($operator, true);
         TableReference::column($first);
         TableReference::column($second);
         $concat = $this->conditionConjunction($cond);
@@ -218,8 +252,10 @@ class QueryBuilder
     }
 
     /** Where条件 */
-    public function where($whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
+    public function where($whereProp, $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND')
     {
+        $operator = $this->comparisonOperator($operator);
+        $cond = $this->conditionConjunction($cond, false);
         if (count($this->whereConditions) == 0) {
             $cond = '';
         }
@@ -228,13 +264,13 @@ class QueryBuilder
     }
 
     /** WhereOr条件 */
-    public function orWhere($whereProp, $whereValue = ConditionValue::Raw, $operator = '=')
+    public function orWhere($whereProp, $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=')
     {
         return $this->where($whereProp, $whereValue, $operator, 'OR');
     }
 
     /** 集合条件；空数组生成恒假条件。 */
-    public function whereIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
+    public function whereIn(string $column, array|QueryBuilder $values, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         if ($values === []) {
             return $this->where('0 = 1', ConditionValue::Raw, '=', $cond);
@@ -244,7 +280,7 @@ class QueryBuilder
     }
 
     /** 排除集合；空数组生成恒真条件。 */
-    public function whereNotIn(string $column, array|QueryBuilder $values, string $cond = 'AND'): QueryBuilder
+    public function whereNotIn(string $column, array|QueryBuilder $values, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         if ($values === []) {
             return $this->where('1 = 1', ConditionValue::Raw, '=', $cond);
@@ -253,17 +289,17 @@ class QueryBuilder
         return $this->where($column, $values, 'NOT IN', $cond);
     }
 
-    public function whereNull(string $column, string $cond = 'AND'): QueryBuilder
+    public function whereNull(string $column, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->where($column, null, 'IS', $cond);
     }
 
-    public function whereNotNull(string $column, string $cond = 'AND'): QueryBuilder
+    public function whereNotNull(string $column, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->where($column, null, 'IS NOT', $cond);
     }
 
-    public function whereBetween(string $column, array $bounds, string $cond = 'AND'): QueryBuilder
+    public function whereBetween(string $column, array $bounds, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         if (count($bounds) !== 2) {
             throw new \InvalidArgumentException('BETWEEN requires exactly two bounds');
@@ -272,7 +308,7 @@ class QueryBuilder
     }
 
     /** pattern 由调用方提供，% 和 _ 保持 SQL 通配符含义。 */
-    public function whereLike(string $column, string $pattern, string $cond = 'AND'): QueryBuilder
+    public function whereLike(string $column, string $pattern, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         // Quote each identifier segment and bind the complete LIKE pattern.
         return $this->where(implode('.', array_map(
@@ -281,23 +317,24 @@ class QueryBuilder
         )) . ' LIKE ?', [$pattern], '=', $cond);
     }
 
-    public function whereExists(QueryBuilder $subquery, string $cond = 'AND'): QueryBuilder
+    public function whereExists(QueryBuilder $subquery, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $this->validateConditionSubquery($subquery);
         return $this->addExistsCondition($subquery, 'EXISTS', $cond);
     }
 
-    public function whereNotExists(QueryBuilder $subquery, string $cond = 'AND'): QueryBuilder
+    public function whereNotExists(QueryBuilder $subquery, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $this->validateConditionSubquery($subquery);
         return $this->addExistsCondition($subquery, 'NOT EXISTS', $cond);
     }
 
-    private function addExistsCondition(QueryBuilder $subquery, string $operator, string $cond): QueryBuilder
+    private function addExistsCondition(QueryBuilder $subquery, string $operator, ConditionConjunction|string $cond): QueryBuilder
     {
         if ($subquery->getSubQuery()['alias']) {
             throw new \InvalidArgumentException('EXISTS subqueries must not have an alias');
         }
+        $cond = $this->conditionConjunction($cond, false);
         $this->whereConditions[] = ['exists' => $subquery, 'operator' => $operator, 'concat' => $this->whereConditions === [] ? '' : $cond];
         return $this;
     }
@@ -375,16 +412,16 @@ class QueryBuilder
 
     public function orderByAsc(string $column): QueryBuilder
     {
-        return $this->orderBy($column, 'ASC');
+        return $this->orderBy($column, SortDirection::Asc);
     }
 
     public function orderByDesc(string $column): QueryBuilder
     {
-        return $this->orderBy($column, 'DESC');
+        return $this->orderBy($column, SortDirection::Desc);
     }
 
     /** OrderBy条件 */
-    public function orderBy($orderByField, $orderbyDirection = "DESC", $customFieldsOrRegExp = null)
+    public function orderBy($orderByField, SortDirection|string $orderbyDirection = "DESC", $customFieldsOrRegExp = null)
     {
         [$key, $order] = SelectCompiler::order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $this->prefix, $this->tableName);
         $this->ordering[$key] = $order;
@@ -400,10 +437,12 @@ class QueryBuilder
     }
 
     /** Having条件 */
-    public function having($havingProp, $havingValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
+    public function having($havingProp, $havingValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND')
     {
+        $operator = $this->comparisonOperator($operator);
+        $cond = $this->conditionConjunction($cond, false);
         if (is_array($havingValue) && ($key = key($havingValue)) != "0") {
-            $operator = $key;
+            $operator = $this->comparisonOperator($key);
             $havingValue = $havingValue[$key];
         }
         if (count($this->havingConditions) == 0) {
@@ -414,17 +453,16 @@ class QueryBuilder
     }
 
     /** OrHaving条件 */
-    public function orHaving($havingProp, $havingValue = ConditionValue::Raw, $operator = '=')
+    public function orHaving($havingProp, $havingValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=')
     {
         return $this->having($havingProp, $havingValue, $operator, 'OR');
     }
 
     /** Join查询 */
-    public function join($joinTable, $joinCondition, $joinType = '')
+    public function join($joinTable, $joinCondition, JoinType|string $joinType = '')
     {
-        $allowedTypes = ['LEFT', 'RIGHT', 'OUTER', 'INNER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL'];
-        $joinType = strtoupper(trim($joinType));
-        if ($joinType && !in_array($joinType, $allowedTypes)) {
+        $joinType = $joinType instanceof JoinType ? $joinType->value : strtoupper(trim($joinType));
+        if (JoinType::tryFrom($joinType) === null && $joinType !== 'OUTER') {
             throw new Exception('Wrong JOIN type: ' . $joinType);
         }
         if (!is_object($joinTable)) {
@@ -440,19 +478,21 @@ class QueryBuilder
     }
 
     /** 为关联表添加 AND 条件。 Join xx where xx */
-    public function joinWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
+    public function joinWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND')
     {
+        $operator = $this->comparisonOperator($operator);
+        $cond = $this->conditionConjunction($cond, false);
         $this->joinConditions[$this->prefix . $whereJoin][] = Array($cond, $whereProp, $operator, $whereValue);
         return $this;
     }
 
     /** 为关联表添加 OR 条件。 Join xx or where xx */
-    public function joinOrWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, $operator = '=', $cond = 'AND')
+    public function joinOrWhere($whereJoin, $whereProp, $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND')
     {
         return $this->joinWhere($whereJoin, $whereProp, $whereValue, $operator, 'OR');
     }
 
-    public function joinOn(string $table, string $first, string $second, string $operator = '=', string $cond = 'AND'): QueryBuilder
+    public function joinOn(string $table, string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $key = $this->prefix . $table;
         $conditions = $this->joinConditions[$key] ?? [];
@@ -461,7 +501,7 @@ class QueryBuilder
         return $this;
     }
 
-    public function joinOrOn(string $table, string $first, string $second, string $operator = '='): QueryBuilder
+    public function joinOrOn(string $table, string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->joinOn($table, $first, $second, $operator, 'OR');
     }
@@ -491,12 +531,14 @@ class QueryBuilder
     }
 
     /** SELECT FOR UPDATE锁定(InnoDb) */
-    public function selectForUpdate($isLock = true, string|null $option = null)
+    public function selectForUpdate($isLock = true, LockWaitPolicy|string|null $option = null)
     {
         if ($isLock) {
+            $hasOption = $option instanceof LockWaitPolicy || (bool) $option;
+            $lockOption = $hasOption ? $this->lockWaitOption($option) : null;
             $this->setQueryOption(['FOR UPDATE']);
-            if ($option) {
-                $this->selectLockOption = $option;
+            if ($hasOption) {
+                $this->selectLockOption = $lockOption;
             }
         } else {
             $this->forUpdate = false;
@@ -514,27 +556,23 @@ class QueryBuilder
     /** 开启 FOR UPDATE 并跳过已锁定的行。 */
     public function skipLocked(): QueryBuilder
     {
-        return $this->selectForUpdate(true, 'SKIP LOCKED');
+        return $this->selectForUpdate(true, LockWaitPolicy::SkipLocked);
     }
 
     /** 开启 FOR UPDATE，遇到锁立即报错。 */
     public function nowait(): QueryBuilder
     {
-        return $this->selectForUpdate(true, 'NOWAIT');
+        return $this->selectForUpdate(true, LockWaitPolicy::Nowait);
     }
 
     /** 锁表模式(读/写) */
-    public function setLockTableMode($method)
+    public function setLockTableMode(TableLockMode|string $method)
     {
-        switch (strtoupper($method)) {
-            case "READ":
-            case "WRITE":
-                $this->tableLockMethod = strtoupper($method);
-                break;
-            default:
-                throw new Exception("Bad lock type: Can be either READ or WRITE for table {$this->tableName}");
-                break;
+        $mode = $method instanceof TableLockMode ? $method : TableLockMode::tryFrom(strtoupper($method));
+        if ($mode === null) {
+            throw new Exception("Bad lock type: Can be either READ or WRITE for table {$this->tableName}");
         }
+        $this->tableLockMethod = $mode->value;
         return $this;
     }
 
@@ -604,9 +642,9 @@ class QueryBuilder
     }
 
     /** 设置排他锁查询的等待选项。 */
-    public function setSelectLockOption(string $option)
+    public function setSelectLockOption(LockWaitPolicy|string $option)
     {
-        $this->selectLockOption = $option;
+        $this->selectLockOption = $this->lockWaitOption($option);
         return $this;
     }
 

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Tests;
 
-use EasySwoole\Mysqli\{Client, Config, TlsMode};
+use EasySwoole\Mysqli\{Client, Config, TlsMode, TlsVersion};
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use PHPUnit\Framework\TestCase;
 
@@ -75,5 +75,17 @@ final class TlsIntegrationTest extends TestCase
         }
         self::assertSame([['value' => 1]], $this->client->rawQuery('SELECT 1 AS value'));
         self::assertTrue($this->client->mysqlClient()->isTlsEnabled());
+    }
+
+    public function testTlsVersionEnumsNegotiateRequestedProtocol(): void
+    {
+        foreach (TlsVersion::cases() as $version) {
+            $client = new Client(new Config(array_replace(MYSQL_CONFIG, ['tlsVersions' => [$version]])));
+            try {
+                $status = $client->rawQuery("SHOW SESSION STATUS LIKE 'Ssl_version'");
+                self::assertSame($version->value, $status[0]['Value']);
+                self::assertTrue($client->mysqlClient()->isTlsEnabled());
+            } finally { $client->close(); }
+        }
     }
 }

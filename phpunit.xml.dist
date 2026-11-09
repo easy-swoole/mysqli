@@ -9,6 +9,7 @@
         <testsuite name="unit">
             <file>tests/ConfigTest.php</file>
             <file>tests/TlsTest.php</file>
+            <file>tests/TlsVersionTest.php</file>
             <file>tests/DeadlineTest.php</file>
             <file>tests/SessionStateTest.php</file>
             <file>tests/FastDbApiCompatibilityTest.php</file>
@@ -17,6 +18,7 @@
             <file>tests/CodecTest.php</file>
             <file>tests/ProtocolPayloadTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
+            <file>tests/QueryBuilderEnumTest.php</file>
             <file>tests/QueryBuilderUpsertTest.php</file>
             <file>tests/QueryBuilderExpressionTest.php</file>
             <file>tests/QueryBuilderConditionsTest.php</file>

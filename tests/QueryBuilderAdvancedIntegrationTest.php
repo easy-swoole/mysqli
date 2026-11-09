@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\{Client, Config, Expression, QueryBuilder};
+use EasySwoole\Mysqli\QueryBuilder\{ComparisonOperator, ConditionConjunction, JoinType, LockWaitPolicy, SortDirection};
 use PHPUnit\Framework\TestCase;
 
 /** Every fixture is connection-local and is removed when the client closes. */
@@ -101,6 +102,41 @@ final class QueryBuilderAdvancedIntegrationTest extends TestCase
     {
         $builder = (new QueryBuilder())->where('tenantId', 1)->whereRaw('name = ? OR name = ?', ['a', 'b'])
             ->orderByAsc('id')->get('qb_advanced', null, 'id');
+        self::assertSame([['id' => 1], ['id' => 2]], $this->client->query($builder));
+    }
+
+    public function testEnumsComposeAcrossJoinConditionsHavingAndOrdering(): void
+    {
+        $subquery = QueryBuilder::subQuery('u')->selectRaw('? AS tenantId', [1])->get('(SELECT 1) seed');
+        $builder = (new QueryBuilder())->join($subquery, 'u.tenantId=o.tenantId', JoinType::Inner)
+            ->joinWhere('u', 'u.tenantId', 1, ComparisonOperator::Equal, ConditionConjunction::And)
+            ->where('o.tenantId', 1, ComparisonOperator::Equal, ConditionConjunction::And)
+            ->whereColumn('o.score', 'o.baseline', ComparisonOperator::LessThan)
+            ->groupBy('o.tenantId')->having('total', 10, ComparisonOperator::GreaterThan, ConditionConjunction::And)
+            ->havingColumn('total', 'baseline_total', ComparisonOperator::LessThan)
+            ->orderBy('o.tenantId', SortDirection::Desc)
+            ->get('qb_advanced o', null, 'o.tenantId,SUM(o.score) AS total,SUM(o.baseline) AS baseline_total');
+        self::assertSame([1, 1, 1, 10], $builder->getLastBindParams());
+        $rows = $this->client->query($builder);
+        self::assertCount(1, $rows);
+        self::assertSame(1, $rows[0]['tenantId']);
+        self::assertSame(20, (int) $rows[0]['total']);
+        self::assertSame(25, (int) $rows[0]['baseline_total']);
+    }
+
+    public function testLockWaitPolicyEnumsExecuteOnServer(): void
+    {
+        foreach ([LockWaitPolicy::Default, LockWaitPolicy::Nowait, LockWaitPolicy::SkipLocked] as $policy) {
+            $builder = (new QueryBuilder())->selectForUpdate(true, $policy)->where('id', 1)->get('qb_advanced', null, 'id');
+            self::assertSame([['id' => 1]], $this->client->query($builder));
+            self::assertSame(QueryBuilder::TS_OP_LOCK_FOR_UPDATE, $builder->getLastTransactionOp());
+        }
+    }
+
+    public function testNaturalJoinEnumUsesCommonColumnsWithoutOn(): void
+    {
+        $builder = (new QueryBuilder())->join('(SELECT 1 AS tenantId) u', '', JoinType::Natural)
+            ->orderBy('o.id', SortDirection::Asc)->get('qb_advanced o', null, 'o.id');
         self::assertSame([['id' => 1], ['id' => 2]], $this->client->query($builder));
     }
 }

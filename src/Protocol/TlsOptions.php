@@ -6,6 +6,7 @@ namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\TlsMode;
+use EasySwoole\Mysqli\TlsVersion;
 
 /** @internal Build only supported TLS options; validate before any credentials are sent. */
 final class TlsOptions
@@ -29,10 +30,11 @@ final class TlsOptions
         ];
         $protocols = 0;
         foreach ($config->getTlsVersions() as $version) {
-            $constant = match ($version) {
-                'TLSv1.2' => 'SWOOLE_SSL_TLSv1_2',
-                'TLSv1.3' => 'SWOOLE_SSL_TLSv1_3',
-                default => throw new \InvalidArgumentException('Only TLSv1.2 and TLSv1.3 are supported'),
+            $tlsVersion = TlsVersion::tryFrom($version)
+                ?? throw new \InvalidArgumentException('Only TLSv1.2 and TLSv1.3 are supported');
+            $constant = match ($tlsVersion) {
+                TlsVersion::Tls12 => 'SWOOLE_SSL_TLSv1_2',
+                TlsVersion::Tls13 => 'SWOOLE_SSL_TLSv1_3',
             };
             if (!defined($constant)) {
                 throw new \RuntimeException("Swoole does not support {$version}");

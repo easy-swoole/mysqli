@@ -22,6 +22,13 @@ final class SelectCompiler
                 $joinStr = $joinTable;
             $using = is_string($joinCondition) && preg_match('/\A\s*USING\s*\(/i', $joinCondition) === 1;
             $conditionKey = $data[3] ?? $joinStr;
+            if ($joinType === JoinType::Natural->value) {
+                if (!is_string($joinCondition) || trim($joinCondition) !== '' || !empty($joinConditions[$conditionKey])) {
+                    throw new \InvalidArgumentException('NATURAL joins require an empty join condition and cannot have additional ON conditions');
+                }
+                $this->buffer->sql .= ' NATURAL JOIN ' . $joinStr;
+                continue;
+            }
             if ($using && !empty($joinConditions[$conditionKey])) {
                 throw new \InvalidArgumentException('USING joins cannot have additional ON conditions');
             }
@@ -122,14 +129,14 @@ final class SelectCompiler
 
     public static function order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $prefix, $tableName): array
     {
-        $allowedDirection = ["ASC", "DESC"];
-        $orderbyDirection = strtoupper(trim($orderbyDirection));
+        $orderbyDirection = $orderbyDirection instanceof SortDirection ? $orderbyDirection->value : strtoupper(trim($orderbyDirection));
+        $direction = SortDirection::tryFrom($orderbyDirection);
         $orderByField = preg_replace("/[^ -a-z0-9\.\(\),_`\*\'\"%`]+/i", '', $orderByField);
         // Add table prefix to orderByField if needed.
         //FIXME: We are adding prefix only if table is enclosed into `` to distinguish aliases
         // from table names
         $orderByField = preg_replace('/(\`)([`a-zA-Z0-9_%`\']*\.)/', '\1' . $prefix . '\2', $orderByField);
-        if (empty($orderbyDirection) || !in_array($orderbyDirection, $allowedDirection)) {
+        if ($direction === null) {
             throw new Exception("Wrong order direction: {$orderbyDirection} for column {$orderByField} in table {$tableName}");
         }
         $orderParams = [];

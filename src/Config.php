@@ -199,6 +199,20 @@ class Config extends SplBean
     public function getTlsServerName(): string { return $this->tlsServerName; }
     public function setTlsServerName(string $value): void { $this->tlsServerName = $value; }
 
-    public function getTlsVersions(): array { return $this->tlsVersions; }
+    /** @return array<array-key, string> 返回字符串版本名，兼容原有配置读取方式。 */
+    public function getTlsVersions(): array
+    {
+        return array_map(static function (mixed $version): string {
+            if ($version instanceof TlsVersion) {
+                return $version->value;
+            }
+            if (!is_string($version)) {
+                throw new \InvalidArgumentException('Only TLSv1.2 and TLSv1.3 are supported');
+            }
+            return $version;
+        }, $this->tlsVersions);
+    }
+
+    /** @param array<array-key, TlsVersion|string> $versions 支持混用枚举和字符串，在启用 TLS 时校验版本。 */
     public function setTlsVersions(array $versions): void { $this->tlsVersions = $versions; }
 }
