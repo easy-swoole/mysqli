@@ -30,6 +30,7 @@
         "getScalar": "public function getScalar(mixed $tableName, mixed $columns = NULL): ?EasySwoole\\Mysqli\\QueryBuilder",
         "getSubQuery": "public function getSubQuery(): ?array",
         "groupBy": "public function groupBy(mixed $groupByField): EasySwoole\\Mysqli\\QueryBuilder",
+        "groupExistingWhere": "public function groupExistingWhere(): EasySwoole\\Mysqli\\QueryBuilder",
         "having": "public function having(mixed $havingProp, mixed $havingValue = \\EasySwoole\\Mysqli\\ConditionValue::Raw, EasySwoole\\Mysqli\\QueryBuilder\\ComparisonOperator|string $operator = '=', EasySwoole\\Mysqli\\QueryBuilder\\ConditionConjunction|string $cond = 'AND'): EasySwoole\\Mysqli\\QueryBuilder",
         "havingColumn": "public function havingColumn(string $first, string $second, EasySwoole\\Mysqli\\QueryBuilder\\ComparisonOperator|string $operator = '=', EasySwoole\\Mysqli\\QueryBuilder\\ConditionConjunction|string $cond = 'AND'): EasySwoole\\Mysqli\\QueryBuilder",
         "havingGroup": "public function havingGroup(callable $callback): EasySwoole\\Mysqli\\QueryBuilder",

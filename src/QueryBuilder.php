@@ -316,6 +316,15 @@ class QueryBuilder
         }
     }
 
+    /** 将全部已有 WHERE 条件作为一组，便于继续追加必须同时满足的约束。 */
+    public function groupExistingWhere(): QueryBuilder
+    {
+        if ($this->pending['whereConditions'] !== []) {
+            $this->pending['whereConditions'] = [['group' => $this->pending['whereConditions'], 'concat' => '']];
+        }
+        return $this;
+    }
+
     /** 闭包仅收集 WHERE 条件，支持嵌套；空条件组会被拒绝。 */
     public function whereGroup(callable $callback): QueryBuilder
     {

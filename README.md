@@ -345,6 +345,7 @@ $rows = $client->query($builder);
 | `whereBetween($column, [$min, $max])` | 包含两端的范围，必须恰好两个边界值 |
 | `whereLike($column, $pattern)` | 普通字段名或 `表名.字段名`；自行提供 `%`、`_` 通配符，不自动转义通配符 |
 | `whereExists($sub)` / `whereNotExists($sub)` | 已构建且不带结果别名的子查询 |
+| `groupExistingWhere()` | 将全部已有 WHERE 整体分组，供继续追加必须同时满足的约束 |
 | `whereGroup($callback)` / `orWhereGroup($callback)` | 带括号的 AND / OR 条件组，支持嵌套 |
 | `orderByAsc($column)` / `orderByDesc($column)` | 对应 `orderBy($column, 'ASC' / 'DESC')` |
 | `forceIndex($indexes)` / `useIndex($indexes)` / `ignoreIndex($indexes)` | 强制、建议使用或排除主表索引 |
@@ -920,6 +921,61 @@ $builder->whereNotExists($sub)->get('orders');
 - `$cond` 是第二个参数。用于写入时，应先确认关联条件和最终 WHERE 范围。
 
 - `$cond` 同时接受 `ConditionConjunction::And` / `Or` 与原字符串，例如 `whereNotExists(..., cond: ConditionConjunction::Or)`；参数位置、默认字符串 `'AND'` 及旧连接符字符串行为不变。
+
+### `groupExistingWhere()`
+
+`where()` 和 `orWhere()` 按调用顺序连接条件，不会自动为之前的条件添加括号。SQL 中 AND 的优先级高于 OR，因此下面的连续调用不能保证所有结果都满足 `id = 7`：
+
+```php
+$builder = new QueryBuilder();
+$builder->where('status', 1)
+    ->orWhere('score', 2)
+    ->where('id', 7)
+    ->get('users');
+// getLastBindParams(): [1, 2, 7]
+```
+
+生成的参数化 SQL 为：
+
+```sql
+SELECT * FROM `users`
+WHERE `status` = ? OR `score` = ? AND `id` = ?
+```
+
+代入参数后，等价于 `status = 1 OR (score = 2 AND id = 7)`。例如 `id = 8, status = 1, score = 0` 的记录也会命中。链式调用中最后添加 `where('id', 7)`，不会让该条件自动约束前面的全部 OR 分支；UPDATE、DELETE 也遵循同样的优先级。
+
+需要让已有条件的所有分支都满足 `id = 7` 时，在追加该条件前调用 `groupExistingWhere()`：
+
+```php
+$builder = new QueryBuilder();
+$builder->where('status', 1)
+    ->orWhere('score', 2)
+    ->groupExistingWhere()
+    ->where('id', 7)
+    ->get('users');
+// getLastBindParams(): [1, 2, 7]
+```
+
+生成的参数化 SQL 为：
+
+```sql
+SELECT * FROM `users`
+WHERE (`status` = ? OR `score` = ?) AND `id` = ?
+```
+
+此时命中的记录必须满足 `id = 7`，并且在 `status = 1`、`score = 2` 中至少满足一项；上述 `id = 8` 的记录不会命中。`groupExistingWhere()` 将调用时已经积累的全部 WHERE 条件整体包成一组；没有 WHERE 时保持不变，参数顺序、JOIN、字段、排序、分页和锁定选项均保留。
+
+用于 UPDATE、DELETE 时也在最终构建前完成分组和范围约束：
+
+```php
+$builder = new QueryBuilder();
+$builder->where('status', 1)->orWhere('score', 2)
+    ->groupExistingWhere()->where('id', 7)
+    ->delete('users');
+// DELETE FROM `users` WHERE (`status` = ? OR `score` = ?) AND `id` = ?
+```
+
+该方法只分组调用时已有的条件，适合在最终构建前追加实体主键、关联外键等范围约束。之后继续添加的 OR 条件仍遵循普通 SQL 优先级，不会自动纳入之前的分组；需要预先明确一个条件组时，也可以使用下面的 `whereGroup()`。
 
 ### `whereGroup($callback)`
 

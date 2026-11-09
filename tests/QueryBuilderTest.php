@@ -70,6 +70,81 @@ final class QueryBuilderTest extends TestCase
         self::assertSame('DELETE FROM `items` WHERE ( `deleted_at` IS NULL)', $this->normalizedSql($this->builder));
     }
 
+    public function testGroupExistingWhereKeepsOrConditionsInsideTheAddedConstraint(): void
+    {
+        foreach (['select', 'update', 'delete'] as $operation) {
+            foreach ([false, true] as $raw) {
+                $builder = new QueryBuilder();
+                if ($raw) {
+                    $builder->where('status = ? OR score = ?', [1, 2]);
+                    $conditions = 'status = ? OR score = ?';
+                } else {
+                    $builder->where('status', 1)->orWhere('score', 2);
+                    $conditions = '`status` = ? OR `score` = ?';
+                }
+                self::assertSame($builder, $builder->groupExistingWhere());
+                $builder->where('id', 7);
+                if ($operation === 'update') {
+                    $builder->update('items', ['name' => 'changed']);
+                } elseif ($operation === 'delete') {
+                    $builder->delete('items');
+                } else {
+                    $builder->get('items');
+                }
+                self::assertMatchesRegularExpression('/WHERE \( ' . preg_quote($conditions, '/') . '\s*\) AND `id` = \?/', $this->normalizedSql($builder));
+                self::assertSame($operation === 'update' ? ['changed', 1, 2, 7] : [1, 2, 7], $builder->getLastBindParams());
+            }
+        }
+    }
+
+    public function testGroupExistingWhereDoesNothingWhenThereAreNoConditions(): void
+    {
+        $this->builder->get('previous');
+        $previousSql = $this->builder->getLastPrepareQuery();
+        self::assertSame($this->builder, $this->builder->groupExistingWhere());
+        self::assertSame($previousSql, $this->builder->getLastPrepareQuery());
+        $this->builder->where('id', 7)->get('items');
+        self::assertSame('SELECT * FROM `items` WHERE `id` = ?', $this->normalizedSql($this->builder));
+        self::assertSame([7], $this->builder->getLastBindParams());
+        $this->builder->groupExistingWhere()->get('items');
+        self::assertSame('SELECT * FROM `items`', $this->normalizedSql($this->builder));
+    }
+
+    public function testGroupExistingWherePreservesOtherStateParameterOrderAndCloneIsolation(): void
+    {
+        $joined = QueryBuilder::subQuery('u')->where('active', 20)->get('users');
+        $this->builder->get('previous');
+        $previousSql = $this->builder->getLastPrepareQuery();
+        $this->builder->setPrefix('app_')->selectRaw('? AS marker', [10])->distinct()
+            ->join($joined, 'u.id=i.userId', 'LEFT')->useIndex('idx_status')
+            ->where('i.status', 30)->orWhere('i.score', 40)
+            ->groupBy('i.id')->havingRaw('COUNT(*) > ?', [50])
+            ->orderByRaw('FIELD(i.id, ?)', [60])->limit(2, 3)->selectForUpdate();
+        $copy = clone $this->builder;
+        $copy->groupExistingWhere();
+        self::assertSame($previousSql, $copy->getLastPrepareQuery());
+        $copy->where('i.id', 70)->get('items i');
+        $sql = $this->normalizedSql($copy);
+        self::assertSame([10, 20, 30, 40, 70, 50, 60], $copy->getLastBindParams());
+        self::assertStringContainsString('SELECT DISTINCT ? AS marker FROM app_items i USE INDEX (`idx_status`)', $sql);
+        self::assertStringContainsString('LEFT JOIN', $sql);
+        self::assertStringContainsString('WHERE ( `i`.`status` = ? OR `i`.`score` = ? ) AND `i`.`id` = ?', $sql);
+        self::assertStringContainsString('GROUP BY i.id HAVING (COUNT(*) > ?)', $sql);
+        self::assertStringContainsString('ORDER BY FIELD(i.id, ?) LIMIT 2, 3 FOR UPDATE', $sql);
+        self::assertSame(['DISTINCT'], $copy->getLastQueryOptions());
+
+        $this->builder->get('items i');
+        self::assertStringContainsString('WHERE `i`.`status` = ? OR `i`.`score` = ?', $this->normalizedSql($this->builder));
+        self::assertSame([10, 20, 30, 40, 50, 60], $this->builder->getLastBindParams());
+        $copy->get('items');
+        self::assertSame('SELECT * FROM `app_items`', $this->normalizedSql($copy));
+        self::assertSame([], $copy->getLastBindParams());
+        self::assertSame([], $copy->getLastQueryOptions());
+        $copy->where('unused', 1)->groupExistingWhere()->reset()->get('items');
+        self::assertSame('SELECT * FROM `app_items`', $this->normalizedSql($copy));
+        self::assertSame([], $copy->getLastBindParams());
+    }
+
     public function testExistsAndNotInSubquery(): void
     {
         $sub = QueryBuilder::subQuery()->where('active', 1)->get('users', null, 'id');
