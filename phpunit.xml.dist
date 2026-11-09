@@ -19,14 +19,29 @@
             <file>tests/ProtocolPayloadTest.php</file>
             <file>tests/QueryBuilderTest.php</file>
             <file>tests/QueryBuilderEnumTest.php</file>
+            <file>tests/QueryBuilderIdentifierRegressionTest.php</file>
+            <file>tests/QueryBuilderSafetyTest.php</file>
+            <file>tests/QueryBuilderAggregateTest.php</file>
+            <file>tests/ResultStreamTest.php</file>
+            <file>tests/ClientChunkTest.php</file>
+            <file>tests/PaginationTest.php</file>
+            <file>tests/StreamingTest.php</file>
             <file>tests/QueryBuilderUpsertTest.php</file>
             <file>tests/QueryBuilderExpressionTest.php</file>
             <file>tests/QueryBuilderConditionsTest.php</file>
             <file>tests/QueryBuilderPublicApiTest.php</file>
+            <file>tests/ApiContractTest.php</file>
+            <file>tests/NativeTypeCompletenessTest.php</file>
+            <file>tests/SelectPlannerTest.php</file>
+            <file>tests/QueryBuilderStateTest.php</file>
+            <file>tests/AuthenticatorTest.php</file>
+            <file>tests/ClientExecutionContextTest.php</file>
             <file>tests/QueryBuilderRegressionTest.php</file>
         </testsuite>
         <testsuite name="integration">
             <file>tests/QueryBuilderAdvancedIntegrationTest.php</file>
+            <file>tests/QueryBuilderFixesIntegrationTest.php</file>
+            <file>tests/StreamMemoryIntegrationTest.php</file>
             <file>tests/QueryBuilderIntegrationTest.php</file>
             <file>tests/TlsIntegrationTest.php</file>
             <file>tests/ClientTest.php</file>

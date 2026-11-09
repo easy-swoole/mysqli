@@ -452,3 +452,38 @@ LockWaitPolicy::Default 显式清除此前的 NOWAIT/SKIP LOCKED；selectForUpda
 新增 44 项单元测试及 4 项真实数据库场景，覆盖枚举与字符串的精确 SQL/参数/标记一致、各条件入口、命名参数、失败不部分变更状态、锁策略重置、TLS 配置构造/restore/getter/错误路径、自然连接和 TLS 1.2/1.3 实际协商。QueryBuilder/TLS 数据库专项 21 项、69 次断言通过。16 个新增或修改 PHP 文件通过 PHP 8.4 语法检查及 PHP 8.1 目标语法解析（未在 PHP 8.1 运行时执行）；20 段枚举文档示例语法及 Markdown 围栏检查通过。
 
 最终在 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4 上通过 VerifyIdentity TLS 执行全套回归：344 项测试、3405 次断言全部通过，无错误、失败或跳过，耗时 207.830 秒，峰值内存 94.31 MB。其中单元测试 251 项，数据库集成测试 93 项。测试使用独立随机数据库，结束后已删除；凭据仅通过进程环境变量传入，未更改服务器配置。git diff --check 通过。
+
+
+## 2026-11-09 查询边界、统计分页、分批及流式读取
+
+修复 FIELD 自定义排序值被字符过滤改写的问题，全部值在最终 ORDER BY 位置绑定，保留符号、Unicode、NULL、布尔及数值；拒绝空列表和非标量成员。whereLike、UPDATE 字段及表前缀复用标识符解析，覆盖已引用名称、库/表/列、别名及可信表尾部。getColumn/getScalar 使用顶层字段列表扫描，保留函数参数中的逗号、别名空白及引用/注释。批量 query options 先全部校验再修改状态；编译结果仅在成功后发布，reset 只清待构建状态并保留最近成功快照，raw 替换整组参数，编译失败不再泄漏部分绑定。
+
+新增 fromSub/getFromSub 快照及参数合并，SELECT、FROM、JOIN、条件、UNION、排序参数按 SQL 位置组合。count 构造完整结果集的行数统计，去除整体排序/分页/锁，支持 DISTINCT、GROUP/HAVING、UNION；默认普通 JOIN 计数投影常量以避免重复列名，GROUP 的位置引用保留原选择列表。aggregate/sum/avg/min/max 支持列引用及 Expression，整体 UNION 聚合通过 FROM 子查询表达。Client::paginate 在副本上执行 COUNT 与数据查询，共享一次总超时，保留超大 total/lastPage 的十进制精度；整数算法另经 4099 组随机和边界对照验证。
+
+新增 reorder、forPageAfterId 和 Client::chunkById。模板保持不变，原 OR 条件整体分组后追加游标条件，固定唯一键 ASC，不使用 OFFSET；超大整数游标保留字符串，字符键（包括看起来像数字的 VARCHAR）依数据库排序。回调可以提前停止或释放本批数据，不改变下一批的行数判定。仅支持文档列明的普通 SELECT 模板；分组、DISTINCT、UNION、派生表及锁等复杂模板明确拒绝。
+
+新增真正逐行消费的 ResultStream、Client::iterate/rawIterate、Statement::iterate，共享结果头/行解析且不积累完整数组。结果流在 EOF/关闭前独占连接；完整消费后保留连接，提前退出/异常时关闭连接，在事务中保留事务丢失保护。读取进行中的并发 close 会被拒绝，避免旧读取影响重连会话。Client 拥有的 Statement 自动清理，手工 Statement 在完整读取后可复用；deadline、元数据及成功回调范围已在对应方法下说明。单行仍需完整解包，超大单个 BLOB 的内存需求不会因流式接口消失。
+
+原有 QueryBuilder 87 个公开签名、Client 12 个、Connection 20 个、Statement 11 个均核对未改。QueryBuilder API 快照新增 10 个方法。新增回归覆盖包含纯构造、状态失败恢复、命名参数、服务端严格模式/ANSI_QUOTES/NO_BACKSLASH_ESCAPES、分组/UNION计数、分页、数值及字符游标、流式分步送行、提前停止、会话和事务保护、超时及真实压缩传输。README、QueryBuilder 指南与 tests/README 已同步各方法用法及注意事项。
+
+在 PHP 8.4.27、Swoole 6.2.4、MySQL 9.7.4 上通过 VerifyIdentity TLS 执行全套回归：460 项测试、3890 次断言全部通过，无错误、失败或跳过；单元测试 355 项，数据库集成测试 105 项，耗时 241.293 秒，峰值内存 96.31 MB。32 MiB 子进程分别在压缩关闭/开启时逐行读取 40,960,000 字节结果（10,000 行），校验每行哈希、EOF 元数据和连接复用。另以真实明文连接验证文本/预处理流及压缩两种模式，全部通过。测试使用独立随机库，结束后已删除，未更改服务器全局配置；凭据仅来自进程环境变量。
+
+新增只读 Prepare 复用基准，实际运行每轮 10 次、三轮并校验结果，记录当前服务端及传输环境；该样本不代表生产工作负载，本次未加入默认 Statement 缓存。新增容器/CI矩阵覆盖 MySQL 8.0.46、8.4.13、9.7.4，以及 PHP 8.1.34/Swoole 5.1.8 和 PHP 8.4.27/Swoole 6.2.4；包含明文、VerifyIdentity TLS、压缩和严格 SQL 模式。脚本、工作流 YAML、固定依赖、环境探测、临时证书及异常/空矩阵清理路径已自检。本机无 Docker/daemon，容器矩阵尚未实际构建运行，不能将当前 9.7.4 回归当作已完成 8.0/8.4 或最低运行时回归。
+
+22 个新增或修改 PHP 文件通过本机语法检查及 PHP 8.1 目标语法解析（后者不是 PHP 8.1 运行时测试）；132 段文档 PHP 示例语法及 Markdown 围栏检查通过。git diff --check 通过。
+
+## 2026-11-09 状态、规划、认证与执行上下文重构及类型声明
+
+QueryBuilder 将待构建状态按 PendingQuery 的统一默认值及结构说明保存为写时复制数组，编译输入通过 parts() 转为只读 QueryParts，最近成功的执行结果独立保存为只读 CompiledQuery。克隆不共享可变状态对象，也不依赖子类调用父级构造或克隆钩子。调试 SQL 保留独立属性，维持它先于 reset() 发布其他结果的原可见时机，包括子类延迟发布、后续编译失败再清理的场景。
+
+新增无状态 SelectPlanner 与只读 SelectPlan，收拢 SELECT 来源和头部、COUNT 转换、聚合表达式及游标校验。仍保留工厂 new static()、COUNT/聚合的虚 get()、分页副本的子类 __clone() 和链式调用顺序；FROM/UNION 保存调用时快照，IN/EXISTS/JOIN 延后读取子查询的语义不变。前缀输入继续保持旧接口支持范围，未因内部规划器引入更窄类型。
+
+Connection 将握手、能力协商、TLS 升级与认证抽出到 Authenticator，以显式回调沿用错误/OK 元数据更新；共享原 Deadline，TLS 校验先于凭据发送，认证完成后再启用压缩。文本命令发包及预处理参数数量校验共用内部入口，保留原校验顺序。Client 的 ExecutionContext 集中一次执行的超时、Client 自建 Statement 清理及通知，保留 prepare()/query() 子类分派、手工 Statement 所有权、EOF 与提前停止行为、清理异常优先级和成功回调时机。
+
+按用户明确许可补齐公开及内部方法、参数和属性的原生类型声明，保留既有方法名、参数名、顺序和默认值；数据库值与灵活的旧接口输入保留 mixed，数组和回调另加 PHPDoc。构造/析构按 PHP 规则不声明返回类型。ApiContractTest 的重构前基线覆盖 44 个符号、278 个公开或受保护方法；QueryBuilder 当前 97 个公开接口快照已同步类型声明，NativeTypeCompletenessTest 检查全部源码声明。FastDb 子类 rawQuery 适配 bool|array，README 和 QueryBuilder 指南已明确子类重写返回类型的迁移要求。
+
+本轮新增 49 项单元测试。状态回归中的 14 项、85 次断言分别对重构前和重构后源码执行，全部通过；覆盖 raw/column/group helper 后克隆、返回数组隔离、无父级钩子的子类、重置及调试时序、来源快照和延迟子查询读取。现有伪服务端测试继续覆盖完整 TCP/TLS、压缩、并发、异常和流式路径。
+
+最终验证环境为 PHP 8.4.27、Swoole 6.2.4、真实 MySQL 9.7.4，VerifyIdentity TLS。单元套件 404 项、5886 次断言全部通过（4.183 秒，18.00 MB）；数据库集成套件 105 项、1176 次断言全部通过（238.779 秒，92.31 MB），合计 509 项、7062 次断言，无错误、失败或跳过。首轮集成初始化出现 7 次 1 秒 TCP 建连超时；保留原超时及源码，串行重跑完整集成套件通过。测试使用独立随机库，结束后已删除；凭据仅经环境变量传入，未修改服务器全局配置。
+
+106 个 PHP 文件通过本机语法及 PHP 8.1 目标语法解析，132 段文档 PHP 示例及 Markdown 围栏检查通过；git diff --check 通过。容器/CI 脚本自检再次通过；本机未运行 Docker 矩阵，PHP 8.1 运行时与 MySQL 8.0/8.4 的实际运行结果仍以该矩阵执行为准，不能以本次 9.7.4 回归替代。

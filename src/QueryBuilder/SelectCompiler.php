@@ -5,12 +5,22 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Expression;
 
-/** @internal Compile JOIN, GROUP, UNION, ORDER and LIMIT clauses. */
+/**
+ * @internal Compile JOIN, GROUP, UNION, ORDER and LIMIT clauses.
+ * @phpstan-type JoinNode array{0: string, 1: mixed, 2: mixed, 3?: string|null}
+ * @phpstan-type UnionNode array{0: string|null, 1: array<array-key, mixed>, 2: mixed, 3: bool}
+ * @phpstan-type OrderNode array{field: string|Expression, direction: string, params: array<array-key, mixed>}
+ * @phpstan-import-type ConditionNode from ConditionCompiler
+ */
 final class SelectCompiler
 {
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
 
-    public function appendJoins($joins, $joinConditions): void
+    /**
+     * @param array<array-key, JoinNode>|null $joins
+     * @param array<array-key, array<array-key, ConditionNode>>|null $joinConditions
+     */
+    public function appendJoins(mixed $joins, mixed $joinConditions): void
     {
         if (empty ($joins))
             return;
@@ -46,7 +56,7 @@ final class SelectCompiler
         }
     }
 
-    public function appendGroups($groups): void
+    public function appendGroups(mixed $groups): void
     {
         if (empty($groups)) {
             return;
@@ -58,7 +68,8 @@ final class SelectCompiler
         $this->buffer->sql = rtrim($this->buffer->sql, ', ') . " ";
     }
 
-    public function appendUnions($unions): void
+    /** @param array<array-key, UnionNode>|null $unions */
+    public function appendUnions(mixed $unions): void
     {
         if ($unions) {
             foreach ($unions as $unionData) {
@@ -70,7 +81,8 @@ final class SelectCompiler
         }
     }
 
-    public function appendOrder($ordering): void
+    /** @param array<array-key, OrderNode>|null $ordering */
+    public function appendOrder(mixed $ordering): void
     {
         if (empty($ordering)) {
             return;
@@ -93,7 +105,7 @@ final class SelectCompiler
         $this->buffer->sql = rtrim($this->buffer->sql, ', ') . " ";
     }
 
-    public function appendLimit($numRows): void
+    public function appendLimit(mixed $numRows): void
     {
         if (!isset($numRows)) {
             return;
@@ -106,7 +118,7 @@ final class SelectCompiler
     }
 
     /** SELECT expressions bind before JOIN, WHERE and other clauses. */
-    public static function columns($columns, SqlBuffer $buffer): string
+    public static function columns(mixed $columns, SqlBuffer $buffer): string
     {
         if ($columns instanceof Expression) {
             $buffer->bindAll($columns->getParameters());
@@ -127,7 +139,8 @@ final class SelectCompiler
         return implode(', ', $rendered);
     }
 
-    public static function order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $prefix, $tableName): array
+    /** @return array{0: string|array<array-key, string>|null, 1: array{field: string|array<array-key, string>|null, direction: string, params: list<scalar|null>}} */
+    public static function order(mixed $orderByField, mixed $orderbyDirection, mixed $customFieldsOrRegExp, mixed $prefix, mixed $tableName): array
     {
         $orderbyDirection = $orderbyDirection instanceof SortDirection ? $orderbyDirection->value : strtoupper(trim($orderbyDirection));
         $direction = SortDirection::tryFrom($orderbyDirection);
@@ -141,10 +154,16 @@ final class SelectCompiler
         }
         $orderParams = [];
         if (is_array($customFieldsOrRegExp)) {
-            foreach ($customFieldsOrRegExp as $key => $value) {
-                $customFieldsOrRegExp[$key] = preg_replace("/[^\x80-\xff-a-z0-9\.\(\),_` %\']+/i", '', $value);
+            $orderParams = array_values($customFieldsOrRegExp);
+            foreach ($orderParams as $value) {
+                if ($value !== null && !is_scalar($value)) {
+                    throw new \InvalidArgumentException('Custom sort values must be scalar values or null');
+                }
             }
-            $orderByField = 'FIELD (' . $orderByField . ', "' . implode('","', $customFieldsOrRegExp) . '")';
+            if ($orderParams === []) {
+                throw new \InvalidArgumentException('Custom sort values must not be empty');
+            }
+            $orderByField = 'FIELD (' . $orderByField . ', ' . implode(', ', array_fill(0, count($orderParams), '?')) . ')';
         } elseif (is_string($customFieldsOrRegExp)) {
             // Keep the pattern as a value, never as SQL text. Distinct patterns retain distinct order entries.
             $orderParams = [$customFieldsOrRegExp];

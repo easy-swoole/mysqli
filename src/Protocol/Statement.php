@@ -43,6 +43,24 @@ final class Statement
     }
 
     /**
+     * 按行读取结果，完整耗尽后语句仍可复用；提前退出会关闭所属连接。
+     * 完整耗尽时执行 afterExecute(true)，提前停止或读取失败不执行成功回调。
+     */
+    public function iterate(array $parameters = [], ?float $timeout = null): ResultStream
+    {
+        if ($this->closed) {
+            throw new \LogicException('The prepared statement is closed');
+        }
+        if ($this->beforeExecute !== null) { ($this->beforeExecute)(); }
+        $stream = $this->connection->iterateStatement($this, $parameters, $timeout);
+        if ($this->afterExecute !== null) {
+            $afterExecute = $this->afterExecute;
+            $stream->onComplete(static fn() => $afterExecute(true));
+        }
+        return $stream;
+    }
+
+    /**
      * 设置语句执行前后的回调。
      */
     public function setExecutionCallbacks(?callable $beforeExecute, ?callable $afterExecute): self

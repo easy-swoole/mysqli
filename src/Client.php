@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli;
 
 use EasySwoole\Mysqli\Exception\Exception;
+use EasySwoole\Mysqli\Client\ExecutionContext;
 use EasySwoole\Mysqli\Protocol\Connection;
 use EasySwoole\Mysqli\Protocol\Deadline;
 use EasySwoole\Mysqli\Protocol\Statement;
+use EasySwoole\Mysqli\Protocol\ResultStream;
 
 class Client
 {
     protected ?Connection $mysqlClient = null;
+    /** @var (callable(bool|array<array-key, mixed>, Client, float): mixed)|null */
     protected mixed $onQuery = null;
     protected int|string|null $lastInsertId = null;
     protected int|string|null $lastAffectRows = null;
@@ -25,6 +28,7 @@ class Client
 
     /**
      * 设置查询成功后的回调。
+     * @param callable(bool|array<array-key, mixed>, Client, float): mixed $callback
      */
     public function onQuery(callable $callback): static
     {
@@ -63,49 +67,120 @@ class Client
 
     /**
      * 通过服务端预处理执行查询构造器生成的 SQL。
+     * @return bool|list<array<array-key, mixed>>
      */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
-        $start = microtime(true);
-        $deadline = $this->queryDeadline($timeout);
-        $this->resetMetadata();
-        $this->connectWithTimeout($deadline->remaining());
-        $statement = null;
+        $execution = $this->beginExecution($timeout);
+        $this->connectWithTimeout($execution->remaining());
+        return $execution->buffered($sql, function () use ($execution, $sql, $parameters): bool|array {
+            $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
+            return $statement->execute($parameters, $execution->remaining());
+        });
+    }
+
+    /**
+     * 按行读取构造器查询，Prepare、Execute、读取和清理共用一个超时预算。
+     * 完整耗尽后 onQuery 收到 true；提前退出不触发成功回调并关闭连接。
+     */
+    public function iterate(QueryBuilder $builder, ?float $timeout = null): ResultStream
+    {
+        $execution = $this->beginExecution($timeout);
+        $statement = $execution->ownStatement($this->prepare($builder->getLastPrepareQuery(), $execution->remaining()));
         try {
-            $statement = $this->prepare($sql, $deadline->remaining());
-            $result = $statement->execute($parameters, $deadline->remaining());
-        } catch (Exception $error) {
-            throw $error;
+            $stream = $statement->iterate($builder->getLastBindParams(), $execution->remaining());
         } catch (\Throwable $error) {
-            throw new Exception("SQL {$sql} failed: {$error->getMessage()}", (int) $error->getCode(), $error);
-        } finally {
-            $statement?->close($deadline->remainingOrZero());
+            $execution->discardOwnedStatement();
+            throw $error;
         }
-        $this->notify($result, $start);
-        return $result;
+        return $stream->onClose([$execution, 'finishStream']);
+    }
+
+    /** 按行读取文本 SQL，完整耗尽后保存行数并执行 onQuery(true)。 */
+    public function rawIterate(string $query, ?float $timeout = null): ResultStream
+    {
+        $execution = $this->beginExecution($timeout);
+        $this->connectWithTimeout($execution->remaining());
+        return $this->mysqlClient->iterate($query, $execution->remaining())->onComplete(function () use ($execution): void {
+            $this->captureMetadata();
+            $execution->complete(true);
+        });
+    }
+
+    /**
+     * 按稳定唯一键 ASC 分批读取待构建的普通 SELECT 模板，不使用 OFFSET，也不修改模板。
+     * 唯一键必须出现在返回行中且为非 NULL 的整数或字符串，处理时不能修改该键。
+     * callback($rows, $pageNumber) 返回 false 时停止，返回值为已交付行数；timeout 按每页计算。
+     * @param callable(list<array<array-key, mixed>>, int): mixed $callback
+     */
+    public function chunkById(QueryBuilder $query, string $table, string $column, callable $callback, int $size = 1000, ?float $timeout = null): int
+    {
+        if ($size <= 0) { throw new \InvalidArgumentException('Chunk size must be greater than zero'); }
+        $quotedColumn = \EasySwoole\Mysqli\QueryBuilder\TableReference::column($column);
+        preg_match('/`((?:``|[^`])+)`$/D', $quotedColumn, $matches);
+        $key = str_replace('``', '`', $matches[1]);
+        $lastId = null;
+        $total = 0;
+        $page = 1;
+        while (true) {
+            $builder = $query->forPageAfterId($column, $lastId, $size)->get($table);
+            $rows = $this->query($builder, $timeout);
+            if (!is_array($rows)) { throw new \UnexpectedValueException('Chunk queries must return result rows'); }
+            if ($rows === []) { return $total; }
+            foreach ($rows as $row) {
+                if (!is_array($row) || !array_key_exists($key, $row)
+                    || (!is_int($row[$key]) && !is_string($row[$key]))) {
+                    throw new \UnexpectedValueException('The chunk key must be selected and contain a non-null integer or string');
+                }
+            }
+            $nextId = $rows[array_key_last($rows)][$key];
+            if ($lastId !== null && ((string) $nextId === (string) $lastId
+                || (is_int($nextId) && is_int($lastId) && $nextId <= $lastId))) {
+                throw new \UnexpectedValueException('The chunk key did not advance; use a stable unique key');
+            }
+            $rowCount = count($rows);
+            $total += $rowCount;
+            if ($callback($rows, $page++) === false || $rowCount < $size) { return $total; }
+            $lastId = $nextId;
+        }
+    }
+
+    /**
+     * 独立 COUNT 与数据查询共享总超时；需要一致性快照时由调用方开启事务。
+     * @return array{items: list<array<array-key, mixed>>, total: int|string, page: int, perPage: int, lastPage: int|string}
+     */
+    public function paginate(QueryBuilder $query, ?string $table, int $perPage = 20, int $page = 1, ?float $timeout = null): array
+    {
+        $offset = \EasySwoole\Mysqli\QueryBuilder\Pagination::offset($perPage, $page);
+        $deadline = $this->queryDeadline($timeout);
+        $counter = clone $query;
+        $counts = $this->query($counter->count($table, '__mysqli_total'), $deadline->remaining());
+        if (!is_array($counts) || count($counts) !== 1 || !isset($counts[0]) || !is_array($counts[0]) || !array_key_exists('__mysqli_total', $counts[0])) {
+            throw new \UnexpectedValueException('Pagination COUNT did not return one total');
+        }
+        $metadata = \EasySwoole\Mysqli\QueryBuilder\Pagination::result([], $counts[0]['__mysqli_total'], $perPage, $page);
+        $data = clone $query;
+        $items = $this->query($data->limit($offset, $perPage)->get($table), $deadline->remaining());
+        if (!is_array($items)) { throw new \UnexpectedValueException('Pagination query must return result rows'); }
+        $metadata['items'] = $items;
+        return $metadata;
     }
 
     /**
      * 通过文本协议执行 SQL 并读取结果。
+     * @return bool|list<array<array-key, mixed>>
      */
-    public function rawQuery(string $query,?float $timeout = null)
+    public function rawQuery(string $query,?float $timeout = null): bool|array
     {
-        $start = microtime(true);
-        $deadline = $this->queryDeadline($timeout);
-        $this->resetMetadata();
-        $this->connectWithTimeout($deadline->remaining());
-        try {
-            $result = $this->mysqlClient->query($query, $deadline->remaining());
+        $execution = $this->beginExecution($timeout);
+        $this->connectWithTimeout($execution->remaining());
+        return $execution->buffered($query, function () use ($execution, $query): bool|array {
+            $result = $this->mysqlClient->query($query, $execution->remaining());
             $this->captureMetadata();
-        } catch (Exception $error) {
-            throw $error;
-        } catch (\Throwable $error) {
-            throw new Exception("SQL {$query} failed: {$error->getMessage()}", (int) $error->getCode(), $error);
-        }
-        $this->notify($result, $start);
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -201,6 +276,15 @@ class Client
         if ($this->onQuery !== null) {
             ($this->onQuery)($result, $this, $start);
         }
+    }
+
+    /** Create the operation budget before clearing metadata, preserving invalid-timeout behavior. */
+    private function beginExecution(?float $timeout): ExecutionContext
+    {
+        $execution = new ExecutionContext($timeout ?? $this->config->getTimeout(),
+            function (bool|array $result, float $startedAt): void { $this->notify($result, $startedAt); });
+        $this->resetMetadata();
+        return $execution;
     }
 
     /**

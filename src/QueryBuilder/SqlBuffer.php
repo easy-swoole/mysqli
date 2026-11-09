@@ -7,11 +7,13 @@ final class SqlBuffer
 {
     public ?string $column = null;
 
-    public function __construct(public string $sql, public array $parameters = [], public $tableName = '') {}
+    /** @param array<array-key, mixed> $parameters */
+    public function __construct(public string $sql, public array $parameters = [], public mixed $tableName = '') {}
 
-    public function bind($value): void { $this->parameters[] = $value; }
+    public function bind(mixed $value): void { $this->parameters[] = $value; }
 
-    public function bindAll($values): void
+    /** @param iterable<mixed> $values */
+    public function bindAll(mixed $values): void
     {
         foreach ($values as $value) { $this->bind($value); }
     }

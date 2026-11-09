@@ -15,15 +15,6 @@ use EasySwoole\Mysqli\Exception\UnsupportedOperationException;
 
 final class Connection
 {
-    private const CLIENT_LONG_PASSWORD = 0x00000001;
-    private const CLIENT_LONG_FLAG = 0x00000004;
-    private const CLIENT_CONNECT_WITH_DB = 0x00000008;
-    private const CLIENT_COMPRESS = 0x00000020;
-    private const CLIENT_SSL = 0x00000800;
-    private const CLIENT_PROTOCOL_41 = 0x00000200;
-    private const CLIENT_TRANSACTIONS = 0x00002000;
-    private const CLIENT_SECURE_CONNECTION = 0x00008000;
-    private const CLIENT_PLUGIN_AUTH = 0x00080000;
     private const COM_QUIT = 0x01;
     private const COM_QUERY = 0x03;
     private const COM_PING = 0x0e;
@@ -31,7 +22,6 @@ final class Connection
     private const COM_STMT_EXECUTE = 0x17;
     private const COM_STMT_CLOSE = 0x19;
 
-    private int $serverCapabilities = 0;
     private PacketStream $stream;
     private SessionState $state;
     private float $timeout;
@@ -80,7 +70,13 @@ final class Connection
             if ($tls) { TlsOptions::fromConfig($this->config); }
             $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tls);
             $handshake = $this->stream->readPacket($deadline, 'handshake');
-            $this->authenticate($handshake, $deadline);
+            $authenticator = new Authenticator(
+                $this->config,
+                $this->stream,
+                function (string $packet, string $context): void { $this->throwIfError($packet, $context); },
+                function (string $packet): void { $this->parseOk($packet); },
+            );
+            $authenticator->authenticate($handshake, $deadline);
             $charset = $this->config->getCharset();
             if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
                 throw new \InvalidArgumentException('Invalid MySQL charset');
@@ -132,6 +128,17 @@ final class Connection
         return $this->command(self::COM_QUERY, $sql, $timeout, false);
     }
 
+    /** 按行读取文本协议结果；结果流关闭前独占连接。 */
+    public function iterate(string $sql, ?float $timeout = null): ResultStream
+    {
+        $deadline = Deadline::after($timeout ?? $this->timeout);
+        return $this->startStream(function () use ($sql, $deadline): ?array {
+            $this->assertSupportedSql($sql);
+            $this->writeTextCommand(self::COM_QUERY, $sql, $deadline);
+            return $this->readResultHeader($deadline, $sql);
+        }, $deadline, false, $sql);
+    }
+
     /**
      * 在服务端创建预处理语句并读取语句信息。
      */
@@ -166,6 +173,29 @@ final class Connection
      */
     public function executeStatement(Statement $statement, array $parameters, ?float $timeout): array|bool
     {
+        $this->assertParameterCount($statement, $parameters);
+
+        return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
+            $deadline = Deadline::after($timeout ?? $this->timeout);
+            $this->writeStatementCommand($statement, $parameters, $deadline);
+            return $this->readResponse($deadline, true, $statement->getSql());
+        });
+    }
+
+    /** 按行读取预处理结果，沿用语句会话校验及单次操作超时预算。 */
+    public function iterateStatement(Statement $statement, array $parameters, ?float $timeout): ResultStream
+    {
+        $this->assertParameterCount($statement, $parameters);
+        $deadline = Deadline::after($timeout ?? $this->timeout);
+        return $this->startStream(function () use ($statement, $parameters, $deadline): ?array {
+            $this->writeStatementCommand($statement, $parameters, $deadline);
+            return $this->readResultHeader($deadline, $statement->getSql());
+        }, $deadline, true, $statement->getSql(), $statement);
+    }
+
+    /** 参数校验保持在命令并发保护与 I/O 之前，缓冲和流式入口共用。 */
+    private function assertParameterCount(Statement $statement, array $parameters): void
+    {
         if (count($parameters) !== $statement->getParameterCount()) {
             throw new \InvalidArgumentException(sprintf(
                 'Statement expects %d parameters, %d given',
@@ -173,23 +203,54 @@ final class Connection
                 count($parameters),
             ));
         }
+    }
 
-        return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
-            $this->assertStatementGeneration($statement->getGeneration());
-            $this->assertSupportedSql($statement->getSql());
-            $deadline = Deadline::after($timeout ?? $this->timeout);
-            [$nullBitmap, $types, $values] = ParameterEncoder::encode($parameters);
-            $payload = chr(self::COM_STMT_EXECUTE)
-                . pack('V', $statement->getId())
-                . "\0"
-                . pack('V', 1)
-                . $nullBitmap
-                . ($parameters === [] ? '' : "\1" . $types);
-            $this->resetMetadata();
-            $this->stream->beginCommand();
-            $this->stream->writePacketParts([$payload, ...$values], $deadline, 'execute');
-            return $this->readResponse($deadline, true, $statement->getSql());
-        });
+    /** 共享预处理会话检查和分段参数编码，缓冲与流式读取使用同一命令格式。 */
+    private function writeStatementCommand(Statement $statement, array $parameters, Deadline $deadline): void
+    {
+        $this->assertStatementGeneration($statement->getGeneration());
+        $this->assertSupportedSql($statement->getSql());
+        [$nullBitmap, $types, $values] = ParameterEncoder::encode($parameters);
+        $payload = chr(self::COM_STMT_EXECUTE) . pack('V', $statement->getId())
+            . "\0" . pack('V', 1) . $nullBitmap
+            . ($parameters === [] ? '' : "\1" . $types);
+        $this->resetMetadata();
+        $this->stream->beginCommand();
+        $this->stream->writePacketParts([$payload, ...$values], $deadline, 'execute');
+    }
+
+    /** 开始流式响应，并把并发保护延长至 EOF 或显式关闭。 */
+    private function startStream(callable $start, Deadline $deadline, bool $binary, string $sql, ?Statement $owner = null): ResultStream
+    {
+        if ($this->busy) {
+            throw new Exception('Concurrent operations on active MySQL connection are not allowed');
+        }
+        $this->busy = true;
+        try {
+            $columns = $start();
+            return new ResultStream(
+                function () use ($columns, $deadline, $binary, $sql, $owner): ?array {
+                    try {
+                        return $columns === null ? null : $this->readResultRow($deadline, $binary, $sql, $columns);
+                    } catch (\Throwable $error) {
+                        $this->handleOperationFailure($error);
+                        throw $error;
+                    }
+                },
+                function (bool $complete, int $rows) use ($columns, $owner): void {
+                    try {
+                        if (!$complete) { $this->invalidateConnection(); }
+                        elseif ($columns !== null) { $this->affected_rows = $rows; }
+                    } finally {
+                        $this->busy = false;
+                    }
+                },
+            );
+        } catch (\Throwable $error) {
+            $this->handleOperationFailure($error);
+            $this->busy = false;
+            throw $error;
+        }
     }
 
     /**
@@ -280,7 +341,7 @@ final class Connection
     /**
      * 验证并设置连接字符集。
      */
-    public function set_charset(string $charset)
+    public function set_charset(string $charset): bool
     {
         $timeout = func_get_args()[1] ?? null;
         if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
@@ -323,12 +384,18 @@ final class Connection
                 $this->assertSupportedSql($payload);
             }
             $deadline = Deadline::after($timeout ?? $this->timeout);
-            $this->ensureConnected($deadline);
-            $this->resetMetadata();
-            $this->stream->beginCommand();
-            $this->stream->writePacket(chr($command) . $payload, $deadline, 'query');
+            $this->writeTextCommand($command, $payload, $deadline);
             return $this->readResponse($deadline, $binary, $payload);
         });
+    }
+
+    /** 共用发包顺序；SQL 支持性检查及 Deadline 创建仍由原入口按原时机执行。 */
+    private function writeTextCommand(int $command, string $payload, Deadline $deadline): void
+    {
+        $this->ensureConnected($deadline);
+        $this->resetMetadata();
+        $this->stream->beginCommand();
+        $this->stream->writePacket(chr($command) . $payload, $deadline, 'query');
     }
 
     /**
@@ -364,13 +431,26 @@ final class Connection
      */
     private function readResponse(Deadline $deadline, bool $binary, string $sql): array|bool
     {
+        $columns = $this->readResultHeader($deadline, $sql);
+        if ($columns === null) { return true; }
+        $rows = [];
+        while (($row = $this->readResultRow($deadline, $binary, $sql, $columns)) !== null) {
+            $rows[] = $row;
+        }
+        $this->affected_rows = count($rows);
+        return $rows;
+    }
+
+    /** 读取结果元数据；普通 OK 响应返回 null。 */
+    private function readResultHeader(Deadline $deadline, string $sql): ?array
+    {
         $packet = $this->stream->readPacket($deadline, 'query');
         $this->throwIfError($packet, $sql);
         $headerOffset = 0;
         $header = Codec::int1($packet, $headerOffset);
         if ($header === 0x00) {
             $this->parseOk($packet);
-            return true;
+            return null;
         }
         if ($header === 0xfb) {
             throw new ProtocolException('LOCAL INFILE is not supported');
@@ -397,157 +477,19 @@ final class Connection
             $this->parseOk($terminator);
         }
 
-        $rows = [];
-        while (true) {
-            $row = $this->stream->readPacket($deadline, 'result row');
-            $this->throwIfError($row, $sql);
-            if ($this->isEof($row)) {
-                $this->parseEofStatus($row);
-                break;
-            }
-            $rows[] = $binary ? ResultDecoder::parseBinaryRow($row, $columns) : ResultDecoder::parseTextRow($row, $columns);
-        }
-        $this->affected_rows = count($rows);
-        return $rows;
+        return $columns;
     }
 
-    /**
-     * 解析握手信息并发送认证请求。
-     */
-    private function authenticate(string $handshake, Deadline $deadline): void
+    /** 只读取当前行，不缓存其他行；EOF 时同步事务状态。 */
+    private function readResultRow(Deadline $deadline, bool $binary, string $sql, array $columns): ?array
     {
-        $offset = 0;
-        $protocol = Codec::int1($handshake, $offset);
-        if ($protocol === 0xff) {
-            $this->throwIfError($handshake, 'handshake');
+        $row = $this->stream->readPacket($deadline, 'result row');
+        $this->throwIfError($row, $sql);
+        if ($this->isEof($row)) {
+            $this->parseEofStatus($row);
+            return null;
         }
-        if ($protocol < 10) {
-            throw new Exception("Unsupported MySQL protocol version {$protocol}");
-        }
-        Codec::nullTerminated($handshake, $offset);
-        Codec::int4($handshake, $offset);
-        $scramble = substr($handshake, $offset, 8);
-        $offset += 9;
-        $lowCapabilities = Codec::int2($handshake, $offset);
-        if ($offset >= strlen($handshake)) {
-            throw new Exception('Old MySQL authentication protocol is not supported');
-        }
-        $charset = Codec::int1($handshake, $offset);
-        Codec::int2($handshake, $offset); // server status, currently not needed
-        $highCapabilities = Codec::int2($handshake, $offset);
-        $this->serverCapabilities = $lowCapabilities | ($highCapabilities << 16);
-        $authLength = Codec::int1($handshake, $offset);
-        $offset += 10;
-        $secondLength = max(13, $authLength - 8);
-        $second = substr($handshake, $offset, min($secondLength, strlen($handshake) - $offset));
-        $offset += strlen($second);
-        $scramble .= rtrim($second, "\0");
-        $scramble = substr($scramble, 0, 20);
-        $plugin = $offset < strlen($handshake) ? Codec::nullTerminated($handshake, $offset) : 'mysql_native_password';
-        $plugin = $plugin ?: 'mysql_native_password';
-
-        $capabilities = self::CLIENT_LONG_PASSWORD
-            | self::CLIENT_LONG_FLAG
-            | self::CLIENT_PROTOCOL_41
-            | self::CLIENT_TRANSACTIONS
-            | self::CLIENT_SECURE_CONNECTION
-            | self::CLIENT_PLUGIN_AUTH;
-        if ($this->config->getDatabase() !== '') {
-            $capabilities |= self::CLIENT_CONNECT_WITH_DB;
-        }
-        if ($this->config->isCompress()) {
-            if (!function_exists('gzcompress') || !function_exists('gzuncompress')) {
-                throw new Exception('MySQL compression requires the zlib extension');
-            }
-            $capabilities |= self::CLIENT_COMPRESS;
-        }
-        $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
-        if ($tls) {
-            if (($this->serverCapabilities & self::CLIENT_SSL) === 0) {
-                throw new Exception('MySQL server does not support TLS; plaintext fallback is disabled');
-            }
-            $capabilities |= self::CLIENT_SSL;
-        }
-        $capabilities &= $this->serverCapabilities;
-        $useCompression = ($capabilities & self::CLIENT_COMPRESS) !== 0;
-        $token = $this->authToken($plugin, $this->config->getPassword(), $scramble);
-        $header = pack('V', $capabilities)
-            . pack('V', 0x01000000)
-            . chr($charset ?: 45)
-            . str_repeat("\0", 23);
-        if ($tls) {
-            $this->stream->writePacket($header, $deadline, 'TLS request');
-            $this->stream->enableTls($this->config, $deadline);
-        }
-        $payload = $header . $this->config->getUser() . "\0"
-            . chr(strlen($token)) . $token;
-        if (($capabilities & self::CLIENT_CONNECT_WITH_DB) !== 0) {
-            $payload .= $this->config->getDatabase() . "\0";
-        }
-        if (($capabilities & self::CLIENT_PLUGIN_AUTH) !== 0) {
-            $payload .= $plugin . "\0";
-        }
-        $this->stream->writePacket($payload, $deadline, 'authentication');
-        $this->completeAuthentication($plugin, $scramble, $deadline);
-        $this->stream->enableCompression($useCompression);
-    }
-
-    /**
-     * 处理认证切换及完整认证流程。
-     */
-    private function completeAuthentication(string $plugin, string $scramble, Deadline $deadline): void
-    {
-        while (true) {
-            $packet = $this->stream->readPacket($deadline, 'authentication');
-            $this->throwIfError($packet, 'authentication');
-            $headerOffset = 0;
-        $header = Codec::int1($packet, $headerOffset);
-            if ($header === 0x00) {
-                $this->parseOk($packet);
-                return;
-            }
-            if ($header === 0xfe) {
-                $offset = 1;
-                $plugin = Codec::nullTerminated($packet, $offset);
-                $scramble = rtrim(substr($packet, $offset), "\0");
-                $this->stream->writePacket($this->authToken($plugin, $this->config->getPassword(), $scramble), $deadline, 'authentication switch');
-                continue;
-            }
-            if ($header === 0x01 && ($packet[1] ?? '') === "\x03") {
-                continue;
-            }
-            if ($header === 0x01 && ($packet[1] ?? '') === "\x04" && $plugin === 'caching_sha2_password') {
-                if ($this->stream->isTlsEnabled() || $this->config->getPassword() === '') {
-                    $this->stream->writePacket($this->config->getPassword() . "\0", $deadline, 'full authentication');
-                    continue;
-                }
-                $this->stream->writePacket("\x02", $deadline, 'public key request');
-                $keyPacket = $this->stream->readPacket($deadline, 'public key');
-                $publicKey = $keyPacket[0] === "\x01" ? substr($keyPacket, 1) : $keyPacket;
-                $plain = Codec::xorBytes($this->config->getPassword() . "\0", $scramble);
-                if (!openssl_public_encrypt($plain, $encrypted, $publicKey, OPENSSL_PKCS1_OAEP_PADDING)) {
-                    throw new Exception('Unable to encrypt caching_sha2_password credentials');
-                }
-                $this->stream->writePacket($encrypted, $deadline, 'full authentication');
-                continue;
-            }
-            throw new Exception('Unsupported MySQL authentication response');
-        }
-    }
-
-    /**
-     * 根据认证插件生成密码认证数据。
-     */
-    private function authToken(string $plugin, string $password, string $scramble): string
-    {
-        if ($password === '') {
-            return '';
-        }
-        return match ($plugin) {
-            'mysql_native_password' => Codec::xorBytes(sha1($password, true), sha1($scramble . sha1(sha1($password, true), true), true)),
-            'caching_sha2_password' => Codec::xorBytes(hash('sha256', $password, true), hash('sha256', hash('sha256', hash('sha256', $password, true), true) . $scramble, true)),
-            default => throw new Exception("Unsupported MySQL authentication plugin {$plugin}"),
-        };
+        return $binary ? ResultDecoder::parseBinaryRow($row, $columns) : ResultDecoder::parseTextRow($row, $columns);
     }
 
     /**
@@ -654,12 +596,17 @@ final class Connection
         try {
             return $callback();
         } catch (\Throwable $error) {
-            if ($error instanceof ProtocolException || $error instanceof TimeoutException || !$this->stream->isOpen()) {
-                $this->invalidateConnection();
-            }
+            $this->handleOperationFailure($error);
             throw $error;
         } finally {
             $this->busy = false;
+        }
+    }
+
+    private function handleOperationFailure(\Throwable $error): void
+    {
+        if ($error instanceof ProtocolException || $error instanceof TimeoutException || !$this->stream->isOpen()) {
+            $this->invalidateConnection();
         }
     }
 

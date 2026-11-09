@@ -38,15 +38,11 @@ final class FastDbApiCompatibilityTest extends TestCase
                 self::assertSame('timeout', $parameters[1]->getName());
                 self::assertSame('?float', (string) $parameters[1]->getType());
                 self::assertNull($parameters[1]->getDefaultValue());
-                if ($method === 'query') {
-                    $returnType = $reflection->getReturnType();
-                    self::assertInstanceOf(\ReflectionUnionType::class, $returnType);
-                    $types = array_map(static fn($type): string => $type->getName(), $returnType->getTypes());
-                    sort($types);
-                    self::assertSame(['array', 'bool'], $types);
-                } else {
-                    self::assertFalse($reflection->hasReturnType());
-                }
+                $returnType = $reflection->getReturnType();
+                self::assertInstanceOf(\ReflectionUnionType::class, $returnType);
+                $types = array_map(static fn($type): string => $type->getName(), $returnType->getTypes());
+                sort($types);
+                self::assertSame(['array', 'bool'], $types);
             }
         }
     }

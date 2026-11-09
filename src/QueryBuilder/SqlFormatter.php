@@ -5,14 +5,15 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 /** @internal Render diagnostic SQL without changing executable SQL or parameters. */
 final class SqlFormatter
 {
-    public static function render($str, $vals)
+    /** @return string|array<array-key, string>|null Preserve preg_replace_callback's subject/result shape. */
+    public static function render(mixed $str, mixed $vals): string|array|null
     {
         $i = 0;
         // Match quoted literals and comments before matching actual placeholders.
         $pattern = <<<'REGEX'
 ~'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
 REGEX;
-        return preg_replace_callback($pattern, static function ($match) use ($vals, &$i) {
+        return preg_replace_callback($pattern, static function (array $match) use ($vals, &$i): string {
             if ($match[0] !== '?' || !array_key_exists($i, $vals)) {
                 return $match[0];
             }

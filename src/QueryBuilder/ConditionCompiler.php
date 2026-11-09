@@ -7,12 +7,15 @@ use EasySwoole\Mysqli\ConditionValue;
 use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal Compile WHERE, HAVING, JOIN values and nested conditions. */
+/**
+ * @internal Compile WHERE, HAVING, JOIN values and nested conditions.
+ * @phpstan-type ConditionNode array{0: string, 1: mixed, 2: string, 3: mixed}|array{group: array, concat: string}|array{exists: QueryBuilder, operator: string, concat: string}|array{column: array{string, string, string}, concat: string}|array{expression: Expression, concat: string}
+ */
 final class ConditionCompiler
 {
     public function __construct(private readonly SqlBuffer $buffer) {}
 
-    public function pair($operator, $value)
+    public function pair(mixed $operator, mixed $value): string
     {
         if ($value instanceof Expression) {
             $this->buffer->bindAll($value->getParameters());
@@ -31,13 +34,17 @@ final class ConditionCompiler
         throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");
     }
 
-    /** ON tuples keep their legacy field text; structured column nodes quote both identifiers. */
+    /**
+     * ON tuples keep their legacy field text; structured column nodes quote both identifiers.
+     * @param array<array-key, ConditionNode> $conditions
+     */
     public function appendOn(array $conditions): void
     {
         $this->appendList($conditions, true);
     }
 
-    public function append($operator, $conditions): void
+    /** @param array<array-key, ConditionNode>|null $conditions */
+    public function append(mixed $operator, mixed $conditions): void
     {
         if (empty($conditions)) {
             return;
@@ -46,7 +53,10 @@ final class ConditionCompiler
         $this->appendList($conditions, false);
     }
 
-    /** The same condition tree can be compiled in WHERE, HAVING or a JOIN ON scope. */
+    /**
+     * The same condition tree can be compiled in WHERE, HAVING or a JOIN ON scope.
+     * @param array<array-key, ConditionNode> $conditions
+     */
     private function appendList(array $conditions, bool $on): void
     {
         foreach ($conditions as $cond) {
@@ -87,7 +97,7 @@ final class ConditionCompiler
     }
 
     /** Shared operator handling keeps WHERE/HAVING and ON binding semantics consistent. */
-    private function appendValue($operator, $value, ?string $conditionField = null): void
+    private function appendValue(mixed $operator, mixed $value, ?string $conditionField = null): void
     {
         if ($value === ConditionValue::Raw) {
             return;

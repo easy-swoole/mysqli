@@ -1,0 +1,49 @@
+name: Tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mysqli-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the harness and read the shared matrix
+        id: matrix
+        shell: bash
+        run: |
+          bash tests/docker/self-check.sh
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          matrix = json.loads(Path('tests/docker/matrix.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('value=' + json.dumps(matrix, separators=(',', ':')) + '\n')
+          PY
+  database:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    name: ${{ matrix.id }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the isolated database lane
+        run: bash tests/docker/run-matrix.sh '${{ matrix.id }}'
+      - name: Upload logs and runtime metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysqli-${{ matrix.id }}
+          path: tests/docker/results/${{ matrix.id }}/
+          if-no-files-found: warn
+          retention-days: 7

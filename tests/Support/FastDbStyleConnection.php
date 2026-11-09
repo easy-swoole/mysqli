@@ -21,7 +21,7 @@ final class FastDbStyleConnection extends Client
         return parent::query($builder, $timeout);
     }
 
-    public function rawQuery(string $query, ?float $timeout = null)
+    public function rawQuery(string $query, ?float $timeout = null): bool|array
     {
         return parent::rawQuery($query, $timeout);
     }

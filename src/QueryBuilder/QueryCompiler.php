@@ -7,7 +7,7 @@ use EasySwoole\Mysqli\QueryBuilder;
 /** @internal Coordinate clause compilers in SQL and binding order. */
 final class QueryCompiler
 {
-    public function compile(SqlBuffer $buffer, QueryParts $parts, $numRows, $tableData): ?int
+    public function compile(SqlBuffer $buffer, QueryParts $parts, mixed $numRows, mixed $tableData): ?int
     {
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);

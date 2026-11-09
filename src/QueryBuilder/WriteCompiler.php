@@ -9,12 +9,16 @@ use EasySwoole\Mysqli\Exception\Exception;
 /** @internal Compile INSERT/REPLACE values, UPDATE assignments and duplicate-key updates. */
 final class WriteCompiler
 {
+    /** @var list<string>|null */
     private ?array $batchColumns = null;
 
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
 
-    /** Validate and align rows before SQL emission; row ordering and NULL values are preserved. */
-    public static function normalizeBatch($rows): array
+    /**
+     * Validate and align rows before SQL emission; row ordering and NULL values are preserved.
+     * @return non-empty-list<non-empty-array<string, mixed>>
+     */
+    public static function normalizeBatch(mixed $rows): array
     {
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
@@ -40,7 +44,7 @@ final class WriteCompiler
         return $normalized;
     }
 
-    public function appendData($tableData): void
+    public function appendData(mixed $tableData): void
     {
         $this->batchColumns = null;
         if (!is_array($tableData)) { return; }
@@ -72,16 +76,16 @@ final class WriteCompiler
         if ($isInsert) { $this->buffer->sql .= ')'; }
     }
 
-    private function appendPairs($tableData, $tableColumns, $isInsert, bool $literalColumns = false): void
+    private function appendPairs(mixed $tableData, mixed $tableColumns, mixed $isInsert, bool $literalColumns = false): void
     {
         foreach ($tableColumns as $column) {
             $value = $tableData[$column];
+            $columnReference = self::quoteIdentifier($column);
             if (!$isInsert) {
-                if ($literalColumns || strpos($column, '.') === false) {
-                    $this->buffer->sql .= self::quoteIdentifier($column) . ' = ';
-                } else {
-                    $this->buffer->sql .= str_replace('.', '.`', $column) . '` = ';
+                if (!$literalColumns) {
+                    $columnReference = TableReference::column($column);
                 }
+                $this->buffer->sql .= $columnReference . ' = ';
             }
             if ($value instanceof Expression) {
                 $this->buffer->sql .= $value->getSql() . ', ';
@@ -101,14 +105,14 @@ final class WriteCompiler
             $val = $value[$key];
             switch ($key) {
                 case '[I]':
-                    $this->buffer->sql .= $column . $val . ', ';
+                    $this->buffer->sql .= $columnReference . $val . ', ';
                     break;
                 case '[F]':
                     $this->buffer->sql .= $val[0] . ', ';
                     if (!empty($val[1])) { $this->buffer->bindAll($val[1]); }
                     break;
                 case '[N]':
-                    $this->buffer->sql .= '!' . ($val == null ? $column : $val) . ', ';
+                    $this->buffer->sql .= '!' . ($val == null ? $columnReference : $val) . ', ';
                     break;
                 default:
                     throw new Exception("Wrong operation or value for column {$column} in table {$this->buffer->tableName}");
@@ -117,7 +121,7 @@ final class WriteCompiler
         $this->buffer->sql = rtrim($this->buffer->sql, ', ');
     }
 
-    public function appendDuplicate($tableData, $updateColumns): void
+    public function appendDuplicate(mixed $tableData, mixed $updateColumns): void
     {
         if (!is_array($updateColumns) || $updateColumns === []) { return; }
         $explicit = [];
@@ -174,7 +178,7 @@ final class WriteCompiler
         }
     }
 
-    private static function quoteIdentifier($name): string
+    private static function quoteIdentifier(mixed $name): string
     {
         return TableReference::identifier($name);
     }
