@@ -583,19 +583,6 @@ $builder->where('active', true)->orderByDesc('created_at')
 
 - 清除待构建查询的全部普通排序和 `orderByRaw()`，随后可重新排序；不会清除条件、字段或分页，也不修改已经构建的 SQL。
 
-### `forPageAfterId($column, $lastId, $size)`
-
-```php
-$template = (new QueryBuilder())->where('active', true)->fields(['id', 'name']);
-$firstPage = $template->forPageAfterId('id', null, 100)->get('users');
-$nextPage = $template->forPageAfterId('id', 1234, 100)->get('users');
-```
-
-- 使用尚未调用 `get()` 的条件模板；返回独立副本，不修改模板。覆盖原排序和分页，固定为唯一键 ASC、LIMIT `$size`；后续仍须 `get($table)` 构建。
-- `$lastId = null` 表示首批，否则添加 `$column > $lastId`；游标只能是整数或字符串，批量大小必须为正整数。原有 OR 条件整体加括号后再连接游标条件。
-- 仅用于普通 SELECT：不支持 GROUP BY/HAVING、DISTINCT、UNION、FROM 子查询、行锁或 SQL_CALC_FOUND_ROWS。JOIN 场景也必须保证该键在最终结果中唯一。
-- 键必须稳定且唯一，建议有匹配索引；读取期间不修改该键。这里是单键递增分页，不支持复合游标或降序游标。
-
 ### `reset()`
 
 ```php
@@ -1040,24 +1027,10 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - 在独立副本上先 COUNT、再读取当前页，不修改模板。COUNT 采用 `count()` 的结果集行数规则；带 FROM 子查询的模板将 `$table` 传 `null`。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
+- 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
 - COUNT 和当前页查询共用一次总超时预算，包括必要的建连、Prepare、Execute、读取和清理；不是每条语句各获得完整的 `$timeout`。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
-- 使用包含唯一键的稳定排序。深页仍使用 OFFSET，需要连续遍历大量记录时考虑 `chunkById()`；客户端最后的影响行数是当前页查询的行数，不是 total。
-
-### `Client::chunkById($query, $table, $column, $callback, $size = 1000, $timeout = null)`
-
-```php
-$template = (new QueryBuilder())->where('active', true)->fields(['id', 'name']);
-$delivered = $client->chunkById($template, 'users', 'id', function (array $rows, int $page): bool {
-    foreach ($rows as $row) { processUser($row); }
-    return true; // 返回 false 时，在当前批交付后停止。
-}, size: 500, timeout: 3.0);
-```
-
-- 通过 `forPageAfterId()` 创建每批副本，按稳定唯一键 ASC 前进，不修改模板；同样受到普通 SELECT 的限制，不使用 OFFSET。返回已经交给回调的总行数，批次序号从 1 开始。
-- `$column` 必须出现在每条结果中，以该字段本名作为返回键，且值为非 NULL 的整数或字符串；若选择了其他别名，需保留原键。不要在回调中修改此键或使用会产生重复键的 JOIN。
-- `$size` 必须为正整数；空批或不足一批时结束。游标不前进会报错，字符串键的实际顺序与数据库排序规则一致。
-- `$timeout` 按每批计算，不是整个循环的总预算；回调处理时间不计入下一批新的查询预算。方法不自动开启快照事务，需要一致读取时由调用方管理事务。
+- 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
 ### `Client::iterate($builder, $timeout = null)`
 
@@ -1134,7 +1107,7 @@ try {
 
 ## 内部实现与兼容性
 
-公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，最近成功结果独立保存在只读 `CompiledQuery` 中；克隆和重置不共享可变状态对象。SELECT 头部、COUNT、聚合和游标校验由无状态 `SelectPlanner` 规划，SQL 编译委托给 `src/QueryBuilder/` 内部协作类。
+公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，最近成功结果独立保存在只读 `CompiledQuery` 中；克隆和重置不共享可变状态对象。SELECT 头部、COUNT 和聚合由无状态 `SelectPlanner` 规划，SQL 编译委托给 `src/QueryBuilder/` 内部协作类。
 条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
-现有方法名、参数名、顺序、默认值及链式行为继续保留；本轮为属性、参数和返回值补齐原生类型声明，相关结构参数沿用枚举与字符串联合输入，数据库值及灵活的旧接口输入使用 `mixed`。普通链式返回 `QueryBuilder`，`update()` / `delete()` 保留子查询返回 `null` 的行为而声明 `?QueryBuilder`，构建事务 SQL 的三个方法返回 `void`。子查询读取时机和 UNION 快照规则保留，新增 FROM 子查询同样保存调用时快照。字段引用、自定义排序值、字段提取和失败构建的状态处理按各方法说明修正，`reset()` 保留最近成功结果，`raw()` 替换整组参数。子类重写新增类型的方法时须同步兼容的返回类型（如 `QueryBuilder` 或协变的 `static`），参数不能缩窄父类允许的输入；COUNT/聚合/分页保留子类克隆和公开方法分派，工厂仍返回子类实例。
+现有方法名、参数名、顺序、默认值及链式行为继续保留；本轮为属性、参数和返回值补齐原生类型声明，相关结构参数沿用枚举与字符串联合输入，数据库值及灵活的旧接口输入使用 `mixed`。普通链式返回 `QueryBuilder`，`update()` / `delete()` 保留子查询返回 `null` 的行为而声明 `?QueryBuilder`，构建事务 SQL 的三个方法返回 `void`。子查询读取时机和 UNION 快照规则保留，新增 FROM 子查询同样保存调用时快照。字段引用、自定义排序值、字段提取和失败构建的状态处理按各方法说明修正，`reset()` 保留最近成功结果，`raw()` 替换整组参数。子类重写新增类型的方法时须同步兼容的返回类型（如 `QueryBuilder` 或协变的 `static`），参数不能缩窄父类允许的输入；COUNT/聚合保留子类克隆和公开方法分派，工厂仍返回子类实例。
 内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。

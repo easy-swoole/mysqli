@@ -75,7 +75,7 @@ class Client
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
         $this->connectWithTimeout($execution->remaining());
-        return $execution->buffered($sql, function () use ($execution, $sql, $parameters): bool|array {
+        return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {
             $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
             return $statement->execute($parameters, $execution->remaining());
         });
@@ -110,44 +110,6 @@ class Client
     }
 
     /**
-     * 按稳定唯一键 ASC 分批读取待构建的普通 SELECT 模板，不使用 OFFSET，也不修改模板。
-     * 唯一键必须出现在返回行中且为非 NULL 的整数或字符串，处理时不能修改该键。
-     * callback($rows, $pageNumber) 返回 false 时停止，返回值为已交付行数；timeout 按每页计算。
-     * @param callable(list<array<array-key, mixed>>, int): mixed $callback
-     */
-    public function chunkById(QueryBuilder $query, string $table, string $column, callable $callback, int $size = 1000, ?float $timeout = null): int
-    {
-        if ($size <= 0) { throw new \InvalidArgumentException('Chunk size must be greater than zero'); }
-        $quotedColumn = \EasySwoole\Mysqli\QueryBuilder\TableReference::column($column);
-        preg_match('/`((?:``|[^`])+)`$/D', $quotedColumn, $matches);
-        $key = str_replace('``', '`', $matches[1]);
-        $lastId = null;
-        $total = 0;
-        $page = 1;
-        while (true) {
-            $builder = $query->forPageAfterId($column, $lastId, $size)->get($table);
-            $rows = $this->query($builder, $timeout);
-            if (!is_array($rows)) { throw new \UnexpectedValueException('Chunk queries must return result rows'); }
-            if ($rows === []) { return $total; }
-            foreach ($rows as $row) {
-                if (!is_array($row) || !array_key_exists($key, $row)
-                    || (!is_int($row[$key]) && !is_string($row[$key]))) {
-                    throw new \UnexpectedValueException('The chunk key must be selected and contain a non-null integer or string');
-                }
-            }
-            $nextId = $rows[array_key_last($rows)][$key];
-            if ($lastId !== null && ((string) $nextId === (string) $lastId
-                || (is_int($nextId) && is_int($lastId) && $nextId <= $lastId))) {
-                throw new \UnexpectedValueException('The chunk key did not advance; use a stable unique key');
-            }
-            $rowCount = count($rows);
-            $total += $rowCount;
-            if ($callback($rows, $page++) === false || $rowCount < $size) { return $total; }
-            $lastId = $nextId;
-        }
-    }
-
-    /**
      * 独立 COUNT 与数据查询共享总超时；需要一致性快照时由调用方开启事务。
      * @return array{items: list<array<array-key, mixed>>, total: int|string, page: int, perPage: int, lastPage: int|string}
      */
@@ -157,15 +119,9 @@ class Client
         $deadline = $this->queryDeadline($timeout);
         $counter = clone $query;
         $counts = $this->query($counter->count($table, '__mysqli_total'), $deadline->remaining());
-        if (!is_array($counts) || count($counts) !== 1 || !isset($counts[0]) || !is_array($counts[0]) || !array_key_exists('__mysqli_total', $counts[0])) {
-            throw new \UnexpectedValueException('Pagination COUNT did not return one total');
-        }
-        $metadata = \EasySwoole\Mysqli\QueryBuilder\Pagination::result([], $counts[0]['__mysqli_total'], $perPage, $page);
         $data = clone $query;
         $items = $this->query($data->limit($offset, $perPage)->get($table), $deadline->remaining());
-        if (!is_array($items)) { throw new \UnexpectedValueException('Pagination query must return result rows'); }
-        $metadata['items'] = $items;
-        return $metadata;
+        return \EasySwoole\Mysqli\QueryBuilder\Pagination::result($items, $counts[0]['__mysqli_total'], $perPage, $page);
     }
 
     /**
@@ -176,7 +132,7 @@ class Client
     {
         $execution = $this->beginExecution($timeout);
         $this->connectWithTimeout($execution->remaining());
-        return $execution->buffered($query, function () use ($execution, $query): bool|array {
+        return $execution->buffered(function () use ($execution, $query): bool|array {
             $result = $this->mysqlClient->query($query, $execution->remaining());
             $this->captureMetadata();
             return $result;

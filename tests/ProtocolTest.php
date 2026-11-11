@@ -96,12 +96,15 @@ final class ProtocolTest extends TestCase
                 self::sendPacket($peer, self::column('answer', 8), 4);
                 self::sendPacket($peer, self::eof(), 5);
 
-                [, $execute] = self::receivePacket($peer);
-                self::assertSame(0x17, ord($execute[0]));
-                self::assertSame(7, unpack('V', substr($execute, 1, 4))[1]);
-                self::sendResultHeader($peer, 'answer', 8, true);
-                self::sendPacket($peer, "\0\0" . pack('P', 42), 4);
-                self::sendPacket($peer, self::eof(), 5);
+                foreach ([42, 43, 44] as $value) {
+                    [, $execute] = self::receivePacket($peer);
+                    self::assertSame(0x17, ord($execute[0]));
+                    self::assertSame(7, unpack('V', substr($execute, 1, 4))[1]);
+                    self::assertSame($value, unpack('P', substr($execute, -8))[1]);
+                    self::sendResultHeader($peer, 'answer', 8, true);
+                    self::sendPacket($peer, "\0\0" . pack('P', $value), 4);
+                    self::sendPacket($peer, self::eof(), 5);
+                }
 
                 [, $close] = self::receivePacket($peer);
                 self::assertSame(0x19, ord($close[0]));
@@ -125,6 +128,8 @@ final class ProtocolTest extends TestCase
         self::assertSame([['answer' => 42]], $client->rawQuery('SELECT 42 AS answer'));
         $statement = $client->prepare('SELECT ? AS answer');
         self::assertSame([['answer' => 42]], $statement->execute([42]));
+        self::assertSame([['answer' => 43]], $statement->execute([43]));
+        self::assertSame([['answer' => 44]], iterator_to_array($statement->iterate([44])));
         $statement->close();
 
         $serverResult = $completed->pop(1.0);

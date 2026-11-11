@@ -19,19 +19,14 @@ final class Pagination
     }
 
     /**
+     * 使用调用方已校验的分页参数，保留数据库 COUNT 返回的整数或十进制字符串。
      * @param array<array-key, mixed> $items
      * @return array{items: array<array-key, mixed>, total: int|string, page: int, perPage: int, lastPage: int|string}
      */
     public static function result(array $items, mixed $total, int $perPage, int $page): array
     {
-        self::offset($perPage, $page);
-        if ((!is_int($total) && !is_string($total)) || preg_match('/\A[0-9]+\z/', (string) $total) !== 1) {
-            throw new \UnexpectedValueException('COUNT must return a non-negative integer');
-        }
-        $digits = ltrim((string) $total, '0');
-        $digits = $digits === '' ? '0' : $digits;
-        $last = self::ceilDivide($digits, (string) $perPage);
-        return ['items' => $items, 'total' => self::integer($digits), 'page' => $page,
+        $last = self::ceilDivide((string) $total, (string) $perPage);
+        return ['items' => $items, 'total' => $total, 'page' => $page,
             'perPage' => $perPage, 'lastPage' => self::integer($last === '0' ? '1' : $last)];
     }
 

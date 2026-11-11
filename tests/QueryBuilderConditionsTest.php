@@ -24,6 +24,23 @@ final class QueryBuilderConditionsTest extends TestCase
         self::assertSame(['open'], $builder->getLastBindParams());
     }
 
+    public function testColumnReferencesAreParsedWhenTheQueryIsCompiled(): void
+    {
+        foreach ([['', 'u.id'], ['o.id', '`unclosed']] as [$first, $second]) {
+            $builder = (new QueryBuilder())->whereColumn($first, $second);
+            try {
+                $builder->get('orders o');
+                self::fail('Malformed column references must fail during compilation');
+            } catch (\InvalidArgumentException $error) {
+                self::assertNotEmpty($error->getMessage());
+            }
+        }
+        $builder = (new QueryBuilder())->whereColumn('`app`.`orders`.`odd``name`', '`app`.`users`.`odd``name`')
+            ->get('app.orders');
+        self::assertSame('SELECT * FROM `app`.`orders` WHERE `app`.`orders`.`odd``name` = `app`.`users`.`odd``name`', $this->sql($builder));
+        self::assertSame([], $builder->getLastBindParams());
+    }
+
     public function testOrdinaryConditionsPreserveThreePartAndQuotedIdentifiers(): void
     {
         $builder = (new QueryBuilder())->whereNull('app.users.deleted_at')

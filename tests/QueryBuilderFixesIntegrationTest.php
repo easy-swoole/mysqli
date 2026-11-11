@@ -110,32 +110,6 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertCount(2,$this->client->query($template->get(null)));
     }
 
-    public function testKeysetBatchesPreserveOrScopeAndUnsignedIds(): void
-    {
-        $template=(new QueryBuilder())->where('tenantId',1)->orWhere('score',35,'>')->orderByDesc('id');
-        $ids=[];
-        $count=$this->client->chunkById($template,'qb_fix_orders','id',static function(array $rows)use(&$ids):void{
-            array_push($ids,...array_column($rows,'id'));
-        },1);
-        self::assertSame([1,2,4],$ids);
-        self::assertSame(3,$count);
-        self::assertNull($template->getLastPrepareQuery());
-        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_big (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=InnoDB');
-        $this->client->rawQuery('INSERT INTO qb_fix_big VALUES (18446744073709551600),(18446744073709551601)');
-        $ids=[];
-        $this->client->chunkById(new QueryBuilder(),'qb_fix_big','id',static function(array $rows)use(&$ids):void{
-            array_push($ids,...array_column($rows,'id'));
-        },1);
-        self::assertSame(['18446744073709551600','18446744073709551601'],$ids);
-        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_chars (id VARCHAR(10) PRIMARY KEY) ENGINE=InnoDB');
-        $this->client->rawQuery("INSERT INTO qb_fix_chars VALUES ('1'),('10'),('2')");
-        $ids=[];
-        $this->client->chunkById(new QueryBuilder(),'qb_fix_chars','id',static function(array $rows)use(&$ids):void{
-            array_push($ids,...array_column($rows,'id'));
-        },1);
-        self::assertSame(['1','10','2'],$ids);
-    }
-
     public function testTextAndPreparedStreamsPreserveConnectionAndStatementReuse(): void
     {
         $notifications=[];

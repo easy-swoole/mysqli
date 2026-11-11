@@ -126,40 +126,6 @@ final class SelectPlannerTest extends TestCase
         }
     }
 
-    public function testKeysetPlanningPreservesOriginalOrScopeWithoutMutatingTheTemplate(): void
-    {
-        $conditions = [['', 'tenantId', '=', 7], ['OR', 'public', '=', true]];
-        $state = $this->state(['whereConditions' => $conditions]);
-        $before = $state;
-        $plan = SelectPlanner::keysetInput($state, 'o.id', '18446744073709551600', 10);
-        self::assertSame($before, $state);
-        self::assertSame(['where' => [['group' => $conditions, 'concat' => '']], 'quotedColumn' => '`o`.`id`'], $plan);
-        self::assertSame([], SelectPlanner::keysetInput($this->state(), 'id', null, 10)['where']);
-    }
-
-    public function testKeysetPlanningRejectsComplexTemplatesAndInvalidCursors(): void
-    {
-        $invalidStates = [['groups' => ['status']], ['havingConditions' => [['', 'COUNT(*)', '>', 1]]],
-            ['unionBranches' => [['SELECT 1', [], false, false]]], ['fromSource' => ['sql' => '(SELECT 1)', 'params' => [], 'alias' => 's']],
-            ['forUpdate' => true], ['lockInShareMode' => true], ['queryOptions' => ['DISTINCT']],
-            ['queryOptions' => ['DISTINCTROW']], ['queryOptions' => ['SQL_CALC_FOUND_ROWS']]];
-        foreach ($invalidStates as $changes) {
-            $state = $this->state($changes);
-            $before = $state;
-            $error = null;
-            try { SelectPlanner::keysetInput($state, 'id', null, 10); }
-            catch (\InvalidArgumentException $caught) { $error = $caught; }
-            self::assertNotNull($error);
-            self::assertSame($before, $state);
-        }
-        foreach ([[null, 0], [true, 10], [1.5, 10], [[], 10]] as [$cursor, $size]) {
-            $error = null;
-            try { SelectPlanner::keysetInput($this->state(), 'id', $cursor, $size); }
-            catch (\InvalidArgumentException $caught) { $error = $caught; }
-            self::assertNotNull($error);
-        }
-    }
-
     public function testCountAndAggregateKeepSubclassCloneAndGetDispatch(): void
     {
         $calls = new \ArrayObject();
@@ -180,25 +146,4 @@ final class SelectPlannerTest extends TestCase
         self::assertSame(['clone', 'get', 'get'], $calls->getArrayCopy());
     }
 
-    public function testKeysetPagesKeepClonePredicatesAndFacadeConvenienceDispatch(): void
-    {
-        $calls = new \ArrayObject();
-        $builder = new class($calls) extends QueryBuilder {
-            public function __construct(private \ArrayObject $calls) { parent::__construct(); }
-            public function __clone() { $this->calls[] = 'clone'; $this->where('clone_flag', 9); }
-            public function reorder(): QueryBuilder
-            { $this->calls[] = 'reorder'; return parent::reorder(); }
-            public function orderByRaw(string $sql, array $parameters = []): QueryBuilder
-            { $this->calls[] = 'order'; return parent::orderByRaw($sql, $parameters); }
-            public function limit(int $one, ?int $two = null): QueryBuilder
-            { $this->calls[] = 'limit'; return parent::limit($one, $two); }
-        };
-        $builder->where('tenantId', 7);
-        $page = $builder->forPageAfterId('id', 10, 20)->get('orders');
-        self::assertInstanceOf($builder::class, $page);
-        self::assertSame([7, 9, 10], $page->getLastBindParams());
-        self::assertSame(['clone', 'reorder', 'order', 'limit'], $calls->getArrayCopy());
-        $builder->get('orders');
-        self::assertSame([7], $builder->getLastBindParams());
-    }
 }

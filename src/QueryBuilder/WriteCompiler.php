@@ -23,18 +23,19 @@ final class WriteCompiler
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        $rows = array_values($rows);
         $columns = null;
+        $columnSet = [];
         $normalized = [];
         foreach ($rows as $row) {
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
             }
-            foreach (array_keys($row) as $column) {
-                self::quoteIdentifier($column);
+            if ($columns === null) {
+                $columns = array_keys($row);
+                foreach ($columns as $column) { self::quoteIdentifier($column); }
+                $columnSet = array_fill_keys($columns, true);
             }
-            if ($columns === null) { $columns = array_keys($row); }
-            if (count($row) !== count($columns) || array_diff_key(array_flip($columns), $row) !== []) {
+            if (count($row) !== count($columns) || array_diff_key($columnSet, $row) !== []) {
                 throw new \InvalidArgumentException('All batch rows must contain exactly the same columns');
             }
             $aligned = [];

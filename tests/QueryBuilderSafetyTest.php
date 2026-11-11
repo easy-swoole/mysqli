@@ -93,33 +93,4 @@ final class QueryBuilderSafetyTest extends TestCase
         self::assertSame([], $q->getLastBindParams());
     }
 
-    public function testKeysetPageClonesTemplateAndGroupsOriginalOrPredicates(): void
-    {
-        $template = (new QueryBuilder())->setPrefix('app_')->where('active', true)->orWhere('ownerId', 7)
-            ->orderByRaw('FIELD(id, ?) DESC', [99])->limit(100);
-        $page = $template->forPageAfterId('o.id', '18446744073709551600', 10)->get('orders o');
-        self::assertSame([true, 7, '18446744073709551600'], $page->getLastBindParams());
-        self::assertMatchesRegularExpression('/WHERE\s+\(.*active.*OR.*ownerId.*\)\s+AND\s+`o`\.`id` > \?/s', $page->getLastPrepareQuery());
-        self::assertStringEndsWith('ORDER BY `o`.`id` ASC  LIMIT 10', $page->getLastPrepareQuery());
-        $template->get('orders o');
-        self::assertSame([true, 7, 99], $template->getLastBindParams());
-        self::assertStringEndsWith('ORDER BY FIELD(id, ?) DESC  LIMIT 100', $template->getLastPrepareQuery());
-    }
-
-    public function testKeysetFirstPageHasNoCursorPredicateAndRejectsComplexTemplates(): void
-    {
-        $page = (new QueryBuilder())->whereNull('deleted_at')->forPageAfterId('id', null, 2)->get('users');
-        self::assertSame([], $page->getLastBindParams());
-        self::assertStringNotContainsString(' > ', $page->getLastPrepareQuery());
-        foreach ([
-            (new QueryBuilder())->groupBy('tenantId'),
-            (new QueryBuilder())->havingRaw('COUNT(*) > 1'),
-            (new QueryBuilder())->distinct(),
-            (new QueryBuilder())->forUpdate(),
-            (new QueryBuilder())->union((new QueryBuilder())->get('archive')),
-        ] as $template) {
-            try { $template->forPageAfterId('id', null, 2); self::fail('Complex keyset template should fail'); }
-            catch (\InvalidArgumentException $error) { self::assertStringContainsString('plain SELECT', $error->getMessage()); }
-        }
-    }
 }

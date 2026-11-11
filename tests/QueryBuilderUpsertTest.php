@@ -117,7 +117,7 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame(['a', 'b'], $q->getLastBindParams());
     }
 
-    public function testUpsertConvenienceAndRejectedInputsKeepExistingPendingState(): void
+    public function testUpsertConvenienceAndInvalidUpdateColumns(): void
     {
         $q = (new QueryBuilder())->upsert('users', [
             ['id' => 1, 'name' => 'a'], ['name' => 'b', 'id' => 2],
@@ -126,13 +126,12 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertStringContainsString('`name` = `__mysqli_new`.`name`', $q->getLastPrepareQuery());
 
         foreach ([[], ['missing'], [new \stdClass()]] as $updates) {
-            $q = (new QueryBuilder())->onDuplicate(['name' => 'original']);
+            $q = new QueryBuilder();
             try {
                 $q->upsert('users', [['id' => 1]], $updates);
                 self::fail('Expected invalid upsert inputs to be rejected');
             } catch (\InvalidArgumentException $error) {
-                $q->insert('users', ['id' => 1, 'name' => 'inserted']);
-                self::assertSame([1, 'inserted', 'original'], $q->getLastBindParams());
+                self::assertNotEmpty($error->getMessage());
             }
         }
     }
@@ -146,6 +145,41 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([1, 2], $q->getLastBindParams());
         $this->expectException(\InvalidArgumentException::class);
         $q->insertAll('users', [['discard' => 1]], ['field' => ['id']]);
+    }
+
+    public function testWhitelistPreservesFirstRowFieldOrderNullExpressionsAndOuterRowOrder(): void
+    {
+        $q = (new QueryBuilder())->onDuplicate(['name' => new Expression('UPPER(?)', ['fixed'])])
+            ->insertAll('users', [
+                'first' => ['id' => 1, 'discard_a' => 'a', 'name' => null],
+                'second' => ['name' => new Expression('CONCAT(?, ?)', ['a', 'b']), 'discard_b' => 'b', 'id' => 2],
+            ], ['field' => ['name', 'id']]);
+        self::assertSame('INSERT  INTO `users` (`id`, `name`)  VALUES (?, ?),(?, CONCAT(?, ?)) ON DUPLICATE KEY UPDATE `name` = UPPER(?)', $q->getLastPrepareQuery());
+        self::assertSame([1, null, 2, 'a', 'b', 'fixed'], $q->getLastBindParams());
+
+        $q->insertAll('users', [
+            3 => ['id' => 1, 'name' => null, 'discard_a' => 10],
+            8 => ['discard_b' => 20, 'name' => 'next', 'id' => 2],
+        ], ['field' => ['id', 'name'], 'replace' => true]);
+        self::assertSame('REPLACE  INTO `users` (`id`, `name`)  VALUES (?, ?),(?, ?)', $q->getLastPrepareQuery());
+        self::assertSame([1, null, 2, 'next'], $q->getLastBindParams());
+    }
+
+    public function testNestedRowsThroughInsertAndReplaceAreAlignedAtTheCompilerBoundary(): void
+    {
+        foreach (['insert' => 'INSERT', 'replace' => 'REPLACE'] as $method => $keyword) {
+            $q = (new QueryBuilder())->{$method}('users', [
+                ['id' => 1, 'name' => null], ['name' => new Expression('LOWER(?)', ['NEXT']), 'id' => 2],
+            ]);
+            self::assertSame($keyword . '  INTO `users` (`id`, `name`)  VALUES (?, ?),(?, LOWER(?))', $q->getLastPrepareQuery());
+            self::assertSame([1, null, 2, 'NEXT'], $q->getLastBindParams());
+            try {
+                (new QueryBuilder())->{$method}('users', [['id' => 1], ['id' => 2, 'name' => 'unexpected']]);
+                self::fail('Mismatched rows must not silently discard a column');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('same columns', $error->getMessage());
+            }
+        }
     }
 
     public function testExplicitDuplicateColumnNamesTreatDotsAsLiteralCharacters(): void

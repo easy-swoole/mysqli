@@ -209,7 +209,6 @@ final class Connection
     private function writeStatementCommand(Statement $statement, array $parameters, Deadline $deadline): void
     {
         $this->assertStatementGeneration($statement->getGeneration());
-        $this->assertSupportedSql($statement->getSql());
         [$nullBitmap, $types, $values] = ParameterEncoder::encode($parameters);
         $payload = chr(self::COM_STMT_EXECUTE) . pack('V', $statement->getId())
             . "\0" . pack('V', 1) . $nullBitmap

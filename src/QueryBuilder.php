@@ -207,8 +207,6 @@ class QueryBuilder
     private function addColumnCondition(array &$conditions, string $first, string $second, ComparisonOperator|string $operator, ConditionConjunction|string $cond, bool $on = false): QueryBuilder
     {
         $operator = $this->comparisonOperator($operator, true);
-        TableReference::column($first);
-        TableReference::column($second);
         $concat = $this->conditionConjunction($cond);
         $conditions[] = ['column' => [$first, $operator, $second], 'concat' => !$on && $conditions === [] ? '' : $concat];
         return $this;
@@ -412,17 +410,6 @@ class QueryBuilder
     {
         $this->pending['ordering'] = [];
         return $this;
-    }
-
-    /** 创建按唯一键递增分页的独立副本，不修改原构造器。 */
-    public function forPageAfterId(string $column, mixed $lastId, int $size): QueryBuilder
-    {
-        $plan = SelectPlanner::keysetInput($this->pending, $column, $lastId, $size);
-        $quoted = $plan['quotedColumn'];
-        $page = clone $this;
-        $page->pending['whereConditions'] = SelectPlanner::keysetWhere($page->pending['whereConditions']);
-        if ($lastId !== null) { $page->where($quoted, $lastId, '>'); }
-        return $page->reorder()->orderByRaw($quoted . ' ASC')->limit($size);
     }
 
     /** GROUP BY 分组条件。 */
@@ -789,10 +776,9 @@ class QueryBuilder
         if (!is_array($insertData) || $insertData === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        foreach ($insertData as $row) {
-            if (!is_array($row) || $row === []) {
-                throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
-            }
+        $insertData = array_values($insertData);
+        if (!is_array($insertData[0])) {
+            throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
         }
         $allowFields = $option['field'] ?? [];
         if (!empty($allowFields)) {
@@ -803,8 +789,6 @@ class QueryBuilder
             }
             unset($row);
         }
-        $insertData = WriteCompiler::normalizeBatch($insertData);
-
         $this->buildInsert($tableName, $insertData, isset($option['replace']) ? 'REPLACE' : 'INSERT');
         $this->reset();
         return $this;
@@ -813,14 +797,7 @@ class QueryBuilder
     /** 依据表的主键或唯一键约束执行批量插入或更新。 */
     public function upsert(mixed $tableName, array $rows, array $updateColumns): QueryBuilder
     {
-        $rows = WriteCompiler::normalizeBatch($rows);
         if ($updateColumns === []) { throw new \InvalidArgumentException('Upsert requires update columns'); }
-        foreach ($updateColumns as $key => $value) {
-            TableReference::identifier(is_int($key) ? $value : $key);
-            if (is_int($key) && (!is_string($value) || !array_key_exists($value, $rows[0]))) {
-                throw new \InvalidArgumentException('Implicit upsert columns must exist in every row');
-            }
-        }
         $this->onDuplicate($updateColumns);
         return $this->insertAll($tableName, $rows);
     }

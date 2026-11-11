@@ -142,7 +142,7 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame('SELECT  * FROM `records`', $fresh->get('records')->getLastPrepareQuery());
     }
 
-    public function testCountAndKeysetPreserveSubclassCloneHooksAndVirtualGetCalls(): void
+    public function testCountPreservesSubclassCloneHooksAndVirtualGetCalls(): void
     {
         $template = new class extends QueryBuilder {
             public static array $events = [];
@@ -162,14 +162,7 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame([1, 42], $template->getLastBindParams());
         self::assertStringNotContainsString('ORDER BY', $template->getLastPrepareQuery());
         self::assertStringNotContainsString('LIMIT', $template->getLastPrepareQuery());
-        $template::$events = [];
-        $template->whereRaw('active = ?', [1]);
-        $page = $template->forPageAfterId('id', 20, 5)->get('records');
-        self::assertSame(['clone', 'get'], $template::$events);
-        self::assertSame([1, 42, 20], $page->getLastBindParams());
-        self::assertStringContainsString('ORDER BY `id` ASC', $page->getLastPrepareQuery());
-        self::assertStringEndsWith('LIMIT 5', trim($page->getLastPrepareQuery()));
-        self::assertSame([1], $template->get('records')->getLastBindParams());
+
     }
 
     public function testCompletedOutputsAndReturnedParameterArraysStayIndependentAcrossClones(): void

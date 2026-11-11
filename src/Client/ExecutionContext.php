@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Client;
 
 use EasySwoole\Mysqli\Protocol\{Deadline, Statement};
-use EasySwoole\Mysqli\Exception\Exception;
 
 /** @internal 保存单次 Client 操作的共享超时预算、成功回调使用的开始时间和自建语句。 */
 final class ExecutionContext
@@ -31,25 +30,18 @@ final class ExecutionContext
 
     public function ownStatement(Statement $statement): Statement
     {
-        if ($this->statement !== null) {
-            throw new \LogicException('An execution context already owns a statement');
-        }
         return $this->statement = $statement;
     }
 
     /**
-     * 缓冲查询共用 SQL 异常包装和 finally 清理；成功回调异常不参与包装。
+     * 缓冲查询在 finally 中释放自建语句，执行异常和成功回调异常均原样传播。
      * @param callable(): (bool|array<array-key, mixed>) $operation
      * @return bool|array<array-key, mixed>
      */
-    public function buffered(?string $sql, callable $operation): bool|array
+    public function buffered(callable $operation): bool|array
     {
         try {
             $result = $operation();
-        } catch (Exception $error) {
-            throw $error;
-        } catch (\Throwable $error) {
-            throw new Exception("SQL {$sql} failed: {$error->getMessage()}", (int) $error->getCode(), $error);
         } finally {
             $this->closeOwnedStatement();
         }

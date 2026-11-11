@@ -48,9 +48,9 @@ All existing integration tests and their child processes inherit these settings.
 
 ## Query building, pagination and streaming
 
-`QueryBuilderIdentifierRegressionTest` covers table prefixes and quoted/schema-qualified names, UPDATE column references, and complete aliases/expressions in `getColumn()` and `getScalar()`. Query-builder regression/state tests cover bound FIELD sorting and failure/reset/raw isolation; aggregate/pagination tests cover DISTINCT, GROUP BY/HAVING, UNION, derived sources, large totals and cursor-template reuse.
+`QueryBuilderIdentifierRegressionTest` covers table prefixes and quoted/schema-qualified names, UPDATE column references, and complete aliases/expressions in `getColumn()` and `getScalar()`. Query-builder regression/state tests cover bound FIELD sorting and failure/reset/raw isolation; aggregate/pagination tests cover DISTINCT, GROUP BY/HAVING, UNION, derived sources and large totals.
 
-`ResultStreamTest` and `StreamingTest` cover one-pass reads, connection ownership until EOF, early break/destruction/error cleanup, concurrent-close rejection during a blocked fetch, statement reuse versus automatic ownership, transaction-loss protection and the shared deadline including consumer time. Client pagination/chunk tests check callback stopping, key progression and the shared COUNT/page timeout. These tests complement the existing buffered-protocol tests; the container matrix below must be executed to establish results for its exact runtimes.
+`ResultStreamTest` and `StreamingTest` cover one-pass reads, connection ownership until EOF, early break/destruction/error cleanup, concurrent-close rejection during a blocked fetch, statement reuse versus automatic ownership, transaction-loss protection and the shared deadline including consumer time. Client pagination tests check exact large counts and the shared COUNT/page timeout. These tests complement the existing buffered-protocol tests; the container matrix below must be executed to establish results for its exact runtimes.
 
 ## Refactoring and native type contracts
 
@@ -60,7 +60,7 @@ All existing integration tests and their child processes inherit these settings.
 
 `QueryBuilderStateTest` exercises clone isolation after raw/column/group helpers, subclass constructors and clone hooks, reset/debug publication timing, copied completed results, FROM/UNION snapshots and delayed IN/EXISTS/JOIN reads. Its behavior assertions also pass against the pre-refactor source.
 
-`SelectPlannerTest`, `AuthenticatorTest` and `ClientExecutionContextTest` cover subclass dispatch, source snapshots, capability/authentication validation, the shared operation deadline, exception precedence, owned-statement cleanup and observer timing. Existing fake-server and real database tests exercise the full path after extraction.
+`SelectPlannerTest`, `AuthenticatorTest` and `ClientExecutionContextTest` cover subclass dispatch, source snapshots, capability/authentication validation, the shared operation deadline, original exception propagation, finally cleanup precedence, owned-statement cleanup and observer timing. Existing fake-server and real database tests exercise the full path after extraction.
 
 ## Reproducible container matrix
 

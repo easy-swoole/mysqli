@@ -11,7 +11,6 @@
         "delete": "public function delete(mixed $tableName, mixed $numRows = NULL): ?EasySwoole\\Mysqli\\QueryBuilder",
         "distinct": "public function distinct(bool $isDistinct = true): EasySwoole\\Mysqli\\QueryBuilder",
         "fields": "public function fields(mixed $fields): EasySwoole\\Mysqli\\QueryBuilder",
-        "forPageAfterId": "public function forPageAfterId(string $column, mixed $lastId, int $size): EasySwoole\\Mysqli\\QueryBuilder",
         "forUpdate": "public function forUpdate(bool $isLock = true): EasySwoole\\Mysqli\\QueryBuilder",
         "forceIndex": "public function forceIndex(array|string $indexes): EasySwoole\\Mysqli\\QueryBuilder",
         "fromSub": "public function fromSub(EasySwoole\\Mysqli\\QueryBuilder $subquery, string $alias): EasySwoole\\Mysqli\\QueryBuilder",

@@ -161,6 +161,8 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 `Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 自动使用服务端预处理协议；`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本查询协议。两者显式声明可选超时参数，支持 `timeout: 0.5` 这样的命名参数。
 
+本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 自建的 Statement 仍在 `finally` 中关闭，成功回调在清理完成后触发。
+
 继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写这两个方法时都需要声明兼容的 `bool|array` 返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
 
 查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。未处于事务时，下一次查询会自动重新连接。
@@ -220,24 +222,10 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - 在独立副本上先 COUNT、再读取当前页，不修改模板。COUNT 采用 `count()` 的结果集行数规则；带 FROM 子查询的模板将 `$table` 传 `null`。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
+- 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
 - COUNT 和当前页查询共用一次总超时预算，包括必要的建连、Prepare、Execute、读取和清理；不是每条语句各获得完整的 `$timeout`。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
-- 使用包含唯一键的稳定排序。深页仍使用 OFFSET，需要连续遍历大量记录时考虑 `chunkById()`；客户端最后的影响行数是当前页查询的行数，不是 total。
-
-### `Client::chunkById($query, $table, $column, $callback, $size = 1000, $timeout = null)`
-
-```php
-$template = (new QueryBuilder())->where('active', true)->fields(['id', 'name']);
-$delivered = $client->chunkById($template, 'users', 'id', function (array $rows, int $page): bool {
-    foreach ($rows as $row) { processUser($row); }
-    return true; // 返回 false 时，在当前批交付后停止。
-}, size: 500, timeout: 3.0);
-```
-
-- 通过 `forPageAfterId()` 创建每批副本，按稳定唯一键 ASC 前进，不修改模板；同样受到普通 SELECT 的限制，不使用 OFFSET。返回已经交给回调的总行数，批次序号从 1 开始。
-- `$column` 必须出现在每条结果中，以该字段本名作为返回键，且值为非 NULL 的整数或字符串；若选择了其他别名，需保留原键。不要在回调中修改此键或使用会产生重复键的 JOIN。
-- `$size` 必须为正整数；空批或不足一批时结束。游标不前进会报错，字符串键的实际顺序与数据库排序规则一致。
-- `$timeout` 按每批计算，不是整个循环的总预算；回调处理时间不计入下一批新的查询预算。方法不自动开启快照事务，需要一致读取时由调用方管理事务。
+- 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
 ### `Client::iterate($builder, $timeout = null)`
 
@@ -746,19 +734,6 @@ $builder->where('active', true)->orderByDesc('created_at')
 
 - 清除待构建查询的全部普通排序和 `orderByRaw()`，随后可重新排序；不会清除条件、字段或分页，也不修改已经构建的 SQL。
 
-### `forPageAfterId($column, $lastId, $size)`
-
-```php
-$template = (new QueryBuilder())->where('active', true)->fields(['id', 'name']);
-$firstPage = $template->forPageAfterId('id', null, 100)->get('users');
-$nextPage = $template->forPageAfterId('id', 1234, 100)->get('users');
-```
-
-- 使用尚未调用 `get()` 的条件模板；返回独立副本，不修改模板。覆盖原排序和分页，固定为唯一键 ASC、LIMIT `$size`；后续仍须 `get($table)` 构建。
-- `$lastId = null` 表示首批，否则添加 `$column > $lastId`；游标只能是整数或字符串，批量大小必须为正整数。原有 OR 条件整体加括号后再连接游标条件。
-- 仅用于普通 SELECT：不支持 GROUP BY/HAVING、DISTINCT、UNION、FROM 子查询、行锁或 SQL_CALC_FOUND_ROWS。JOIN 场景也必须保证该键在最终结果中唯一。
-- 键必须稳定且唯一，建议有匹配索引；读取期间不修改该键。这里是单键递增分页，不支持复合游标或降序游标。
-
 ### `reset()`
 
 ```php
@@ -1224,14 +1199,14 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 
 ## QueryBuilder 内部职责
 
-`QueryBuilder` 保留原有方法名、参数名、顺序、默认值和链式行为，公开方法增加兼容的原生类型声明；编译逻辑位于 `src/QueryBuilder/`，内部协作类不作为业务 API 使用。
+`QueryBuilder` 提供带原生类型声明的公开链式构建方法；编译逻辑位于 `src/QueryBuilder/`，内部协作类不作为业务 API 使用。
 
 | 类 | 职责 |
 | --- | --- |
 | `QueryBuilder` | 收集链式调用状态、维护最近构建结果、重置状态和兼容入口 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
-| `SelectPlanner` / `SelectPlan` | 无状态规划 SELECT 来源、COUNT、聚合和游标分页，返回只读 SELECT 头部 |
+| `SelectPlanner` / `SelectPlan` | 无状态规划 SELECT 来源、COUNT、聚合，返回只读 SELECT 头部 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
 | `QueryCompiler` | 按 SQL 顺序调度各类编译，处理最终行锁和事务标记 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
@@ -1252,5 +1227,5 @@ UNION 保存已构建分支快照，IN/EXISTS 在外层构建时读取子查询�
 ### 原生类型与子类重写
 
 - 普通链式方法声明返回 `QueryBuilder`；`update()` / `delete()` 保留对子查询返回 `null` 的既有行为，因此为 `?QueryBuilder`。`startTransaction()` / `commit()` / `rollback()` 只构建 SQL，返回 `void`。
-- 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，COUNT、聚合和游标分页仍经过子类方法。
+- 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，COUNT、聚合仍经过子类方法。
 - 继承 Client 并重写 `rawQuery()` 时同步声明 `bool|array`；`query()` 原有返回类型不变。`Connection::set_charset()` 明确返回 `bool`。这轮类型声明会影响子类方法的 PHP 继承检查，旧的无返回类型重写需要同步适配。

@@ -60,7 +60,7 @@ final class ClientExecutionContextTest extends TestCase
         $first = $context->remaining();
         usleep(2000);
         self::assertLessThan($first, $context->remaining());
-        self::assertSame([['id' => 1]], $context->buffered('SELECT 1', static fn(): array => [['id' => 1]]));
+        self::assertSame([['id' => 1]], $context->buffered(static fn(): array => [['id' => 1]]));
         self::assertSame([['id' => 1]], $notifications[0][0]);
         self::assertGreaterThanOrEqual($before, $notifications[0][1]);
         self::assertLessThanOrEqual(microtime(true), $notifications[0][1]);
@@ -76,28 +76,24 @@ final class ClientExecutionContextTest extends TestCase
             $calls++;
         });
         self::assertSame($statement, $context->ownStatement($statement));
-        self::assertTrue($context->buffered('UPDATE records SET enabled=1', static fn(): bool => true));
+        self::assertTrue($context->buffered(static fn(): bool => true));
         self::assertSame(1, $calls);
         $context->closeOwnedStatement();
         self::assertSame(1, $calls);
     }
 
-    public function testBufferedErrorsKeepServerExceptionsAndWrapOtherFailures(): void
+    public function testBufferedErrorsPropagateUnchangedAfterClosingTheStatement(): void
     {
-        foreach ([new Exception('server failed', 1064), new \RuntimeException('local failed', 77)] as $original) {
+        try { strlen([]); } catch (\TypeError $nativeError) {}
+        foreach ([new Exception('server failed', 1064), new \RuntimeException('local failed', 77), $nativeError] as $original) {
             $statement = $this->statement();
             $context = new ExecutionContext(1.0, static function (): void { self::fail('Failure must not notify success'); });
             $context->ownStatement($statement);
             try {
-                $context->buffered('SELECT ? AS id', static function () use ($original): array { throw $original; });
+                $context->buffered(static function () use ($original): array { throw $original; });
                 self::fail('Expected the execution failure');
-            } catch (Exception $error) {
-                if ($original instanceof Exception) { self::assertSame($original, $error); }
-                else {
-                    self::assertSame('SQL SELECT ? AS id failed: local failed', $error->getMessage());
-                    self::assertSame(77, $error->getCode());
-                    self::assertSame($original, $error->getPrevious());
-                }
+            } catch (\Throwable $error) {
+                self::assertSame($original, $error);
             }
             $this->assertClosed($statement);
         }
@@ -109,7 +105,7 @@ final class ClientExecutionContextTest extends TestCase
         $context = new ExecutionContext(1.0, static function (): void { self::fail('Failed cleanup must not notify'); });
         $context->ownStatement($statement);
         try {
-            $context->buffered('SELECT 1', static function (): array { throw new \RuntimeException('execute failed'); });
+            $context->buffered(static function (): array { throw new \RuntimeException('execute failed'); });
             self::fail('Expected cleanup failure');
         } catch (Exception $error) {
             self::assertStringContainsString('Concurrent', $error->getMessage());
@@ -123,7 +119,7 @@ final class ClientExecutionContextTest extends TestCase
         $original = new \RuntimeException('observer failed');
         $context = new ExecutionContext(1.0, static function () use ($original): void { throw $original; });
         $context->ownStatement($statement);
-        try { $context->buffered('SELECT 1', static fn(): array => []); self::fail('Expected observer error'); }
+        try { $context->buffered(static fn(): array => []); self::fail('Expected observer error'); }
         catch (\RuntimeException $error) { self::assertSame($original, $error); }
         $this->assertClosed($statement);
     }
@@ -216,19 +212,34 @@ final class ClientExecutionContextTest extends TestCase
         };
     }
 
-    public function testQueryStillDispatchesToSubclassPrepareAndWrapsItsExecutionFailure(): void
+    public function testQueryStillDispatchesToSubclassPrepareAndPropagatesItsExecutionFailure(): void
     {
         $statement = $this->statement(parameters: 1);
         $client = $this->overrideClient($statement, $this->connected());
         $client->onQuery(static function (): void { self::fail('Failure must not notify'); });
         try { $client->query((new QueryBuilder())->raw('SELECT ? AS id'), 0.5); self::fail('Expected invalid parameter count'); }
-        catch (Exception $error) { self::assertInstanceOf(\InvalidArgumentException::class, $error->getPrevious()); }
+        catch (\InvalidArgumentException $error) { self::assertSame('Statement expects 1 parameters, 0 given', $error->getMessage()); }
         self::assertSame('SELECT ? AS id', $client->prepareCalls[0][0]);
         self::assertGreaterThan(0.0, $client->prepareCalls[0][1]);
         self::assertLessThanOrEqual(0.5, $client->prepareCalls[0][1]);
         self::assertNull($client->getLastInsertId());
         self::assertNull($client->getLastAffectRows());
         $this->assertClosed($statement);
+    }
+
+    public function testQueryPropagatesNativePrepareTypeErrorWithoutNotifying(): void
+    {
+        $client = $this->overrideClient($this->statement(), $this->connected());
+        $client->onQuery(static function (): void { self::fail('Failure must not notify'); });
+        try {
+            $client->query(new QueryBuilder(), 0.5);
+            self::fail('An unbuilt query must reach the native prepare argument check');
+        } catch (\TypeError $error) {
+            self::assertNull($error->getPrevious());
+        }
+        self::assertSame([], $client->prepareCalls);
+        self::assertNull($client->getLastInsertId());
+        self::assertNull($client->getLastAffectRows());
     }
 
     public function testIterateStillDispatchesToSubclassPrepareAndDoesNotWrapStartupErrors(): void
@@ -258,13 +269,13 @@ final class ClientExecutionContextTest extends TestCase
         }
     }
 
-    public function testPaginationAndChunksKeepSubclassQueryDispatch(): void
+    public function testPaginationKeepsSubclassQueryDispatch(): void
     {
         $client = new class extends Client {
             /** @var list<array{?string, float|null}> */
             public array $queries = [];
             /** @var list<array<array-key, mixed>> */
-            public array $responses = [[['__mysqli_total' => 1]], [['id' => 7]], [['id' => 9]]];
+            public array $responses = [[['__mysqli_total' => 1]], [['id' => 7]]];
             public function __construct() { parent::__construct(new Config()); }
             public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
             {
@@ -273,8 +284,7 @@ final class ClientExecutionContextTest extends TestCase
             }
         };
         self::assertSame([['id' => 7]], $client->paginate(new QueryBuilder(), 'records')['items']);
-        self::assertSame(1, $client->chunkById(new QueryBuilder(), 'records', 'id', static fn(): bool => false, 1));
-        self::assertCount(3, $client->queries);
+        self::assertCount(2, $client->queries);
     }
 
     public function testRawQueryReturnTypeAndProtectedCallbackRemainSubclassCompatible(): void

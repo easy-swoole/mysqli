@@ -20,18 +20,15 @@ final class PaginationTest extends TestCase
         self::assertSame(3, Pagination::result([], $large, PHP_INT_MAX, 1)['lastPage']);
         self::assertSame(1, Pagination::result([], 0, 20, 1)['lastPage']);
         self::assertSame(3, Pagination::result([], 41, 20, 1)['lastPage']);
-        self::assertSame(2, Pagination::result([], '00040', 20, 1)['lastPage']);
+        self::assertSame(PHP_INT_MAX, Pagination::result([], PHP_INT_MAX, 1, 1)['lastPage']);
+        self::assertSame('9223372036854775808', Pagination::result([], '9223372036854775808', 1, 1)['lastPage']);
     }
 
-    public function testInvalidPaginationArgumentsAndTotalsAreRejected(): void
+    public function testInvalidPaginationArgumentsAreRejected(): void
     {
         foreach ([[0, 1], [20, 0], [-1, 2], [PHP_INT_MAX, 3]] as [$size, $page]) {
             try { Pagination::offset($size, $page); self::fail('Invalid pagination arguments'); }
             catch (\InvalidArgumentException $error) { self::assertNotEmpty($error->getMessage()); }
-        }
-        foreach ([-1, '-1', 1.5, '1e2', null, []] as $total) {
-            try { Pagination::result([], $total, 20, 1); self::fail('Invalid COUNT result'); }
-            catch (\UnexpectedValueException $error) { self::assertNotEmpty($error->getMessage()); }
         }
     }
 
@@ -53,15 +50,13 @@ final class PaginationTest extends TestCase
         self::assertStringNotContainsString('LIMIT', $template->getLastPrepareQuery());
     }
 
-    public function testClientRejectsInvalidCountsBeforeQueryingData(): void
+    public function testClientPreservesUnsignedCountPrecision(): void
     {
-        $client = $this->client([[['__mysqli_total' => 'bad']]]);
-        try {
-            $client->paginate(new QueryBuilder(), 'orders');
-            self::fail('Bad count must fail');
-        } catch (\UnexpectedValueException $error) {
-            self::assertCount(1, $client->queries);
-        }
+        $total = '18446744073709551615';
+        $client = $this->client([[['__mysqli_total' => $total]], [['id' => 7]]]);
+        self::assertSame(['items' => [['id' => 7]], 'total' => $total, 'page' => 1,
+            'perPage' => 1, 'lastPage' => $total], $client->paginate(new QueryBuilder(), 'orders', 1));
+        self::assertCount(2, $client->queries);
     }
 
     private function client(array $results): Client

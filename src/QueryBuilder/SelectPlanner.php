@@ -114,29 +114,4 @@ final class SelectPlanner
         return new Expression($function . '(' . $sql . ') AS ' . TableReference::identifier($alias), $parameters);
     }
 
-    /**
-     * 仅返回规范化输入；游标条件及排序仍通过公开入口方法设置。
-     * @param State $state
-     * @return array{where: array, quotedColumn: string}
-     */
-    public static function keysetInput(array $state, string $column, mixed $lastId, int $size): array
-    {
-        if ($size < 1) { throw new \InvalidArgumentException('Page size must be positive'); }
-        if ($lastId !== null && !is_int($lastId) && !is_string($lastId)) {
-            throw new \InvalidArgumentException('Cursor must be an integer, string or null');
-        }
-        $quoted = TableReference::column($column);
-        if ($state['groups'] !== [] || $state['havingConditions'] !== [] || $state['unionBranches'] !== []
-            || $state['fromSource'] !== null || $state['forUpdate'] || $state['lockInShareMode']
-            || array_intersect(['DISTINCT', 'DISTINCTROW', 'SQL_CALC_FOUND_ROWS'], $state['queryOptions']) !== []) {
-            throw new \InvalidArgumentException('Keyset pages require a plain SELECT without grouping, distinct, union or locks');
-        }
-        return ['where' => self::keysetWhere($state['whereConditions']), 'quotedColumn' => $quoted];
-    }
-
-    /** 公开入口调用子类 __clone() 后，再将副本的当前条件组成一组。 */
-    public static function keysetWhere(array $where): array
-    {
-        return $where === [] ? [] : [['group' => $where, 'concat' => '']];
-    }
 }

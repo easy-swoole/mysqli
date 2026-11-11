@@ -23,7 +23,6 @@
             <file>tests/QueryBuilderSafetyTest.php</file>
             <file>tests/QueryBuilderAggregateTest.php</file>
             <file>tests/ResultStreamTest.php</file>
-            <file>tests/ClientChunkTest.php</file>
             <file>tests/PaginationTest.php</file>
             <file>tests/StreamingTest.php</file>
             <file>tests/QueryBuilderUpsertTest.php</file>
