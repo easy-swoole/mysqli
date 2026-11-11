@@ -10,18 +10,18 @@ bash tests/docker/run-matrix.sh php84-mysql84-tls
 bash tests/docker/run-matrix.sh --all
 ```
 
-`self-check.sh` 检查脚本语法、矩阵 JSON、依赖快照、环境校验器和临时证书；主机有 Ruby/Psych 时同时解析 workflow YAML，有 PHP 时同时检查 PHP 脚本。自检成功不表示 Docker 镜像已经构建或数据库测试已经运行。
+`self-check.sh` 检查脚本语法、矩阵 JSON、依赖快照、环境校验器和临时证书；主机有 Ruby/Psych 时同时解析工作流 YAML，有 PHP 时同时检查 PHP 脚本。自检成功不表示 Docker 镜像已经构建或数据库测试已经运行。
 
-| Lane | PHP | Swoole | MySQL | 主连接传输 | 单元测试 |
+| 测试组合 | PHP | Swoole | MySQL | 主连接传输 | 单元测试 |
 | --- | --- | --- | --- | --- | --- |
 | `php81-mysql80-plain` | 8.1.34 | 5.1.8 | 8.0.46 | 明文 | 执行 |
 | `php84-mysql80-tls` | 8.4.27 | 6.2.4 | 8.0.46 | VerifyIdentity | 复用相同当前运行时的单元覆盖 |
 | `php84-mysql84-tls` | 8.4.27 | 6.2.4 | 8.4.13 | VerifyIdentity | 执行 |
 | `php84-mysql97-tls` | 8.4.27 | 6.2.4 | 9.7.4 | VerifyIdentity | 复用相同当前运行时的单元覆盖 |
 
-PHP 8.1/Swoole 5.1 代表最低支持分支，实际固定的是表中的补丁版本，不声称运行了 PHP 8.1.0 或 Swoole 5.1.0。矩阵不是全部维度的笛卡尔积；两个 PHP/Swoole 运行时各执行一次单元测试，所有 lane 都执行数据库集成套件。明文 lane 在执行前排除仅适用于 TLS 的 `TlsIntegrationTest`；其余用例使用 `--fail-on-skipped`，缺少数据库或大包能力不会被静默当作成功。
+PHP 8.1/Swoole 5.1 代表最低支持分支，实际固定的是表中的补丁版本，不声称运行了 PHP 8.1.0 或 Swoole 5.1.0。矩阵不是全部维度的笛卡尔积；两个 PHP/Swoole 运行时各执行一次单元测试，所有测试组合都执行数据库集成套件。明文组合在执行前排除仅适用于 TLS 的 `TlsIntegrationTest`；其余用例使用 `--fail-on-skipped`，缺少数据库或大包能力不会被静默当作成功。
 
-每组都额外以压缩关闭/开启执行传输探测，并运行现有 `CompressionTest`、`LargeParameterMemoryTest`，因此覆盖明文+压缩以及 TLS+压缩。TLS lane 设置服务端 `require_secure_transport=ON`，证书以临时 CA 签发，SAN 包含内部 DNS 名 `mysql`，客户端使用 VerifyIdentity。证书有效期两天，运行结束删除；CA 私钥不复制到数据库/测试容器。现有 TLS 集成测试继续验证 TLS 1.2/1.3 的指定版本协商。
+每组都额外以压缩关闭/开启执行传输探测，并运行现有 `CompressionTest`、`LargeParameterMemoryTest`，因此覆盖明文+压缩以及 TLS+压缩。TLS 组合设置服务端 `require_secure_transport=ON`，证书以临时 CA 签发，SAN 包含内部 DNS 名 `mysql`，客户端使用 VerifyIdentity。证书有效期两天，运行结束删除；CA 私钥不复制到数据库/测试容器。现有 TLS 集成测试继续验证 TLS 1.2/1.3 的指定版本协商。
 
 每次创建独立 Docker 网络、数据卷和 `mysqli_ci` 数据库，使用只适用于这些临时容器的固定测试账号；不向主机发布 3306 端口。所有连接继承以下服务端严格模式：
 
@@ -29,7 +29,7 @@ PHP 8.1/Swoole 5.1 代表最低支持分支，实际固定的是表中的补丁�
 STRICT_TRANS_TABLES,ONLY_FULL_GROUP_BY,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
 ```
 
-`max_allowed_packet` 设置为 1 GiB，保证大包测试有条件执行。探测器核对真实 PHP/Swoole/MySQL 版本、会话 SQL 模式、TLS 版本/密码套件、压缩协商、文本和预处理读写结果；信息写入 `results/<lane>/environment.jsonl`，不包含账号密码。镜像 ID/解析后的仓库 digest、构建日志、数据库日志和 JUnit XML 也保存在该目录，并在 CI 上传七天。
+`max_allowed_packet` 设置为 1 GiB，保证大包测试有条件执行。探测器核对真实 PHP/Swoole/MySQL 版本、会话 SQL 模式、TLS 版本/密码套件、压缩协商、文本和预处理读写结果；信息写入 `results/<lane>/environment.jsonl`，不包含账号密码。镜像 ID/解析后的镜像仓库摘要（digest）、构建日志、数据库日志和 JUnit XML 也保存在该目录，并在 CI 上传七天。
 
 源代码以只读方式挂载，Composer 安装和测试在容器的临时工作区中执行，既不覆盖主机 vendor，也不写主机 composer.lock。退出、失败或中断会删除本次创建的容器、卷、网络及临时证书；镜像保留以便下次复用缓存。
 
@@ -47,7 +47,7 @@ STRICT_TRANS_TABLES,ONLY_FULL_GROUP_BY,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBS
 
 ## 镜像及源码依据
 
-主要组件均使用明确版本标签，Swoole 从对应官方 release 源码构建，Composer 固定为 2.11.1。发行版基础层和标签仍可能由上游重新构建；如需逐字节重复镜像，使用测试产物记录的镜像 digest 固定 `FROM` / MySQL 镜像，并维护更新。
+主要组件均使用明确版本标签，Swoole 从对应的官方发布版源码构建，Composer 固定为 2.11.1。发行版基础层和标签仍可能由上游重新构建；如需逐字节重复镜像，使用测试产物记录的镜像摘要（digest）固定 `FROM` / MySQL 镜像，并维护更新。
 
 - [官方 MySQL 镜像及 8.4.13/9.7.4 标签](https://hub.docker.com/_/mysql)
 - [官方 MySQL 8.0 历史标签](https://hub.docker.com/_/mysql/tags?name=8.0)

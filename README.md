@@ -115,8 +115,8 @@ $config->setTlsServerName('mysql.internal.example.com');
 - 指定 TLS 的 SNI 名称，同时作为 VerifyIdentity 校验的预期证书身份；不改变 TCP 连接地址，默认使用 `host`。
 - DNS 名随 ClientHello 发送 SNI，供代理选择证书或后端；IP 字面量不发送 SNI。DNS 名末尾根域点会去除，名称不能包含空白或 NUL。
 - SNI 与证书校验独立：VerifyCA 只检查证书链和有效期，VerifyIdentity 再检查名称匹配；均在发送 MySQL 认证信息前完成校验。
-- 连接 IP 时，默认要求证书 subjectAltName 包含对应 IP，不接受仅把 IP 写进 CN 或 DNS SAN 的证书。
-- DNS 匹配不区分大小写；优先匹配 DNS SAN，没有 DNS SAN 时兼容 CN。通配符仅允许 `*.example.com` 形式，且只匹配一层子域名。
+- 连接 IP 时，默认要求证书的主题备用名称（subjectAltName）包含对应 IP，不接受仅把 IP 写进 CN 或 DNS 主题备用名称（SAN）的证书。
+- DNS 匹配不区分大小写；优先匹配 DNS 主题备用名称（SAN），没有 DNS 主题备用名称（SAN）时兼容 CN。通配符仅允许 `*.example.com` 形式，且只匹配一层子域名。
 - 此字段不是跳过校验的开关。仅在明确知道服务端真实证书名称时覆盖；需要关闭身份校验但保留 CA 校验，应明确选择 VerifyCA。
 
 ### `tlsCertFile` / `tlsKeyFile` / `tlsKeyPassphrase`
@@ -130,7 +130,7 @@ $config->setTlsKeyPassphrase(getenv('MYSQL_TLS_KEY_PASSPHRASE') ?: '');
 - 用于服务端要求客户端证书的双向 TLS，例如 MySQL 账号配置了 `REQUIRE X509`。普通单向 TLS 不需要这些字段。
 - 客户端证书和私钥必须同时配置、互相匹配；文件必须可读。私钥加密时配置解密口令，未加密私钥保持空字符串。
 - 口令用于解密客户端私钥，不是数据库密码；客户端证书也不代替 MySQL 用户名和数据库密码。
-- 不将私钥、解密口令或数据库密码提交到代码仓库；限制私钥文件读取权限。Config 的序列化包含配置值，不要把完整 Config 打到日志。
+- 不将私钥、解密口令或数据库密码提交到代码仓库；限制私钥文件读取权限。`Config` 的序列化包含配置值，不要把完整的 `Config` 配置打到日志。
 
 ### `tlsVersions` / `setTlsVersions(array $versions): void`
 
@@ -143,8 +143,8 @@ $config->setTlsVersions(['TLSv1.2', TlsVersion::Tls13]);        // 可混用原�
 $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', 'TLSv1.3']
 ```
 
-- `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与 setter 均可混用枚举、字符串；默认值和 getter 的字符串数组返回格式不变。
-- setter 仍只保存列表，不立即校验版本名。getter 将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
+- `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与设置方法均可混用枚举、字符串；默认值和读取方法的字符串数组返回格式不变。
+- 设置方法仍只保存列表，不立即校验版本名。读取方法将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
 - 只允许 TLS 1.2、TLS 1.3，不能降级到旧协议；实际可用版本取决于 Swoole/OpenSSL 编译能力及服务端配置。TLS 默认关闭，版本列表本身不会开启 TLS。
 - TLS 握手计入 `maxConnectTime`，也计入触发自动连接的单次查询总超时，不会获得独立的新超时预算。
 
@@ -169,13 +169,13 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 ## 会话安全与超时
 
-预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新 Prepare；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
+预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
 连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
 
-事务期间断线或查询超时，首次操作仍抛出原始连接/超时异常；后续查询、Prepare、旧 Statement 执行、Connect、Commit 和 Rollback 会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`，阻止透明重连后继续执行。此标记在显式 `close()` 前一直保留，关闭 Statement 不会解除保护。
+事务期间断线或查询超时，首次操作仍抛出原始连接/超时异常；后续查询、预处理语句创建、旧 Statement 执行、连接、提交和回滚 会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`，阻止透明重连后继续执行。此标记在显式 `close()` 前一直保留，关闭 Statement 不会解除保护。
 
-恢复时先调用 `$client->close()`，再连接并开启新的事务，由业务决定是否重试整个事务。如果在 Commit 响应到达前断线，提交结果可能无法确认，不能仅凭此异常自动重放写入。
+恢复时先调用 `$client->close()`，再连接并开启新的事务，由业务决定是否重试整个事务。如果在提交响应到达前断线，提交结果可能无法确认，不能仅凭此异常自动重放写入。
 
 `begin_transaction(TransactionStartFlags $flags = TransactionStartFlags::None)` 使用 `EasySwoole\Mysqli\Transaction\TransactionStartFlags` 枚举。支持 `None`（默认）、`ConsistentSnapshot`、`ReadWrite`、`ReadOnly`、`ConsistentSnapshotReadWrite` 和 `ConsistentSnapshotReadOnly`。快照与访问模式通过组合枚举值表达，无需按位或；不再接受整数，旧调用需迁移为枚举，否则抛出 `TypeError`。例如：
 
@@ -203,7 +203,7 @@ CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。
 
 同一个连接同时只允许一个操作，包括建立连接、关闭 Statement 和关闭连接。并发调用会抛出异常，正在进行的操作仍可继续完成。可以在当前操作结束后重试关闭 Statement；需要并发查询时，应使用不同的客户端连接。
 
-`maxConnectTime` 限制完整连接过程的总耗时，包括 TCP 建连、握手、认证和字符集设置。`rawQuery()`、`query()` 和 `prepare()` 的超时均包含必要的连接过程；`query()` 的 Prepare、Execute、结果读取及 Statement 清理共用同一个超时预算。连接过程同时受 `maxConnectTime` 限制，以先到期的截止时间为准。
+`maxConnectTime` 限制完整连接过程的总耗时，包括 TCP 建连、握手、认证和字符集设置。`rawQuery()`、`query()` 和 `prepare()` 的超时均包含必要的连接过程；`query()` 的预处理、执行、结果读取及 Statement 清理共用同一个超时预算。连接过程同时受 `maxConnectTime` 限制，以先到期的截止时间为准。
 
 超时值必须大于零。如果 Statement 清理阶段的查询预算已经耗尽，客户端会直接丢弃连接，不再为清理操作分配新的超时预算。
 
@@ -223,7 +223,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，包括必要的建连、Prepare、Execute、读取和清理；不是每条语句各获得完整的 `$timeout`。
+- COUNT 和当前页查询共用一次总超时预算，包括必要的建连、预处理、执行、读取和清理；不是每条语句各获得完整的 `$timeout`。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -240,9 +240,9 @@ try {
 ```
 
 - `$builder` 必须已经构建。方法通过服务端预处理启动查询，返回 `ResultStream`，逐行读取，不收集完整结果数组；若转成数组，仍会占用完整结果所需内存。
-- Prepare、Execute、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
-- 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前 break、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
-- 流结束前连接保持独占，不能在同一 Client 上发起查询、Prepare、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在 fetch 时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
+- 预处理、执行、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
+- 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前退出循环、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
+- 流结束前连接保持独占，不能在同一 Client 上发起查询、创建预处理语句、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在读取时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
 - 创建流时客户端插入 ID/影响行数清空；完整 SELECT 读取后 `getLastAffectRows()` 为已读取行数，`getLastInsertId()` 同步服务端元数据。提前停止或读取失败不发布成功元数据。
 - `onQuery()` 仅在完整耗尽和清理成功后收到 `true`，不再传结果数组；提前停止或读取失败不会触发成功回调。
 
@@ -277,7 +277,7 @@ try {
 ```
 
 - 参数数量、参数编码和所属会话校验与 `execute()` 一致。完整读取后 Statement 仍可再次执行，不自动释放；调用方最终负责 `close()`。
-- Prepare 是此前独立操作；这里的超时覆盖本次 Execute 与逐行消费。连接断开或流提前停止后，旧 Statement 不再可复用，需要重新 Prepare；事务丢失保护优先适用。
+- 预处理是此前的独立操作；这里的超时覆盖本次执行与逐行消费。连接断开或流提前停止后，旧 Statement 不再可复用，需要重新准备语句；事务丢失保护优先适用。
 - 通过 Client 创建的 Statement 在完整 EOF 后更新该 Client 的元数据；直接调用 Statement 不触发 Client 的 `onQuery()`，与手工 `execute()` 的回调范围一致。
 
 ### `ResultStream::close()` / `isClosed()` / `isComplete()` / `getRowsRead()`
@@ -633,7 +633,7 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 // name 使用每行的新值，status 使用统一固定值。
 ```
 
-- 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回 Builder，实际执行交给 `Client::query()`。
+- 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回构造器，实际执行交给 `Client::query()`。
 - 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
 - `upsert()` 要求非空行数据和非空更新列，所有行的列集合一致；隐式更新列必须存在于每一行中。它不接受 `insertAll()` 的白名单选项，需要时先自行筛选行数据，或用带白名单的 `insertAll()` 配合 `onDuplicate()`。
@@ -691,8 +691,8 @@ $builder->where('paid.total', 100, '>')->getFromSub($totals, 'paid');
 
 - 子查询必须已经构建为 SELECT；普通 QueryBuilder 或 `subQuery()` 均可。`fromSub()` 保存调用时 SQL 与参数的快照，后续重建原子查询不影响外层。
 - `$alias` 必须是非空名称，作为一个标识符引用；推荐简单、不带点的别名。外层条件使用该别名访问子查询返回的列。
-- `fromSub()` 只设置待构建的 FROM 来源，最后使用 `get(null)`；此时传入普通表名会报错。`getFromSub()` 一次完成设置和构建，仍返回 Builder。
-- 表前缀和索引提示放在子查询自己的 Builder 上；外层不能给派生表设置 FORCE/USE/IGNORE INDEX。构建完成或 `reset()` 后清除 FROM 来源。
+- `fromSub()` 只设置待构建的 FROM 来源，最后使用 `get(null)`；此时传入普通表名会报错。`getFromSub()` 一次完成设置和构建，仍返回构造器。
+- 表前缀和索引提示放在子查询自己的构造器上；外层不能给派生表设置 FORCE/USE/IGNORE INDEX。构建完成或 `reset()` 后清除 FROM 来源。
 
 ### `count($tableName, $alias = 'aggregate')`
 
@@ -704,7 +704,7 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
-- 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
+- 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
 
 ### `aggregate($tableName, $function, $column, $alias = 'aggregate')` / `sum()` / `avg()` / `min()` / `max()`
@@ -799,7 +799,7 @@ $sub = QueryBuilder::subQuery()->where('active', 1)->get('users', null, 'id');
 $builder->whereIn('userId', $sub)->get('orders');
 ```
 
-- 接受值数组或已经调用 `get()` 等完成构建的 `QueryBuilder::subQuery()`；普通 Builder 或未构建子查询会抛出 `InvalidArgumentException`。
+- 接受值数组或已经调用 `get()` 等完成构建的 `QueryBuilder::subQuery()`；普通构造器或未构建子查询会抛出 `InvalidArgumentException`。
 - 数组元素逐个绑定，不传 `'1,2,3'` 这样的字符串；子查询应只选择一列，且不要设置结果别名。
 - 空数组生成 `0 = 1`，不是忽略条件；与其他条件使用 OR 连接时，最终范围仍取决于完整表达式。
 - 数组包含 `null` 不等于额外匹配 NULL 行；需要时另加 `whereNull()` 并通过条件组表达 OR。
@@ -964,7 +964,7 @@ $builder->where('tenantId', $tenantId)
 
 - 闭包拿到一个独立 Builder，只有其中的 WHERE 条件被收集；支持继续嵌套 `whereGroup()`、`orWhereGroup()`。
 - 在闭包内调用条件方法，不调用 `get()`、`reset()` 等构建/清理方法，也不设置字段、JOIN、排序、分页、索引或锁；这些设置不会合并到外层。
-- 闭包返回值不参与构建，不需要返回 Builder。空条件组会抛出 `InvalidArgumentException`；闭包抛异常时，整个组不会加入外层，外层此前条件保留。
+- 闭包返回值不参与构建，不需要返回构造器。空条件组会抛出 `InvalidArgumentException`；闭包抛异常时，整个组不会加入外层，外层此前条件保留。
 - 默认以 AND 连接前面的条件；它是首个条件时不添加前置 AND。组内绑定参数保持 SQL 出现顺序。
 
 ### `orWhereGroup($callback)`
@@ -1017,7 +1017,7 @@ $builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orde
 // ORDER BY id DESC LIMIT 10
 ```
 
-- 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立 Builder 完成该分支的 `get()`，再传给 `union()`。
+- 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立构造器完成该分支的 `get()`，再传给 `union()`。
 - 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
 - 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
 - `union($builder)` 保存调用时分支的 SQL 与参数；后续重建分支不会改变已保存内容。原始字符串不带结尾分号，也不支持额外绑定参数；需要参数时传已构建 Builder 或 `raw($sql, $params)` Builder。
@@ -1187,7 +1187,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 ## 内部职责划分
 
 - `Client`：公开查询 API、元数据及成功回调；对外超时参数继续使用秒数。
-- `Client\ExecutionContext`：一次执行的总超时预算、Client 自建 Statement 的清理及成功通知；手工 Prepare 的 Statement 仍由调用方管理。
+- `Client\ExecutionContext`：一次执行的总超时预算、Client 自建 Statement 的清理及成功通知；手工准备的 Statement 仍由调用方管理。
 - `Connection`：命令调度、会话元数据和完整操作的并发保护。
 - `Protocol\Authenticator`：握手解析、能力协商、TLS 升级及认证；沿用 Connection 的错误和 OK 状态解析，共享连接 Deadline。
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
