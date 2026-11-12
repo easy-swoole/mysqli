@@ -49,7 +49,7 @@ final class QueryCompiler
 
     /**
      * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
-     * @param array{sql: string, name: string, target: ?string} $table
+     * @param array{sql: string, name: string, target: ?string, baseName: ?string} $table
      */
     public static function writeHead(string $statement, array $table, array $options, bool $hasJoins): SqlBuffer
     {
@@ -66,7 +66,9 @@ final class QueryCompiler
             'UPDATE' => rtrim('UPDATE ' . $modifiers) . ' ' . $table['sql'],
             'DELETE' => rtrim('DELETE ' . $modifiers) . ' ' . $target . 'FROM ' . $table['sql'],
         };
-        return new SqlBuffer($sql, tableName: $table['name']);
+        $buffer = new SqlBuffer($sql, tableName: $table['name']);
+        $buffer->baseTableName = $table['baseName'];
+        return $buffer;
     }
 
     /** @param 'SELECT'|'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
@@ -91,6 +93,9 @@ final class QueryCompiler
 
         if ($parts->forUpdate && $parts->lockInShareMode) {
             throw new \InvalidArgumentException('FOR UPDATE and LOCK IN SHARE MODE cannot be combined');
+        }
+        if ($parts->unions !== [] && ($parts->forUpdate || $parts->lockInShareMode)) {
+            throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
         }
 
         $conditions = new ConditionCompiler($buffer);

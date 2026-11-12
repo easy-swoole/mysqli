@@ -58,6 +58,9 @@ final class SelectCompiler
                 $this->buffer->sql .= ' ' . $joinType . ' JOIN ' . $joinStr . ' on (' . $joinCondition->getSql() . ')';
                 $this->buffer->bindAll($joinCondition->getParameters());
             } else {
+                if ($extra !== []) {
+                    $joinCondition = SqlList::parenthesized($joinCondition);
+                }
                 $this->buffer->sql .= ' ' . $joinType . ' JOIN ' . $joinStr
                     . ($using ? ' ' : ' on ') . $joinCondition;
             }

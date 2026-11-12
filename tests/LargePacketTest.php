@@ -25,6 +25,7 @@ final class LargePacketTest extends TestCase
         $config['timeout'] = 20.0;
         $config['maxConnectTime'] = 5.0;
         $this->client = new Client(new Config($config));
+        $this->client->connect();
 
         $server = $this->client->rawQuery('SELECT @@max_allowed_packet AS max_allowed_packet')[0];
         if ($server['max_allowed_packet'] <= self::TEST_PAYLOAD_SIZE + 1024) {

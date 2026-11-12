@@ -22,6 +22,7 @@ final class CompressionTest extends TestCase
         $config['timeout'] = 60.0;
         $config['maxConnectTime'] = 10.0;
         $this->client = new Client(new Config($config));
+        $this->client->connect();
     }
 
     protected function tearDown(): void

@@ -347,6 +347,18 @@ CNF);
         $this->completed($completed);
     }
 
+    public function testIpv6LiteralConnectsWithAndWithoutTls(): void
+    {
+        foreach (['plaintext' => TlsMode::Disabled, 'ok' => TlsMode::VerifyIdentity] as $scenario => $mode) {
+            [$client, $completed] = $this->server($scenario, ['tlsMode' => $mode,
+                'tlsCaFile' => self::$directory . '/ca.pem'], '::1');
+            self::assertTrue($client->connect());
+            self::assertSame($mode !== TlsMode::Disabled, $client->mysqlClient()->isTlsEnabled());
+            $client->close();
+            $this->completed($completed);
+        }
+    }
+
     public function testTlsHandshakeUsesSharedConnectionDeadline(): void
     {
         [$client, $completed] = $this->server('stall', ['tlsMode' => TlsMode::Required, 'maxConnectTime' => 0.08]);
@@ -359,11 +371,17 @@ CNF);
         $this->completed($completed);
     }
 
-    private function server(string $scenario, array $options): array
+    private function server(string $scenario, array $options, string $host = '127.0.0.1'): array
     {
         if (!method_exists(Socket::class, 'sslHandshake')) { self::markTestSkipped('Swoole OpenSSL required'); }
-        $listener = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-        self::assertTrue($listener->bind('127.0.0.1', 0));
+        $ipv6 = $host === '::1';
+        $listener = new Socket($ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_IP);
+        $bound = $listener->bind($host, 0);
+        if (!$bound && $ipv6 && in_array($listener->errCode, [SOCKET_EAFNOSUPPORT, SOCKET_EADDRNOTAVAIL], true)) {
+            $listener->close();
+            self::markTestSkipped('IPv6 loopback is unavailable');
+        }
+        self::assertTrue($bound);
         self::assertTrue($listener->listen());
         $completed = new Channel(1);
         Coroutine::create(static function () use ($listener, $completed, $scenario): void {
@@ -398,7 +416,14 @@ CNF);
                                 'ssl_key_file' => self::$directory . '/server.key', 'ssl_verify_peer' => false]));
                             $tls = @$peer->sslHandshake();
                             if (in_array($scenario, ['reject', 'expired', 'chain_reject', 'chain_missing'], true)) {
-                                if ($tls) { self::assertSame('', @$peer->recv(1)); }
+                                if ($tls) {
+                                    $data = @$peer->recv(1);
+                                    if ($data === false) {
+                                        self::assertContains($peer->errCode, [SOCKET_ECONNRESET, SWOOLE_ERROR_SSL_RESET], $peer->errMsg);
+                                    } else {
+                                        self::assertSame('', $data);
+                                    }
+                                }
                             } else {
                                 self::assertTrue($tls);
                                 [$auth, $sequence] = self::receive($peer);
@@ -427,7 +452,7 @@ CNF);
             } catch (\Throwable $error) { $completed->push($error); }
             finally { $peer?->close(); $listener->close(); }
         });
-        return [new Client(new Config($options + ['host' => '127.0.0.1', 'port' => $listener->getsockname()['port'],
+        return [new Client(new Config($options + ['host' => $host, 'port' => $listener->getsockname()['port'],
             'user' => 'test', 'password' => 'secret', 'timeout' => 1.0, 'maxConnectTime' => 1.0])), $completed];
     }
 

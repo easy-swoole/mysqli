@@ -63,6 +63,24 @@ final class ConfigTest extends TestCase
         new Config(['tlsMod' => 'verify_identity']);
     }
 
+    public function testOptionsRejectWeakScalarCoercionBeforeApplyingChanges(): void
+    {
+        $config = new Config(['timeout' => 2]);
+        self::assertSame(2.0, $config->getTimeout());
+        foreach (['compress' => 'false', 'port' => '3306', 'timeout' => '1.5', 'host' => 127] as $option => $value) {
+            try {
+                $config->restore(['user' => 'changed', $option => $value]);
+                self::fail('Expected a type error for ' . $option);
+            } catch (\TypeError $error) {
+                self::assertStringContainsString($option, $error->getMessage());
+                self::assertSame('', $config->getUser());
+                self::assertFalse($config->isCompress());
+            }
+        }
+        $this->expectException(\TypeError::class);
+        new Config(['compress' => 'false']);
+    }
+
     public function testRestoreRejectsUnknownOptionsBeforeApplyingKnownOptions(): void
     {
         $config = new Config(['timeout' => 0.25, 'maxConnectTime' => 0.75]);

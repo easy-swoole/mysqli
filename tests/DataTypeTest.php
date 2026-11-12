@@ -21,6 +21,7 @@ final class DataTypeTest extends TestCase
             $this->markTestSkipped('Set FAST_DB_TEST_* or MYSQLI_TEST_* to the EasySwoole FastDb test database.');
         }
         $this->client = new Client(new Config(MYSQL_CONFIG));
+        $this->client->connect();
         $this->table = 'mysqli_coroutine_types_' . bin2hex(random_bytes(6));
         $this->client->rawQuery("CREATE TABLE `{$this->table}` (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

@@ -16,6 +16,7 @@ final class QueryBuilderIntegrationTest extends TestCase
     {
         if (MYSQL_CONFIG['host'] === '') { self::markTestSkipped('Set MYSQLI_TEST_* for live SQL checks'); }
         $this->client = new Client(new Config(MYSQL_CONFIG));
+        $this->client->connect();
     }
 
     protected function tearDown(): void { $this->client?->close(); }

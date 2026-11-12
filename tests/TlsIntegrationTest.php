@@ -26,6 +26,7 @@ final class TlsIntegrationTest extends TestCase
     public function testNegotiatedTlsAndReconnect(): void
     {
         for ($i = 0; $i < 2; $i++) {
+            $this->client->connect();
             $status = $this->client->rawQuery("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_cipher', 'Ssl_version')");
             $status = array_column($status, 'Value', 'Variable_name');
             self::assertNotEmpty($status['Ssl_cipher']);
@@ -73,6 +74,7 @@ final class TlsIntegrationTest extends TestCase
         } catch (TimeoutException $error) {
             self::assertFalse($this->client->mysqlClient()->isTlsEnabled());
         }
+        $this->client->connect();
         self::assertSame([['value' => 1]], $this->client->rawQuery('SELECT 1 AS value'));
         self::assertTrue($this->client->mysqlClient()->isTlsEnabled());
     }
@@ -82,6 +84,7 @@ final class TlsIntegrationTest extends TestCase
         foreach (TlsVersion::cases() as $version) {
             $client = new Client(new Config(array_replace(MYSQL_CONFIG, ['tlsVersions' => [$version]])));
             try {
+                $client->connect();
                 $status = $client->rawQuery("SHOW SESSION STATUS LIKE 'Ssl_version'");
                 self::assertSame($version->value, $status[0]['Value']);
                 self::assertTrue($client->mysqlClient()->isTlsEnabled());

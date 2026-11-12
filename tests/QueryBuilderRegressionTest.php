@@ -16,6 +16,40 @@ final class QueryBuilderRegressionTest extends TestCase
             str_starts_with($match[0], '(') ? '(' : ')', $sql);
     }
 
+    public function testJoinFiltersPreserveTheScopeOfTheInitialPredicate(): void
+    {
+        $predicate = 'u.id = o.userId OR u.id = o.ownerId';
+        foreach ([$predicate, QueryBuilder::rawExpression($predicate)] as $condition) {
+            $builder = (new QueryBuilder())->join('users u', $condition, 'LEFT')
+                ->joinWhere('users u', 'u.enabled', true)->where('o.tenantId', 7)->get('orders o');
+            self::assertSame('SELECT * FROM orders o LEFT JOIN users u on (u.id = o.userId OR u.id = o.ownerId) AND u.enabled = ? WHERE `o`.`tenantId` = ?', $this->sql($builder));
+            self::assertSame([true, 7], $builder->getLastBindParams());
+        }
+    }
+
+    public function testCountKeepsRollupInGroupByOnly(): void
+    {
+        $builder = (new QueryBuilder())->where('status', 'paid')
+            ->groupBy('region')->groupBy('city with rollup')->count('sales');
+        self::assertSame('SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, city AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY region, city with rollup) AS `__mysqli_count`', $this->sql($builder));
+        self::assertSame(['paid'], $builder->getLastBindParams());
+    }
+
+    public function testUnionRejectsOverallLocksAndPreservesLockedBranches(): void
+    {
+        $branch = (new QueryBuilder())->forUpdate()->get('archive', null, 'id');
+        $union = (new QueryBuilder())->union($branch)->get('orders', null, 'id');
+        self::assertSame('SELECT id FROM `orders` UNION (SELECT id FROM `archive` FOR UPDATE)', $this->sql($union));
+        foreach (['forUpdate', 'lockInShareMode'] as $lock) {
+            try {
+                (new QueryBuilder())->union($branch)->{$lock}()->get('orders', null, 'id');
+                self::fail('Expected overall UNION lock to fail');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('individual query branches', $error->getMessage());
+            }
+        }
+    }
+
     public function testRegexSortPatternIsBoundAsAValue(): void
     {
         $pattern = "x' DESC, (SELECT SLEEP(1)) #";
@@ -88,7 +122,7 @@ final class QueryBuilderRegressionTest extends TestCase
             ->union($branch)->get('orders o', 10, 'o.id AS id');
         self::assertSame([true, 7, 1, 'inner-pattern', 2, 'archived', 'branch-pattern', 'outer-pattern'], $builder->getLastBindParams());
         self::assertSame(8, substr_count($builder->getLastPrepareQuery(), '?'));
-        self::assertStringContainsString('LEFT JOIN tenants t on t.id = o.tenantId AND t.enabled = ?', $this->sql($builder));
+        self::assertStringContainsString('LEFT JOIN tenants t on (t.id = o.tenantId) AND t.enabled = ?', $this->sql($builder));
         self::assertStringContainsString('SELECT id FROM `users` WHERE `active` = ? ORDER BY name REGEXP ? ASC', $this->sql($builder));
         self::assertStringContainsString('UNION (SELECT id FROM `archive` WHERE `status` = ? ORDER BY id REGEXP ? DESC LIMIT 2)', $this->sql($builder));
         self::assertStringEndsWith('ORDER BY id REGEXP ? DESC LIMIT 10', $this->sql($builder));
@@ -138,7 +172,7 @@ final class QueryBuilderRegressionTest extends TestCase
             ->joinWhere('users u', 'u.deleted_at', null, 'IS')
             ->joinOrWhere('users u', 'u.paid_at', null, 'IS NOT')->where('o.tenantId', 7)->get('orders o');
         self::assertSame(
-            'SELECT * FROM orders o LEFT JOIN users u on u.id = o.userId AND u.deleted_at IS NULL OR u.paid_at IS NOT NULL WHERE `o`.`tenantId` = ?',
+            'SELECT * FROM orders o LEFT JOIN users u on (u.id = o.userId) AND u.deleted_at IS NULL OR u.paid_at IS NOT NULL WHERE `o`.`tenantId` = ?',
             $this->sql($builder)
         );
         self::assertSame([7], $builder->getLastBindParams());

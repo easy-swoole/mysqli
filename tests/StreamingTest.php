@@ -210,8 +210,10 @@ final class StreamingTest extends TestCase
             } catch (\Throwable $error) { $done->push($error); }
             finally { $peer?->close(); $listener->close(); }
         });
-        return [new Client(new Config(['host' => '127.0.0.1', 'port' => $listener->getsockname()['port'],
-            'user' => 'test', 'timeout' => 0.5, 'maxConnectTime' => 0.5])), $done];
+        $client = new Client(new Config(['host' => '127.0.0.1', 'port' => $listener->getsockname()['port'],
+            'user' => 'test', 'timeout' => 0.5, 'maxConnectTime' => 0.5]));
+        $client->connect();
+        return [$client, $done];
     }
 
     private function completed(Channel $done): void

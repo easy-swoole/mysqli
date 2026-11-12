@@ -274,6 +274,7 @@ final class TransactionTest extends TestCase
                 } catch (Exception) {
                     self::assertFalse($writer->mysqlClient()->isTransactionLost());
                 }
+                $writer->connect();
                 self::assertSame([['value' => 0]], $writer->rawQuery("SELECT value FROM `{$this->table}` WHERE id = 1"));
             }
             $writer->rawQuery('START TRANSACTION');
@@ -355,6 +356,7 @@ final class TransactionTest extends TestCase
                     self::assertFalse($connection->isTransactionLost());
                     self::assertSame($method === 'commit' ? 30 : 0, $this->value($this->admin, 2));
                     $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
+                    $writer->connect();
                     self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
                 } finally {
                     $writer->close();

@@ -23,6 +23,14 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([], $q->getLastBindParams());
     }
 
+    public function testIncomingAliasAvoidsCollisionWithPartitionedTableName(): void
+    {
+        $rows = [['id' => 1, 'name' => 'Ada']];
+        $builder = (new QueryBuilder())->setPrefix('app.__mysqli_')->upsert('new PARTITION (p0)', $rows, ['name']);
+        self::assertSame('INSERT  INTO app.__mysqli_new PARTITION (p0) (`id`, `name`)  VALUES (?, ?) AS `__mysqli_new_row` ON DUPLICATE KEY UPDATE `name` = `__mysqli_new_row`.`name`', $builder->getLastPrepareQuery());
+        self::assertSame([1, 'Ada'], $builder->getLastBindParams());
+    }
+
     public function testBatchColumnOrderCanDifferAndNullIsAnExplicitValue(): void
     {
         $q = (new QueryBuilder())->onDuplicate(['name'])->insertAll('users', [

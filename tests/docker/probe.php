@@ -67,6 +67,7 @@ try {
             $options = array_replace(MYSQL_CONFIG, ['compress' => $compress, 'timeout' => 30.0, 'maxConnectTime' => 10.0]);
             $client = new Client(new Config($options));
             try {
+                $client->connect();
                 $actual = $client->rawQuery('SELECT VERSION() AS server_version, @@SESSION.sql_mode AS sql_mode, @@GLOBAL.max_allowed_packet AS max_allowed_packet')[0];
                 $status = array_column($client->rawQuery("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_cipher', 'Ssl_version')"), 'Value', 'Variable_name');
                 $actual['tls'] = $client->mysqlClient()->isTlsEnabled();

@@ -21,6 +21,7 @@ final class LargeNumericTest extends TestCase
             self::markTestSkipped('Set MYSQLI_TEST_* environment variables for integration tests');
         }
         $this->client = new Client(new Config(MYSQL_CONFIG));
+        $this->client->connect();
         $this->table = 'mysqli_coroutine_large_numeric_' . bin2hex(random_bytes(6));
         $this->client->rawQuery("CREATE TABLE `{$this->table}` (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

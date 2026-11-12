@@ -21,6 +21,7 @@ Coroutine\run(function (): void {
         'charset' => 'utf8mb4',
     ]));
     try {
+        $client->connect();
         $builder = new QueryBuilder();
         $builder->where('id', 1)->get('users');
         $rows = $client->query($builder);
@@ -55,7 +56,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 - `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与 setter 均可混用枚举、字符串；默认值和 getter 的字符串数组返回格式不变。
 - setter 仍只保存列表，不立即校验版本名。getter 将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
 - 只允许 TLS 1.2、TLS 1.3，不能降级到旧协议；实际可用版本取决于 Swoole/OpenSSL 编译能力及服务端配置。TLS 默认关闭，版本列表本身不会开启 TLS。
-- TLS 握手计入 `maxConnectTime`，也计入触发自动连接的单次查询总超时，不会获得独立的新超时预算。
+- TLS 握手使用 `connect()` 的建连预算。
 
 更多连接配置参见 [README 的 TLS 说明](README.md#tls-加密连接默认关闭)。
 
@@ -413,7 +414,7 @@ $builder->fields(['userId', 'SUM(paid) AS paid_total', 'SUM(expected) AS expecte
 ```php
 $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
-// LEFT JOIN users u on u.id=o.userId AND `u`.`tenantId` = `o`.`tenantId`
+// LEFT JOIN users u on (u.id=o.userId) AND `u`.`tenantId` = `o`.`tenantId`
 ```
 
 - 给已有 JOIN 的 ON 部分追加字段比较，不创建 JOIN，也不把右字段当值绑定；参数中的两个字段遵循 `whereColumn()` 的引用规则。
@@ -444,7 +445,7 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinWhereGroup('users u', function (QueryBuilder $q): void {
         $q->where('u.status', 1)->orWhere('u.status', 2);
     })->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
-// ... on u.id=o.userId AND (u.status = ? OR u.status = ?) AND `u`.`tenantId` = `o`.`tenantId`
+// ... on (u.id=o.userId) AND (u.status = ? OR u.status = ?) AND `u`.`tenantId` = `o`.`tenantId`
 ```
 
 - ON 分组闭包中使用 WHERE 条件方法：`where()`、`orWhere()`、`whereColumn()`、`whereRaw()`、`whereGroup()` 等；不在闭包中调用 `joinWhere()`、`joinOn()` 或 HAVING 方法。
@@ -555,6 +556,7 @@ $total = $client->query($counter)[0]['total'];
 ```
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
+- `groupBy()` 的末项可使用 `WITH ROLLUP`，生成的 COUNT 包含汇总行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -797,6 +799,7 @@ $builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orde
 ```
 
 - `$isUnionAll` 接受布尔值，默认 `false` 生成 UNION，传 `true` 生成 UNION ALL。
+- 行锁设在独立的 SELECT 分支上，构建后再传给 `union()`。为整个 UNION 设置行锁会抛出 `InvalidArgumentException`。
 - 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立 Builder 完成该分支的 `get()`，再传给 `union()`。
 - 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
 - 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
@@ -820,9 +823,10 @@ $builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
 ```php
 $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinWhere('users u', 'u.deleted_at', null, 'IS')->get('orders o');
-// LEFT JOIN users u on u.id=o.userId AND u.deleted_at IS NULL
+// LEFT JOIN users u on (u.id=o.userId) AND u.deleted_at IS NULL
 ```
 
+- 追加 ON 条件时，`join()` 的初始条件会整体加括号。字符串与 `Expression` 使用相同分组。
 - NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
 - 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`。JOIN 子查询传其别名。构建时，找不到对应 JOIN 或定位到多个 JOIN 会抛出 `InvalidArgumentException`。
 - 条件位于 JOIN 的 ON 部分。LEFT JOIN 中将条件移到 WHERE 可能改变保留行范围。
@@ -1045,7 +1049,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，包括必要的建连、Prepare、Execute、读取和清理；不是每条语句各获得完整的 `$timeout`。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -1081,7 +1085,7 @@ try {
 
 - 使用文本协议，参数是整条可信 SQL，不另接收绑定数组；需要参数绑定时使用 `Client::iterate($builder)` 或 `Statement::iterate()`。
 - 连接独占、单次遍历、总超时、提前退出关闭连接和 EOF 成功回调规则与 `Client::iterate()` 一致；CALL 和多结果集仍不支持。
-- 在事务中提前停止、读取错误或超时会保留事务丢失保护，不能透明重连后继续该事务；调用方应显式关闭 Client，再按业务规则开始新事务，不能直接继续提交旧事务。
+- 流导致连接关闭后，下一次查询前须显式 `connect()`。若同时丢失事务，先 `close()` 再 `connect()`，由业务决定如何恢复。
 
 ### `Statement::iterate($parameters = [], $timeout = null)`
 

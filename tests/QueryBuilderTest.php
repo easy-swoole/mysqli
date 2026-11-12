@@ -233,7 +233,7 @@ final class QueryBuilderTest extends TestCase
             self::assertSame([$value, $value], $this->builder->getLastBindParams());
             $this->builder->join('users u', 'u.id = o.userId', 'LEFT')
                 ->joinWhere('users u', 'u.name', $value)->joinOrWhere('users u', 'u.enabled', $value)->get('orders o');
-            self::assertSame('SELECT * FROM orders o LEFT JOIN users u on u.id = o.userId AND u.name = ? OR u.enabled = ?', $this->normalizedSql($this->builder));
+            self::assertSame('SELECT * FROM orders o LEFT JOIN users u on (u.id = o.userId) AND u.name = ? OR u.enabled = ?', $this->normalizedSql($this->builder));
             self::assertSame([$value, $value], $this->builder->getLastBindParams());
         }
     }
@@ -253,7 +253,7 @@ final class QueryBuilderTest extends TestCase
                     ->joinWhere('users b', 'b.enabled = 1')->joinOrWhere('users b', 'b.enabled = 2');
             }
             $q->join('users b', 'b.id = a.id', 'LEFT')->get('orders a');
-            self::assertSame('SELECT * FROM orders a LEFT JOIN users b on b.id = a.id AND b.enabled = 1 OR b.enabled = 2 WHERE a.id = b.id OR a.id > 0 HAVING COUNT(*) > 0 OR COUNT(*) = 0', $this->normalizedSql($q));
+            self::assertSame('SELECT * FROM orders a LEFT JOIN users b on (b.id = a.id) AND b.enabled = 1 OR b.enabled = 2 WHERE a.id = b.id OR a.id > 0 HAVING COUNT(*) > 0 OR COUNT(*) = 0', $this->normalizedSql($q));
             self::assertSame([], $q->getLastBindParams());
         }
     }

@@ -130,7 +130,7 @@ final class QueryBuilderIdentifierRegressionTest extends TestCase
             ->joinWhere('archive.orders o', 'o.status', 'closed')
             ->delete('users AS `target user`');
         self::assertSame(
-            'DELETE `target user` FROM app_users AS `target user` JOIN archive.orders o on o.user_id=`target user`.id AND o.status = ?',
+            'DELETE `target user` FROM app_users AS `target user` JOIN archive.orders o on (o.user_id=`target user`.id) AND o.status = ?',
             $this->sql($builder)
         );
         self::assertSame(['closed'], $builder->getLastBindParams());

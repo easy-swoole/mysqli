@@ -16,6 +16,7 @@ final class StoredProcedureRestrictionTest extends TestCase
     {
         if (MYSQL_CONFIG['host'] === '') { $this->markTestSkipped('Set MYSQLI_TEST_* to a test database.'); }
         $client = new Client(new Config(MYSQL_CONFIG));
+        $client->connect();
         $name = 'mysqli_call_guard_' . bin2hex(random_bytes(6));
         try {
             $client->rawQuery("CREATE TEMPORARY TABLE `{$name}` (value INT) ENGINE=InnoDB");

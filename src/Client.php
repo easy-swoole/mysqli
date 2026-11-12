@@ -41,14 +41,6 @@ class Client
      */
     public function connect(?float $timeout = null): bool
     {
-        return $this->connectWithTimeout($timeout);
-    }
-
-    /**
-     * 按超时预算建立连接，并阻止并发建连。
-     */
-    private function connectWithTimeout(?float $timeout): bool
-    {
         if ($this->mysqlClient?->isBusy()) {
             throw new Exception('Concurrent operations on one MySQL connection are not allowed');
         }
@@ -74,7 +66,6 @@ class Client
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
-        $this->connectWithTimeout($execution->remaining());
         return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {
             $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
             return $statement->execute($parameters, $execution->remaining());
@@ -104,8 +95,7 @@ class Client
     public function rawIterate(string $query, ?float $timeout = null): ResultStream
     {
         $execution = $this->beginExecution($timeout);
-        $this->connectWithTimeout($execution->remaining());
-        return $this->mysqlClient->iterate($query, $execution->remaining())->onComplete(function () use ($execution): void {
+        return $this->connection()->iterate($query, $execution->remaining())->onComplete(function () use ($execution): void {
             $this->captureMetadata();
             $execution->complete(true);
         });
@@ -136,9 +126,8 @@ class Client
     public function rawQuery(string $query,?float $timeout = null): bool|array
     {
         $execution = $this->beginExecution($timeout);
-        $this->connectWithTimeout($execution->remaining());
         return $execution->buffered(function () use ($execution, $query): bool|array {
-            $result = $this->mysqlClient->query($query, $execution->remaining());
+            $result = $this->connection()->query($query, $execution->remaining());
             $this->captureMetadata();
             return $result;
         });
@@ -150,8 +139,7 @@ class Client
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
         $deadline = $this->queryDeadline($timeout);
-        $this->connectWithTimeout($deadline->remaining());
-        return $this->mysqlClient->prepare($sql, $deadline->remaining())->setExecutionCallbacks(
+        return $this->connection()->prepare($sql, $deadline->remaining())->setExecutionCallbacks(
             fn() => $this->resetMetadata(),
             fn() => $this->captureMetadata(),
         );
@@ -163,6 +151,12 @@ class Client
     public function mysqlClient(): Connection|null
     {
         return $this->mysqlClient;
+    }
+
+    /** 取出客户端持有的协议连接；连接和事务状态由协议层检查。 */
+    private function connection(): Connection
+    {
+        return $this->mysqlClient ?? throw new Exception('MySQL connection is not open; call connect() first');
     }
 
     /**

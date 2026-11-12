@@ -13,6 +13,7 @@ Swoole\Coroutine\run(static function () use ($compress, &$exit): void {
         'timeout'=>120.0,'maxConnectTime'=>5.0,'compress'=>$compress,
     ])));
     try {
+        $client->connect();
         $digits = implode(' UNION ALL ', array_map(static fn(int $n): string => 'SELECT '.$n.' AS n', range(0,9)));
         $sql = 'WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<1000) '
             . 'SELECT seq.n + d.n * 1000 AS id, REPEAT(\'x\',4096) AS payload FROM seq CROSS JOIN ('.$digits.') d';

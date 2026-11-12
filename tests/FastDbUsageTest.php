@@ -22,6 +22,7 @@ final class FastDbUsageTest extends TestCase
             $this->markTestSkipped('Set FAST_DB_TEST_* or MYSQLI_TEST_* to the EasySwoole FastDb test database.');
         }
         $this->connection = new FastDbStyleConnection(new Config(MYSQL_CONFIG));
+        $this->connection->connect();
         $this->table = 'mysqli_fastdb_usage_' . bin2hex(random_bytes(6));
         $this->connection->rawQuery("CREATE TABLE `{$this->table}` (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

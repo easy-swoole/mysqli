@@ -17,6 +17,7 @@ final class QueryBuilderAdvancedIntegrationTest extends TestCase
     {
         if (MYSQL_CONFIG['host'] === '') { self::markTestSkipped('Set MYSQLI_TEST_* for live SQL checks'); }
         $this->client = new Client(new Config(MYSQL_CONFIG));
+        $this->client->connect();
         $this->client->rawQuery('CREATE TEMPORARY TABLE qb_advanced (
             id INT PRIMARY KEY, tenantId INT NOT NULL DEFAULT 1, name VARCHAR(100) NULL,
             score INT NOT NULL DEFAULT 0, baseline INT NOT NULL DEFAULT 0,

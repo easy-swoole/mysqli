@@ -34,13 +34,14 @@ final class PacketStream
         }
         $this->close();
         $timeout = $deadline->remaining();
+        $ipv6 = filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
         if ($tls) {
             // 检查 OpenSSL 编译能力，不是 5.1 的版本判断；提高最低版本后仍需保留。
             if (!method_exists(SocketClient::class, 'getPeerCert') || !method_exists(SocketClient::class, 'enableSSL')
                 || !method_exists(Socket::class, 'sslHandshake')) {
                 throw new Exception('TLS requires Swoole built with OpenSSL support');
             }
-            $this->tlsClient = new SocketClient(SWOOLE_SOCK_TCP);
+            $this->tlsClient = new SocketClient($ipv6 ? SWOOLE_SOCK_TCP6 : SWOOLE_SOCK_TCP);
             if (!$this->tlsClient->connect($host, $port, $timeout)) {
                 $code = $this->tlsClient->errCode;
                 $message = $this->tlsClient->errMsg;
@@ -48,7 +49,7 @@ final class PacketStream
             }
             $this->socket = $this->tlsClient->exportSocket();
         } else {
-            $this->socket = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            $this->socket = new Socket($ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_IP);
             if (!$this->socket->connect($host, $port, $timeout)) {
                 throw $this->ioException('connect', $timeout);
             }

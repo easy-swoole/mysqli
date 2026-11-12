@@ -47,6 +47,7 @@ final class ProtocolTest extends TestCase
             'timeout' => 0.5,
             'maxConnectTime' => 0.5,
         ]));
+        $client->connect();
         $startedAt = microtime(true);
         try {
             $client->rawQuery('SELECT SLEEP(1)', 0.03);
@@ -125,6 +126,7 @@ final class ProtocolTest extends TestCase
             'timeout' => 0.5,
             'maxConnectTime' => 0.5,
         ]));
+        $client->connect();
         self::assertSame([['answer' => 42]], $client->rawQuery('SELECT 42 AS answer'));
         $statement = $client->prepare('SELECT ? AS answer');
         self::assertSame([['answer' => 42]], $statement->execute([42]));
@@ -190,6 +192,7 @@ final class ProtocolTest extends TestCase
             'timeout' => 0.5,
             'maxConnectTime' => 0.5,
         ]));
+        $client->connect();
         $rows = $client->rawQuery("SELECT REPEAT('z', 4096) AS payload");
         self::assertTrue($client->mysqlClient()?->isCompressionEnabled());
         self::assertSame(str_repeat('z', 4096), $rows[0]['payload']);
@@ -223,6 +226,7 @@ final class ProtocolTest extends TestCase
             }
         });
         $connection = new \EasySwoole\Mysqli\Protocol\Connection($config);
+        $connection->connect();
         $old = $connection->prepare('SELECT 1');
         $connection->close();
         try {
@@ -231,6 +235,8 @@ final class ProtocolTest extends TestCase
         } catch (\LogicException $error) {
             self::assertStringContainsString('expired', $error->getMessage());
         }
+        $this->assertConnectRequired(fn() => $connection->prepare('SELECT 1'));
+        $connection->connect();
         $new = $connection->prepare('SELECT 1');
         try {
             $old->execute();
@@ -263,6 +269,7 @@ final class ProtocolTest extends TestCase
             self::assertSame("\x19" . pack('V', 7), $close);
             $peer->close();
         });
+        $client->connect();
         $statement = $client->prepare('SELECT 1');
         $result = new Channel(1);
         Coroutine::create(static function () use ($client, $result): void {
@@ -290,60 +297,92 @@ final class ProtocolTest extends TestCase
 
     public function testConnectionTimeoutIsSharedAcrossHandshakeAndAuthentication(): void
     {
-        $this->assertTotalTimeout('connect');
+        $this->assertConnectionTimeout(false);
     }
 
-    public function testRawQueryTimeoutIncludesConnectionAndAuthentication(): void
+    public function testClientAndConnectionCommandsRequireExplicitConnect(): void
     {
-        $this->assertTotalTimeout('raw');
+        $config = new Config();
+        $client = new Client($config);
+        $connection = new \EasySwoole\Mysqli\Protocol\Connection($config);
+        $builder = (new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1');
+        foreach ([
+            fn() => $client->rawQuery('SELECT 1'),
+            fn() => $client->query($builder),
+            fn() => $client->rawIterate('SELECT 1'),
+            fn() => $client->iterate($builder),
+            fn() => $client->prepare('SELECT 1'),
+            fn() => $client->paginate(new \EasySwoole\Mysqli\QueryBuilder(), 'users'),
+            fn() => $connection->query('SELECT 1'),
+            fn() => $connection->iterate('SELECT 1'),
+            fn() => $connection->prepare('SELECT 1'),
+            fn() => $connection->select_db('test'),
+            fn() => $connection->begin_transaction(),
+        ] as $command) {
+            $this->assertConnectRequired($command);
+        }
+        self::assertFalse($client->ping());
+        self::assertNull($client->mysqlClient());
+        self::assertFalse($connection->isBusy());
+        self::assertFalse($connection->isConnected());
     }
 
-    public function testBuilderQueryTimeoutIncludesConnectionAndAuthentication(): void
+    private function assertConnectRequired(callable $command): void
     {
-        $this->assertTotalTimeout('builder');
+        try {
+            $command();
+            self::fail('Expected the disconnected operation to fail');
+        } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+            self::assertStringContainsString('call connect() first', $error->getMessage());
+        }
     }
 
-    public function testPrepareTimeoutIncludesConnectionAndAuthentication(): void
+    public function testRawQueryTimeoutAppliesAfterExplicitConnect(): void
     {
-        $this->assertTotalTimeout('prepare');
+        $this->assertQueryTimeout('raw');
     }
 
-    public function testRawQuerySharesBudgetBetweenConnectionAndResult(): void
+    public function testBuilderSharesBudgetBetweenPrepareAndExecute(): void
     {
-        $this->assertQueryPhasesShareTimeout(false);
+        $this->assertQueryTimeout('builder');
     }
 
-    public function testBuilderSharesBudgetBetweenConnectionPrepareAndExecute(): void
+    public function testPrepareTimeoutAppliesAfterExplicitConnect(): void
     {
-        $this->assertQueryPhasesShareTimeout(true);
+        $this->assertQueryTimeout('prepare');
     }
 
-    private function assertQueryPhasesShareTimeout(bool $prepared): void
+    private function assertQueryTimeout(string $operation, bool $subclass = false): void
     {
-        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($prepared): void {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener) use ($operation): void {
             $peer = $listener->accept(1.0);
-            Coroutine::sleep(0.04);
             self::acceptSession($peer);
-            self::receivePacket($peer);
-            if ($prepared) {
-                Coroutine::sleep(0.04);
+            [, $command] = self::receivePacket($peer);
+            self::assertSame(($operation === 'raw' ? "\x03" : "\x16") . 'SELECT 1', $command);
+            if ($operation === 'builder') {
+                Coroutine::sleep(0.05);
                 self::sendPacket($peer, "\0" . pack('VvvCv', 7, 0, 0, 0, 0), 1);
-                self::receivePacket($peer);
+                [, $execute] = self::receivePacket($peer);
+                self::assertSame(0x17, ord($execute[0]));
             }
-            Coroutine::sleep(0.09);
+            Coroutine::sleep($operation === 'builder' ? 0.08 : 0.13);
             $peer->close();
         });
+        if ($subclass) {
+            $client = new \EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection($config);
+        }
+        $client->connect();
         $started = microtime(true);
         try {
-            if ($prepared) {
-                $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1);
-            } else {
-                $client->rawQuery('SELECT 1', 0.1);
-            }
-            self::fail('Every phase must consume the same query budget');
+            match ($operation) {
+                'raw' => $client->rawQuery(query: 'SELECT 1', timeout: 0.1),
+                'builder' => $client->query(builder: (new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), timeout: 0.1),
+                'prepare' => $client->prepare('SELECT 1', 0.1),
+            };
+            self::fail('Expected query timeout');
         } catch (TimeoutException $error) {
-            self::assertLessThan(0.2, microtime(true) - $started);
-            self::assertFalse($client->mysqlClient()?->isConnected() ?? false);
+            self::assertGreaterThan(0.08, microtime(true) - $started);
+            self::assertFalse($client->mysqlClient()->isConnected());
         }
         $this->assertServerCompleted($completed);
     }
@@ -390,6 +429,7 @@ final class ProtocolTest extends TestCase
             self::assertSame('', $peer->recvAll(4, 1.0));
             $peer->close();
         });
+        $client->connect();
         $statement = $client->prepare('SELECT 1');
         $statement->close(0.0);
         self::assertFalse($client->mysqlClient()->isConnected());
@@ -399,7 +439,7 @@ final class ProtocolTest extends TestCase
 
     public function testExplicitConnectTimeoutSharesHandshakeAndAuthenticationBudget(): void
     {
-        $this->assertTotalTimeout('connect-explicit');
+        $this->assertConnectionTimeout(true);
     }
 
     public function testExplicitConnectTimeoutDoesNotChangeConfigurationAndRetryUsesDefaults(): void
@@ -433,24 +473,14 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
-    public function testRawQueryNamedTimeoutIncludesConnectionAndAuthentication(): void
-    {
-        $this->assertTotalTimeout('raw-named');
-    }
-
-    public function testBuilderQueryNamedTimeoutIncludesConnectionAndAuthentication(): void
-    {
-        $this->assertTotalTimeout('builder-named');
-    }
-
     public function testAdaptedSubclassForwardsRawQueryTimeout(): void
     {
-        $this->assertTotalTimeout('subclass-raw');
+        $this->assertQueryTimeout('raw', true);
     }
 
     public function testAdaptedSubclassForwardsBuilderQueryTimeout(): void
     {
-        $this->assertTotalTimeout('subclass-builder');
+        $this->assertQueryTimeout('builder', true);
     }
 
     public function testMysqlClientReturnsProtocolConnectionOnlyWhileClientOwnsIt(): void
@@ -483,6 +513,7 @@ final class ProtocolTest extends TestCase
             self::assertSame("\x01", $quit);
             $peer->close();
         });
+        $client->connect();
         self::assertTrue($client->rawQuery('UPDATE huge_table SET value = 1'));
         self::assertSame('18446744073709551615', $client->getLastInsertId());
         self::assertSame('18446744073709551615', $client->getLastAffectRows());
@@ -502,6 +533,7 @@ final class ProtocolTest extends TestCase
                 self::sendPacket($peer, "\0" . $metadata . "\x02\0\0\0", 1);
                 $peer->close();
             });
+            $client->connect();
             try {
                 $client->rawQuery('DO 1');
                 self::fail('Expected malformed metadata to be rejected');
@@ -539,6 +571,7 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer);
             $peer->close();
         });
+        $client->connect();
         $client->rawQuery('SET autocommit = 0');
         $connection = $client->mysqlClient();
         self::assertFalse($connection->inTransaction());
@@ -562,6 +595,7 @@ final class ProtocolTest extends TestCase
         }
         $client->close();
         self::assertFalse($connection->isTransactionLost());
+        $client->connect();
         self::assertTrue($client->rawQuery('UPDATE t SET value = 3'));
         $client->close();
         $this->assertServerCompleted($completed);
@@ -579,6 +613,7 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer);
             $peer->close();
         });
+        $client->connect();
         $client->rawQuery('BEGIN');
         $connection = $client->mysqlClient();
         self::assertTrue($connection->inTransaction());
@@ -748,6 +783,7 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer); // 退出连接（QUIT）。
             $peer->close();
         });
+        $client->connect();
         try {
             foreach ([1062, 1205, 1213] as $code) {
                 $client->rawQuery('BEGIN');
@@ -767,7 +803,7 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
-    public function testMalformedResultClosesConnectionAndNextQueryReconnects(): void
+    public function testMalformedResultRequiresExplicitReconnect(): void
     {
         [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
@@ -787,6 +823,7 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer);
             $peer->close();
         });
+        $client->connect();
         try {
             try {
                 $client->rawQuery('SELECT 1 AS v');
@@ -795,6 +832,9 @@ final class ProtocolTest extends TestCase
                 self::assertStringContainsString('Malformed', $error->getMessage());
                 self::assertFalse($client->mysqlClient()->isConnected());
             }
+            $this->assertConnectRequired(fn() => $client->rawQuery('SELECT 2 AS v'));
+            $this->assertConnectRequired(fn() => $client->mysqlClient()->query('SELECT 2 AS v'));
+            $client->connect();
             self::assertSame([['v' => 2]], $client->rawQuery('SELECT 2 AS v'));
         } finally {
             $client->close();
@@ -811,6 +851,7 @@ final class ProtocolTest extends TestCase
             self::sendPacket($peer, self::ok(), 9); // 响应必须从序号 1 开始。
             $peer->close();
         });
+        $client->connect();
         try {
             try {
                 $client->rawQuery('SELECT 1');
@@ -825,9 +866,9 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
-    private function assertTotalTimeout(string $operation): void
+    private function assertConnectionTimeout(bool $explicit): void
     {
-        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             Coroutine::sleep(0.06);
             self::sendPacket($peer, self::handshake(), 0);
@@ -835,23 +876,10 @@ final class ProtocolTest extends TestCase
             // 每次等待都未超过 0.1 秒，但累计时长会超过该预算。
             Coroutine::sleep(0.07);
             $peer->close();
-        }, $operation === 'connect' ? 0.1 : 0.5);
-        if (str_starts_with($operation, 'subclass-')) {
-            $client = new \EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection($config);
-        }
+        }, $explicit ? 0.5 : 0.1);
         $started = microtime(true);
         try {
-            if ($operation === 'connect') { $client->connect(); }
-            elseif ($operation === 'connect-explicit') { $client->connect(0.1); }
-            elseif (in_array($operation, ['raw-named', 'subclass-raw'], true)) {
-                $client->rawQuery(query: 'SELECT 1', timeout: 0.1);
-            }
-            elseif (in_array($operation, ['builder-named', 'subclass-builder'], true)) {
-                $client->query(builder: (new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), timeout: 0.1);
-            }
-            elseif ($operation === 'raw') { $client->rawQuery('SELECT 1', 0.1); }
-            elseif ($operation === 'prepare') { $client->prepare('SELECT 1', 0.1); }
-            else { $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw('SELECT 1'), 0.1); }
+            $client->connect($explicit ? 0.1 : null);
             self::fail('Expected a total operation timeout');
         } catch (TimeoutException $error) {
             self::assertGreaterThan(0.08, microtime(true) - $started);

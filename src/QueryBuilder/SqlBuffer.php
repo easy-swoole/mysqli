@@ -6,6 +6,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 final class SqlBuffer
 {
     public ?string $column = null;
+    public ?string $baseTableName = null;
 
     /** @param array<array-key, mixed> $parameters */
     public function __construct(public string $sql, public array $parameters = [], public mixed $tableName = '') {}

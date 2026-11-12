@@ -97,7 +97,13 @@ final class SelectPlanner
         if ($state['fields'] === null || $state['fields'] === ['*']) {
             if ($state['groups'] !== [] && $state['unionBranches'] === []) {
                 $items = [];
-                foreach ($state['groups'] as $group) { array_push($items, ...SqlList::items($group)); }
+                $groups = $state['groups'];
+                $last = array_key_last($groups);
+                // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
+                $groups[$last] = preg_replace('/\s+WITH\s+ROLLUP\s*\z/i', '', $groups[$last]);
+                foreach ($groups as $group) {
+                    array_push($items, ...SqlList::items($group));
+                }
                 $hasOrdinal = false;
                 foreach ($items as $item) {
                     if (preg_match('/\A\s*[0-9]+\s*\z/', $item) === 1) { $hasOrdinal = true; break; }

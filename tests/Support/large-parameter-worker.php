@@ -16,6 +16,7 @@ try {
             $config['timeout'] = 60.0;
             $config['maxConnectTime'] = 5.0;
             $client = new Client(new Config($config));
+            $client->connect();
             try {
                 $data = random_bytes(0x1000000);
                 $digest = hash('sha256', $data);

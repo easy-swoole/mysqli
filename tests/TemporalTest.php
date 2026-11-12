@@ -17,6 +17,7 @@ final class TemporalTest extends TestCase
     {
         if (MYSQL_CONFIG['host'] === '') { $this->markTestSkipped('Set MYSQLI_TEST_* to a test database.'); }
         $client = new Client(new Config(MYSQL_CONFIG));
+        $client->connect();
         $table = 'mysqli_temporal_' . bin2hex(random_bytes(6));
         try {
             // 仅此测试会话允许零日期，固定时区避免 TIMESTAMP 转换影响期望值。

@@ -72,7 +72,7 @@ final class QueryBuilderConditionsTest extends TestCase
                     $nested->where('u.status', 'active')->whereNull('u.deleted_at', 'OR');
                 });
             })->where('o.tenantId', 7)->get('orders o');
-        self::assertSame('SELECT * FROM orders o LEFT JOIN users u on u.id=o.userId AND `u`.`tenantId` = `o`.`tenantId` AND (`u`.`ownerId` = `o`.`ownerId` AND (u.status = ? OR u.deleted_at IS NULL)) WHERE `o`.`tenantId` = ?', $this->sql($builder));
+        self::assertSame('SELECT * FROM orders o LEFT JOIN users u on (u.id=o.userId) AND `u`.`tenantId` = `o`.`tenantId` AND (`u`.`ownerId` = `o`.`ownerId` AND (u.status = ? OR u.deleted_at IS NULL)) WHERE `o`.`tenantId` = ?', $this->sql($builder));
         self::assertSame(['active', 7], $builder->getLastBindParams());
     }
 
@@ -82,7 +82,7 @@ final class QueryBuilderConditionsTest extends TestCase
             ->joinOrOn('users u', 'u.tenantId', 'o.tenantId', '<=>')
             ->joinOrWhereGroup('users u', static fn(QueryBuilder $q) => $q->where('u.public', true)->where('u.enabled', true))
             ->get('orders o');
-        self::assertSame('SELECT * FROM orders o LEFT JOIN users u on u.id=o.userId OR `u`.`tenantId` <=> `o`.`tenantId` OR (u.public = ? AND u.enabled = ?)', $this->sql($builder));
+        self::assertSame('SELECT * FROM orders o LEFT JOIN users u on (u.id=o.userId) OR `u`.`tenantId` <=> `o`.`tenantId` OR (u.public = ? AND u.enabled = ?)', $this->sql($builder));
         self::assertSame([true, true], $builder->getLastBindParams());
     }
 

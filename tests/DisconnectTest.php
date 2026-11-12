@@ -23,6 +23,8 @@ final class DisconnectTest extends TestCase
         }
         $this->victim = new Client(new Config(MYSQL_CONFIG));
         $this->killer = new Client(new Config(MYSQL_CONFIG));
+        $this->victim->connect();
+        $this->killer->connect();
     }
 
     protected function tearDown(): void
@@ -33,7 +35,7 @@ final class DisconnectTest extends TestCase
         $this->killer = null;
     }
 
-    public function testPingDetectsServerSideDisconnectAndNextQueryReconnects(): void
+    public function testPingDetectsServerSideDisconnectAndRequiresExplicitReconnect(): void
     {
         $oldConnectionId = $this->connectionId($this->victim);
         $this->kill($oldConnectionId);
@@ -41,12 +43,14 @@ final class DisconnectTest extends TestCase
         self::assertFalse($this->victim->ping());
         self::assertFalse($this->victim->mysqlClient()?->isConnected() ?? false);
 
+        $this->assertVictimRequiresConnect();
+        $this->victim->connect();
         $newConnectionId = $this->connectionId($this->victim);
         self::assertNotSame($oldConnectionId, $newConnectionId);
         self::assertTrue($this->victim->ping());
     }
 
-    public function testQueryAfterServerSideDisconnectThrowsAndThenReconnects(): void
+    public function testQueryAfterServerSideDisconnectThrowsUntilExplicitReconnect(): void
     {
         $oldConnectionId = $this->connectionId($this->victim);
         $this->kill($oldConnectionId);
@@ -63,6 +67,8 @@ final class DisconnectTest extends TestCase
         self::assertNull($this->victim->getLastInsertId());
         self::assertNull($this->victim->getLastAffectRows());
 
+        $this->assertVictimRequiresConnect();
+        $this->victim->connect();
         $rows = $this->victim->rawQuery('SELECT CONNECTION_ID() AS connection_id, 1 AS recovered');
         self::assertSame(1, $rows[0]['recovered']);
         self::assertNotSame($oldConnectionId, $rows[0]['connection_id']);
@@ -97,7 +103,19 @@ final class DisconnectTest extends TestCase
         }
         self::assertTrue($kill);
         self::assertFalse($this->victim->mysqlClient()?->isConnected() ?? false);
+        $this->assertVictimRequiresConnect();
+        $this->victim->connect();
         self::assertSame([['recovered' => 1]], $this->victim->rawQuery('SELECT 1 AS recovered'));
+    }
+
+    private function assertVictimRequiresConnect(): void
+    {
+        try {
+            $this->victim->rawQuery('SELECT 1');
+            self::fail('Expected the disconnected client to reject the query');
+        } catch (Exception $error) {
+            self::assertStringContainsString('call connect() first', $error->getMessage());
+        }
     }
 
     private function connectionId(Client $client): int

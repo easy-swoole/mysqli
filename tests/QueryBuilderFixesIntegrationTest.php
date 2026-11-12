@@ -16,6 +16,7 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
     {
         if (MYSQL_CONFIG['host'] === '') { self::markTestSkipped('Set MYSQLI_TEST_* for live checks'); }
         $this->client = new Client(new Config(MYSQL_CONFIG));
+        $this->client->connect();
         $this->client->rawQuery("SET SESSION sql_mode='STRICT_ALL_TABLES,ONLY_FULL_GROUP_BY,ANSI_QUOTES,NO_BACKSLASH_ESCAPES'");
         $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_orders (
             id INT PRIMARY KEY, tenantId INT NOT NULL, name VARCHAR(100) NULL,
@@ -142,6 +143,7 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         try {$this->client->rawQuery('SELECT 1');self::fail('Lost transaction must block reuse');}
         catch(TransactionLostException $error){self::assertNotEmpty($error->getMessage());}
         $this->client->close();
+        $this->client->connect();
         self::assertSame([['value'=>1]],$this->client->rawQuery('SELECT 1 AS value'));
     }
 
@@ -149,6 +151,7 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
     {
         $client=new Client(new Config(array_replace(MYSQL_CONFIG,['compress'=>true])));
         try {
+            $client->connect();
             self::assertSame([['value'=>1],['value'=>2]],iterator_to_array($client->rawIterate('SELECT 1 AS value UNION ALL SELECT 2')));
             self::assertTrue($client->mysqlClient()->isCompressionEnabled());
             $statement=$client->prepare('SELECT ? AS value');

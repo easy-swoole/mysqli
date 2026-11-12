@@ -21,10 +21,8 @@ final class ClientTest extends TestCase
             $this->markTestSkipped('Set FAST_DB_TEST_* or MYSQLI_TEST_* to the EasySwoole FastDb test database.');
         }
         $this->client = new Client(new Config(MYSQL_CONFIG));
-        foreach (glob(__DIR__ . '/resources/*.sql') as $fixture) {
-            $this->client->rawQuery(trim((string) file_get_contents($fixture)));
-        }
-        // SQL 夹具只创建表；使用会话临时表提供固定数据，不依赖测试库已有记录。
+        $this->client->connect();
+        // 使用会话临时表提供固定数据。
         $this->client->rawQuery('CREATE TEMPORARY TABLE student (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->client->rawQuery("INSERT INTO student (id, name) VALUES (1, 'mysqli-fixture')");
     }
@@ -35,7 +33,7 @@ final class ClientTest extends TestCase
         $this->client = null;
     }
 
-    public function testRawQueryAgainstFastDbFixture(): void
+    public function testRawQueryAgainstTemporaryFixture(): void
     {
         $rows = $this->client->rawQuery('SELECT id, name FROM student ORDER BY id LIMIT 1');
         self::assertIsArray($rows);
@@ -232,6 +230,7 @@ final class ClientTest extends TestCase
             self::assertFalse($this->client->mysqlClient()?->isConnected() ?? false);
         }
 
+        $this->client->connect();
         self::assertSame([['reconnected' => 1]], $this->client->rawQuery('SELECT 1 AS reconnected'));
     }
 }

@@ -99,17 +99,17 @@ final class ClientExecutionContextTest extends TestCase
         }
     }
 
-    public function testBufferedCleanupFailureStillOverridesTheExecutionFailure(): void
+    public function testBufferedCleanupFailureDoesNotOverrideTheExecutionFailure(): void
     {
         $statement = $this->statement($this->connected(true));
         $context = new ExecutionContext(1.0, static function (): void { self::fail('Failed cleanup must not notify'); });
         $context->ownStatement($statement);
+        $original = new \RuntimeException('execute failed');
         try {
-            $context->buffered(static function (): array { throw new \RuntimeException('execute failed'); });
-            self::fail('Expected cleanup failure');
-        } catch (Exception $error) {
-            self::assertStringContainsString('Concurrent', $error->getMessage());
-            self::assertStringNotContainsString('execute failed', $error->getMessage());
+            $context->buffered(static function () use ($original): array { throw $original; });
+            self::fail('Expected execution failure');
+        } catch (\RuntimeException $error) {
+            self::assertSame($original, $error);
         }
     }
 

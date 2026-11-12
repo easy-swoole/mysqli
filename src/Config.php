@@ -47,6 +47,22 @@ class Config extends SplBean
         if ($unknown !== []) {
             throw new \InvalidArgumentException('Unknown mysqli config option: ' . array_key_first($unknown));
         }
+        // SplBean 在弱类型文件内赋值，先按 mysqli 属性类型拒绝隐式转换。
+        foreach ($data as $key => $value) {
+            $valid = match ($key) {
+                'host', 'user', 'password', 'database', 'charset', 'tlsCaFile', 'tlsCaPath',
+                'tlsCertFile', 'tlsKeyFile', 'tlsKeyPassphrase', 'tlsServerName' => is_string($value),
+                'port' => is_int($value),
+                'timeout', 'maxConnectTime' => is_float($value) || is_int($value),
+                'compress' => is_bool($value),
+                'tlsMode' => $value instanceof TlsMode || is_string($value),
+                'tlsVersions' => is_array($value),
+                default => true,
+            };
+            if (!$valid) {
+                throw new \TypeError('Invalid type for mysqli config option: ' . $key);
+            }
+        }
         return parent::restore($data);
     }
 

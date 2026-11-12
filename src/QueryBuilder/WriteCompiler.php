@@ -218,9 +218,8 @@ final class WriteCompiler
         }
         $alias = null;
         if ($incomingColumns !== []) {
-            $table = trim(str_replace('`', '', (string) $this->buffer->tableName));
-            $table = substr($table, strrpos('.' . $table, '.'));
-            $alias = TableReference::identifier(strcasecmp($table, '__mysqli_new') === 0 ? '__mysqli_new_row' : '__mysqli_new');
+            $table = $this->buffer->baseTableName;
+            $alias = $table !== null && strcasecmp($table, '__mysqli_new') === 0 ? '`__mysqli_new_row`' : '`__mysqli_new`';
             $this->buffer->sql .= ' AS ' . $alias;
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';

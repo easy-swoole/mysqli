@@ -13,14 +13,14 @@ final class TableReference
     }
 
     /**
-     * @return array{sql: string, name: string, target: ?string}
+     * @return array{sql: string, name: string, target: ?string, baseName: ?string}
      */
     public static function resolve(string $tableName, mixed $prefix, bool $quoteBare = true): array
     {
         $source = trim($tableName);
         // 派生表和表值表达式包含 SQL，不作为普通表名添加前缀。
         if (str_starts_with($source, '(') || preg_match('/\A[^\s`(]+\s*\(/', $source) === 1) {
-            return ['sql' => $tableName, 'name' => $tableName, 'target' => null];
+            return ['sql' => $tableName, 'name' => $tableName, 'target' => null, 'baseName' => null];
         }
 
         $identifier = '(?:`(?:``|[^`])*`|[^\s.`()]+)';
@@ -32,12 +32,13 @@ final class TableReference
                 return $part[0] === '`' ? str_replace('``', '`', substr($part, 1, -1)) : $part;
             }, $tokens[0]);
             $unqualified = count($parts) === 1;
+            $baseName = $parts[array_key_last($parts)];
             if ($unqualified) {
                 $prefix ??= '';
                 $separator = strrpos($prefix, '.');
-                $quoted = $separator === false ? self::identifier($prefix . $parts[0])
-                    : self::column(substr($prefix, 0, $separator)) . '.'
-                        . self::identifier(substr($prefix, $separator + 1) . $parts[0]);
+                $baseName = ($separator === false ? $prefix : substr($prefix, $separator + 1)) . $baseName;
+                $quoted = $separator === false ? self::identifier($baseName)
+                    : self::column(substr($prefix, 0, $separator)) . '.' . self::identifier($baseName);
             } else {
                 $quoted = implode('.', array_map([self::class, 'identifier'], $parts));
             }
@@ -45,10 +46,11 @@ final class TableReference
             $hasQuotes = str_contains($match['table'], '`');
             $name = ($hasQuotes ? $quoted : ($unqualified ? $prefix . $match['table'] : $match['table'])) . $suffix;
             $sql = $suffix !== '' || (!$quoteBare && !$hasQuotes) ? $name : $quoted;
-            return ['sql' => $sql, 'name' => $name, 'target' => self::alias($suffix, $identifier) ?? $quoted];
+            return ['sql' => $sql, 'name' => $name, 'target' => self::alias($suffix, $identifier) ?? $quoted,
+                'baseName' => $baseName];
         }
 
-        return ['sql' => $tableName, 'name' => $tableName, 'target' => null];
+        return ['sql' => $tableName, 'name' => $tableName, 'target' => null, 'baseName' => null];
     }
 
     private static function alias(string $suffix, string $identifier): ?string

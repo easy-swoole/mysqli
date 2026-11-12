@@ -40,23 +40,32 @@ final class ExecutionContext
      */
     public function buffered(callable $operation): bool|array
     {
+        $failed = false;
         try {
             $result = $operation();
+        } catch (\Throwable $error) {
+            $failed = true;
+            throw $error;
         } finally {
-            $this->closeOwnedStatement();
+            if ($failed) {
+                $this->discardOwnedStatement();
+            } else {
+                $this->closeOwnedStatement();
+            }
         }
         $this->complete($result);
         return $result;
     }
 
-    /** 缓冲执行保留原有 finally 语义：清理异常继续向外抛出。 */
+    /** 释放语句；没有其他异常时由调用方收到清理错误。 */
     public function closeOwnedStatement(): void
     {
-        $this->statement?->close($this->deadline->remainingOrZero());
+        $statement = $this->statement;
         $this->statement = null;
+        $statement?->close($this->deadline->remainingOrZero());
     }
 
-    /** 流式查询启动失败时保留原始异常，即使清理同时失败也不覆盖。 */
+    /** 已有执行异常时尝试释放语句，保留原始异常。 */
     public function discardOwnedStatement(): void
     {
         try { $this->closeOwnedStatement(); } catch (\Throwable) {}

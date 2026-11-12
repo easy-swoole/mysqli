@@ -13,9 +13,13 @@
 
 ## 使用示例
 
-`new Config($options)` 和 `Config::restore($options)` 接受配置属性名，未知键会抛出 `InvalidArgumentException`。传入 FastDb 的完整连接池配置时，连接池专用字段仍由 FastDb 和连接池使用。
+`new Config($options)` 和 `Config::restore($options)` 接受配置属性名。未知键抛出 `InvalidArgumentException`，mysqli 配置值类型不符时抛出 `TypeError`。例如 `compress` 使用布尔值，`port` 使用整数，超时接受整数或浮点数。传入 FastDb 的完整连接池配置时，连接池专用字段仍由 FastDb 和连接池使用。
 
-`Client::connect(?float $timeout = null)` 始终使用构造函数传入的 `Config` 建立连接，不接受配置数组。可选参数仅指定本次建连的总超时（秒），不会修改配置；省略或传入 `null` 时使用 `maxConnectTime`。显式超时仍受 `maxConnectTime` 上限约束，以先到期的截止时间为准。查询方法会在需要时自动建连，也可以主动调用 `connect()`。
+`Client` 和直接使用的 `Protocol\Connection` 都必须先调用 `connect()`。查询、预处理、流式读取和事务命令使用当前已建立的会话。未连接时执行命令会抛出异常。
+
+`connect(?float $timeout = null)` 使用构造时传入的 `Config`。参数指定本次建连总超时，单位为秒。省略或传入 `null` 时使用 `maxConnectTime`，显式超时也受该配置上限约束。
+
+`host` 接受 IPv4 或 IPv6 字面地址。IPv6 地址直接填写，例如 `::1`，明文和 TLS 连接都可使用。
 
 数据库操作需要在 Swoole 协程中执行：
 
@@ -37,7 +41,9 @@ Coroutine\run(function (): void {
         'compress' => true, // 协商启用 MySQL 经典协议的 zlib 压缩
     ]));
 
-    // 第二个参数为本次查询的总超时，包含必要的建连和结果读取。
+    $client->connect();
+
+    // 第二个参数为本次查询的总超时，包含命令发送和结果读取。
     $rows = $client->rawQuery('SELECT * FROM student WHERE id = 1', 0.5);
 
     $statement = $client->prepare('SELECT * FROM student WHERE id = ?');
@@ -148,13 +154,13 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 - `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与设置方法均可混用枚举、字符串；默认值和读取方法的字符串数组返回格式不变。
 - 设置方法仍只保存列表，不立即校验版本名。读取方法将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
 - 只允许 TLS 1.2、TLS 1.3，不能降级到旧协议；实际可用版本取决于 Swoole/OpenSSL 编译能力及服务端配置。TLS 默认关闭，版本列表本身不会开启 TLS。
-- TLS 握手计入 `maxConnectTime`，也计入触发自动连接的单次查询总超时，不会获得独立的新超时预算。
+- TLS 握手使用 `connect()` 的建连预算。
 
 ### 认证、查询与重连
 
 - 原有 `mysql_native_password`、`caching_sha2_password` 认证均可与 TLS 配合。`caching_sha2_password` 完整认证在 TLS 内传递密码，不再走未加密连接的 RSA 公钥请求流程。
 - 文本查询、服务端预处理、事务、压缩和大包继续使用同一套 MySQL 分包逻辑；TLS 只包裹传输层。
-- 自动重连仍按配置协商和验证 TLS，不会因为前一次失败而关闭校验。事务丢失保护与现有行为一致。
+- 每次显式 `connect()` 建立新会话时，均按配置协商和验证 TLS。
 - `isTlsEnabled()` 表示当前有效连接是否已完成 TLS，关闭连接后返回 false。服务端实际协商的版本与密码套件可查询 `Ssl_version`、`Ssl_cipher`。
 
 ## 压缩与接口兼容
@@ -163,19 +169,21 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 `Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 自动使用服务端预处理协议；`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本查询协议。两者显式声明可选超时参数，支持 `timeout: 0.5` 这样的命名参数。
 
-本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 自建的 Statement 仍在 `finally` 中关闭，成功回调在清理完成后触发。
+本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 在 `finally` 中关闭自建的 Statement。执行和关闭均失败时保留执行异常，只有关闭失败时抛出关闭异常。成功回调在清理完成后触发。
 
 继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写这两个方法时都需要声明兼容的 `bool|array` 返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
 
-查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。未处于事务时，下一次查询会自动重新连接。
+查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。
 
 ## 会话安全与超时
+
+断线后，后续命令会报错。事务外可显式调用 `connect()` 建立新会话。新会话使用 `Config` 指定的数据库，若需要切换数据库或设置会话参数，应在新会话上重新执行。失败的 SQL 由调用方决定是否重试。
 
 预处理语句绑定到创建它的连接和服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
 连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
 
-事务期间断线或查询超时，首次操作仍抛出原始连接/超时异常；后续查询、预处理语句创建、旧 Statement 执行、连接、提交和回滚 会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`，阻止透明重连后继续执行。此标记在显式 `close()` 前一直保留，关闭 Statement 不会解除保护。
+事务期间断线或查询超时时，发现断线的操作会抛出原始连接或超时异常。后续查询、预处理、旧 Statement 执行、`connect()`、提交和回滚会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`。连接的 `close()` 清除事务丢失标记。
 
 恢复时先调用 `$client->close()`，再连接并开启新的事务，由业务决定是否重试整个事务。如果在提交响应到达前断线，提交结果可能无法确认，不能仅凭此异常自动重放写入。
 
@@ -205,13 +213,13 @@ CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。
 
 同一个连接同时只允许一个操作，包括建立连接、关闭 Statement 和关闭连接。并发调用会抛出异常，正在进行的操作仍可继续完成。可以在当前操作结束后重试关闭 Statement；需要并发查询时，应使用不同的客户端连接。
 
-`maxConnectTime` 限制完整连接过程的总耗时，包括 TCP 建连、握手、认证和字符集设置。`rawQuery()`、`query()` 和 `prepare()` 的超时均包含必要的连接过程；`query()` 的预处理、执行、结果读取及 Statement 清理共用同一个超时预算。连接过程同时受 `maxConnectTime` 限制，以先到期的截止时间为准。
+`connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
 
 超时值必须大于零。如果 Statement 清理阶段的查询预算已经耗尽，客户端会直接丢弃连接，不再为清理操作分配新的超时预算。
 
 ## 分页、批处理与流式读取
 
-以下示例在 Swoole 协程内使用已经创建的 `$client`；条件模板均尚未调用 `get()`。
+以下示例在 Swoole 协程内使用已调用 `connect()` 的 `$client`。条件模板在执行前保留待构建状态。
 
 ### `Client::paginate($query, $table, $perPage = 20, $page = 1, $timeout = null)`
 
@@ -225,7 +233,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，包括必要的建连、预处理、执行、读取和清理；不是每条语句各获得完整的 `$timeout`。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -261,7 +269,7 @@ try {
 
 - 使用文本协议，参数是整条可信 SQL，不另接收绑定数组；需要参数绑定时使用 `Client::iterate($builder)` 或 `Statement::iterate()`。
 - 连接独占、单次遍历、总超时、提前退出关闭连接和 EOF 成功回调规则与 `Client::iterate()` 一致；CALL 和多结果集仍不支持。
-- 在事务中提前停止、读取错误或超时会保留事务丢失保护，不能透明重连后继续该事务；调用方应显式关闭 Client，再按业务规则开始新事务，不能直接继续提交旧事务。
+- 流导致连接关闭后，下一次查询前须显式 `connect()`。若同时丢失事务，先 `close()` 再 `connect()`，由业务决定如何恢复。
 
 ### `Statement::iterate($parameters = [], $timeout = null)`
 
@@ -565,7 +573,7 @@ $builder->fields(['userId', 'SUM(paid) AS paid_total', 'SUM(expected) AS expecte
 ```php
 $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
-// LEFT JOIN users u on u.id=o.userId AND `u`.`tenantId` = `o`.`tenantId`
+// LEFT JOIN users u on (u.id=o.userId) AND `u`.`tenantId` = `o`.`tenantId`
 ```
 
 - 给已有 JOIN 的 ON 部分追加字段比较，不创建 JOIN，也不把右字段当值绑定；参数中的两个字段遵循 `whereColumn()` 的引用规则。
@@ -596,7 +604,7 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinWhereGroup('users u', function (QueryBuilder $q): void {
         $q->where('u.status', 1)->orWhere('u.status', 2);
     })->joinOn('users u', 'u.tenantId', 'o.tenantId')->get('orders o');
-// ... on u.id=o.userId AND (u.status = ? OR u.status = ?) AND `u`.`tenantId` = `o`.`tenantId`
+// ... on (u.id=o.userId) AND (u.status = ? OR u.status = ?) AND `u`.`tenantId` = `o`.`tenantId`
 ```
 
 - ON 分组闭包中使用 WHERE 条件方法：`where()`、`orWhere()`、`whereColumn()`、`whereRaw()`、`whereGroup()` 等；不在闭包中调用 `joinWhere()`、`joinOn()` 或 HAVING 方法。
@@ -752,6 +760,7 @@ $total = $client->query($counter)[0]['total'];
 ```
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
+- `groupBy()` 的末项可使用 `WITH ROLLUP`，生成的 COUNT 包含汇总行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -1067,6 +1076,7 @@ $builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orde
 ```
 
 - `$isUnionAll` 接受布尔值，默认 `false` 生成 UNION，传 `true` 生成 UNION ALL。
+- 行锁设在独立的 SELECT 分支上，构建后再传给 `union()`。为整个 UNION 设置行锁会抛出 `InvalidArgumentException`。
 - 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立构造器完成该分支的 `get()`，再传给 `union()`。
 - 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
 - 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
@@ -1090,9 +1100,10 @@ $builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
 ```php
 $builder->join('users u', 'u.id=o.userId', 'LEFT')
     ->joinWhere('users u', 'u.deleted_at', null, 'IS')->get('orders o');
-// LEFT JOIN users u on u.id=o.userId AND u.deleted_at IS NULL
+// LEFT JOIN users u on (u.id=o.userId) AND u.deleted_at IS NULL
 ```
 
+- 追加 ON 条件时，`join()` 的初始条件会整体加括号。字符串与 `Expression` 使用相同分组。
 - NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
 - 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`。JOIN 子查询传其别名。构建时，找不到对应 JOIN 或定位到多个 JOIN 会抛出 `InvalidArgumentException`。
 - 条件位于 JOIN 的 ON 部分。LEFT JOIN 中将条件移到 WHERE 可能改变保留行范围。

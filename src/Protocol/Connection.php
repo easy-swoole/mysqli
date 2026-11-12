@@ -147,7 +147,7 @@ final class Connection
         return $this->guard(function () use ($sql, $timeout): Statement {
             $this->assertSupportedSql($sql);
             $deadline = Deadline::after($timeout ?? $this->timeout);
-            $this->ensureConnected($deadline);
+            $this->requireConnected();
             $this->stream->beginCommand();
             $this->stream->writePacket(chr(self::COM_STMT_PREPARE) . $sql, $deadline, 'prepare');
             $packet = $this->stream->readPacket($deadline, 'prepare');
@@ -394,7 +394,7 @@ final class Connection
     /** 共用发包顺序；SQL 支持性检查及 Deadline 创建仍由原入口按原时机执行。 */
     private function writeTextCommand(int $command, string $payload, Deadline $deadline): void
     {
-        $this->ensureConnected($deadline);
+        $this->requireConnected();
         $this->resetMetadata();
         $this->stream->beginCommand();
         $this->stream->writePacket(chr($command) . $payload, $deadline, 'query');
@@ -619,13 +619,13 @@ final class Connection
     }
 
     /**
-     * 在需要时按当前操作预算建立连接。
+     * 命令只使用已显式建立的会话；事务丢失优先于普通未连接错误。
      */
-    private function ensureConnected(Deadline $deadline): void
+    private function requireConnected(): void
     {
         $this->assertTransactionUsable();
         if (!$this->isConnected()) {
-            $this->connectInternal($deadline);
+            throw new Exception('MySQL connection is not open; call connect() first');
         }
     }
 
