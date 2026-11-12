@@ -43,7 +43,7 @@ final class DeadlineTest extends TestCase
     }
 
     #[DataProvider('invalidDurations')]
-    public function testNonPositiveTimeoutsAreRejected(float $seconds): void
+    public function testInvalidTimeoutsAreRejected(float $seconds): void
     {
         $this->expectException(\InvalidArgumentException::class);
         Deadline::after($seconds);
@@ -51,6 +51,6 @@ final class DeadlineTest extends TestCase
 
     public static function invalidDurations(): array
     {
-        return ['zero' => [0.0], 'negative' => [-0.1]];
+        return ['zero' => [0.0], 'negative' => [-0.1], 'nan' => [NAN], 'infinite' => [INF]];
     }
 }

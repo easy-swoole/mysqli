@@ -15,7 +15,10 @@ use EasySwoole\Mysqli\TlsMode;
 /** @internal 负责 Socket 收发、数据包封装、压缩及包序号管理。 */
 final class PacketStream
 {
+    public const ER_CLIENT_INTERACTION_TIMEOUT = 4031;
+
     private const MAX_PACKET_PAYLOAD = 0xffffff;
+    private const MAX_IDLE_ERROR_PAYLOAD = 1024;
 
     private ?Socket $socket = null;
     // 保留所属 Client 以读取证书和处理 TLS 握手；所有数据包仍由导出的同一 Socket 收发。
@@ -217,6 +220,13 @@ final class PacketStream
             $receivedSequence = ord($header[3]);
             $expectedSequence = $this->sequence & 0xff;
             if ($receivedSequence !== $expectedSequence) {
+                // 服务端在两条命令之间发送的空闲超时错误使用序号 0。
+                if ($receivedSequence === 0 && $payload === '' && $length >= 9 && $length <= self::MAX_IDLE_ERROR_PAYLOAD) {
+                    $error = $this->receiveProtocolExactly($length, $deadline, $operation);
+                    if (self::isIdleTimeoutError($error)) {
+                        return $error;
+                    }
+                }
                 $this->close();
                 throw new ProtocolException(sprintf('MySQL packet sequence mismatch: expected %d, got %d', $expectedSequence, $receivedSequence));
             }
@@ -276,12 +286,13 @@ final class PacketStream
             $compressedLength = ord($header[0]) | (ord($header[1]) << 8) | (ord($header[2]) << 16);
             $receivedSequence = ord($header[3]);
             $expectedSequence = $this->compressedSequence & 0xff;
-            if ($receivedSequence !== $expectedSequence) {
-                $this->close();
-                throw new ProtocolException(sprintf('MySQL compressed packet sequence mismatch: expected %d, got %d', $expectedSequence, $receivedSequence));
-            }
-            $this->compressedSequence = ($this->compressedSequence + 1) & 0xff;
             $uncompressedLength = ord($header[4]) | (ord($header[5]) << 8) | (ord($header[6]) << 16);
+            $outOfSequence = $receivedSequence !== $expectedSequence;
+            $idleFrameLimit = self::MAX_IDLE_ERROR_PAYLOAD + 4;
+            if ($outOfSequence && ($receivedSequence !== 0 || $this->decompressedBuffer !== ''
+                || $compressedLength > $idleFrameLimit || $uncompressedLength > $idleFrameLimit)) {
+                $this->rejectCompressedSequence($expectedSequence, $receivedSequence);
+            }
             $payload = $this->receiveExactly($compressedLength, $deadline, $operation);
             if ($uncompressedLength !== 0) {
                 $decoded = @gzuncompress($payload, $uncompressedLength);
@@ -291,6 +302,10 @@ final class PacketStream
                 }
                 $payload = $decoded;
             }
+            if ($outOfSequence && !self::isIdleTimeoutFrame($payload)) {
+                $this->rejectCompressedSequence($expectedSequence, $receivedSequence);
+            }
+            $this->compressedSequence = ($receivedSequence + 1) & 0xff;
             $this->decompressedBuffer .= $payload;
         }
 
@@ -301,6 +316,26 @@ final class PacketStream
             $this->decompressedOffset = 0;
         }
         return $data;
+    }
+
+    private static function isIdleTimeoutFrame(string $payload): bool
+    {
+        // 压缩帧必须恰好包含一个序号为 0 的完整 ERR 报文。
+        $offset = 0;
+        return strlen($payload) >= 13 && $payload[3] === "\0"
+            && Codec::int3($payload, $offset) === strlen($payload) - 4
+            && self::isIdleTimeoutError(substr($payload, 4));
+    }
+
+    private static function isIdleTimeoutError(string $payload): bool
+    {
+        return str_starts_with($payload, "\xff" . pack('v', self::ER_CLIENT_INTERACTION_TIMEOUT) . '#HY000');
+    }
+
+    private function rejectCompressedSequence(int $expected, int $received): never
+    {
+        $this->close();
+        throw new ProtocolException(sprintf('MySQL compressed packet sequence mismatch: expected %d, got %d', $expected, $received));
     }
 
     /**

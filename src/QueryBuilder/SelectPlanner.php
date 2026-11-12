@@ -102,6 +102,10 @@ final class SelectPlanner
                 // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
                 $groups[$last] = preg_replace('/\s+WITH\s+ROLLUP\s*\z/i', '', $groups[$last]);
                 foreach ($groups as $group) {
+                    // ROLLUP(...) 是 GROUP BY 的另一种写法，投影只使用括号内的字段。
+                    if (preg_match('/\A\s*ROLLUP\s*\((.*)\)\s*\z/is', $group, $rollup) === 1) {
+                        $group = $rollup[1];
+                    }
                     array_push($items, ...SqlList::items($group));
                 }
                 $hasOrdinal = false;

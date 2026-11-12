@@ -167,7 +167,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 `compress` 默认为 `false`。启用后，客户端通过 `CLIENT_COMPRESS` 协商压缩；如果服务端支持，则在认证成功后启用 zlib 压缩。如果服务端不支持，连接仍以未压缩方式继续使用。可以通过 `$client->mysqlClient()->isCompressionEnabled()` 查看实际协商结果。
 
-`Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 自动使用服务端预处理协议；`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本查询协议。两者显式声明可选超时参数，支持 `timeout: 0.5` 这样的命名参数。
+`Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 对构造器的表锁命令使用文本协议，其余查询使用服务端预处理。`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本协议。两者支持 `timeout: 0.5` 这样的命名参数。
 
 本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 在 `finally` 中关闭自建的 Statement。执行和关闭均失败时保留执行异常，只有关闭失败时抛出关闭异常。成功回调在清理完成后触发。
 
@@ -178,6 +178,8 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 ## 会话安全与超时
 
 断线后，后续命令会报错。事务外可显式调用 `connect()` 建立新会话。新会话使用 `Config` 指定的数据库，若需要切换数据库或设置会话参数，应在新会话上重新执行。失败的 SQL 由调用方决定是否重试。
+
+服务端发送空闲断线错误时，客户端关闭本地连接并保留 MySQL 错误码 `4031`。
 
 预处理语句绑定到创建它的连接和服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
@@ -207,7 +209,7 @@ $client->mysqlClient()->rollback(TransactionCompletionFlags::NoChainNoRelease);
 $client->mysqlClient()->commit(TransactionCompletionFlags::Release);
 ```
 
-CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。`None` 不追加选项，由服务端 `completion_type` 决定默认结束方式；需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
+CHAIN 可开始新事务，RELEASE 成功后本地连接同步关闭。`None`、`Chain` 和 `NoChain` 采用当前会话的默认释放行为。调用 `commit()` 或 `rollback()` 时，这三个选项会先在同一个超时预算内读取 `completion_type`。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
 
 文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 
@@ -215,7 +217,7 @@ CHAIN 后连接仍处于新事务；RELEASE 成功后本地连接同步关闭。
 
 `connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
 
-超时值必须大于零。如果 Statement 清理阶段的查询预算已经耗尽，客户端会直接丢弃连接，不再为清理操作分配新的超时预算。
+超时值必须是大于零的有限数。如果 Statement 清理阶段的查询预算已经耗尽，客户端会直接丢弃连接。
 
 ## 分页、批处理与流式读取
 
@@ -760,7 +762,7 @@ $total = $client->query($counter)[0]['total'];
 ```
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
-- `groupBy()` 的末项可使用 `WITH ROLLUP`，生成的 COUNT 包含汇总行。
+- `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -1173,6 +1175,7 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 ```
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
+- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端通过文本协议发送。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
 - 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
 - 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。

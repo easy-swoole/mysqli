@@ -35,6 +35,14 @@ final class QueryBuilderRegressionTest extends TestCase
         self::assertSame(['paid'], $builder->getLastBindParams());
     }
 
+    public function testCountProjectsTheExpressionsInsideTheRollupList(): void
+    {
+        $builder = (new QueryBuilder())->where('status', 'paid')
+            ->groupBy("ROLLUP(region, COALESCE(city, 'a,b'))")->count('sales');
+        self::assertSame("SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, COALESCE(city, 'a,b') AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY ROLLUP(region, COALESCE(city, 'a,b'))) AS `__mysqli_count`", $this->sql($builder));
+        self::assertSame(['paid'], $builder->getLastBindParams());
+    }
+
     public function testUnionRejectsOverallLocksAndPreservesLockedBranches(): void
     {
         $branch = (new QueryBuilder())->forUpdate()->get('archive', null, 'id');

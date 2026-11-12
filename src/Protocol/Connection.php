@@ -125,7 +125,7 @@ final class Connection
      */
     public function query(string $sql, ?float $timeout = null): array|bool
     {
-        return $this->command(self::COM_QUERY, $sql, $timeout, false);
+        return $this->command(self::COM_QUERY, $sql, $timeout);
     }
 
     /** 按行读取文本协议结果；结果流关闭前独占连接。 */
@@ -290,7 +290,7 @@ final class Connection
      */
     public function ping(): bool
     {
-        return $this->command(self::COM_PING, '', $this->timeout, false) === true;
+        return $this->command(self::COM_PING, '', $this->timeout) === true;
     }
 
     /**
@@ -322,13 +322,21 @@ final class Connection
      */
     private function finishTransaction(string $command, TransactionCompletionFlags $flags): bool
     {
-        $command .= $flags->toSqlSuffix();
-        $result = $this->query($command) === true;
-        if ($result && $flags->releasesConnection()) {
-            // RELEASE 成功后服务端已释放会话，立即同步本地连接状态。
-            $this->invalidateConnection(true);
-        }
-        return $result;
+        return $this->guard(function () use ($command, $flags): bool {
+            $deadline = Deadline::after($this->timeout);
+            $release = $flags->releasesConnection();
+            if ($flags === TransactionCompletionFlags::None || $flags === TransactionCompletionFlags::Chain
+                || $flags === TransactionCompletionFlags::NoChain) {
+                // 默认释放方式可在会话中修改，读取和结束事务共用并发保护及超时。
+                $rows = $this->runTextCommand(self::COM_QUERY, 'SELECT @@SESSION.completion_type AS completion_type', $deadline);
+                $release = in_array($rows[0]['completion_type'], ['RELEASE', 2, '2'], true);
+            }
+            $result = $this->runTextCommand(self::COM_QUERY, $command . $flags->toSqlSuffix(), $deadline) === true;
+            if ($result && $release) {
+                $this->invalidateConnection(true);
+            }
+            return $result;
+        });
     }
 
     /**
@@ -379,16 +387,20 @@ final class Connection
     /**
      * 在共享超时预算内发送命令并读取响应。
      */
-    private function command(int $command, string $payload, ?float $timeout, bool $binary): array|bool
+    private function command(int $command, string $payload, ?float $timeout): array|bool
     {
-        return $this->guard(function () use ($command, $payload, $timeout, $binary): array|bool {
+        return $this->guard(function () use ($command, $payload, $timeout): array|bool {
             if ($command === self::COM_QUERY) {
                 $this->assertSupportedSql($payload);
             }
-            $deadline = Deadline::after($timeout ?? $this->timeout);
-            $this->writeTextCommand($command, $payload, $deadline);
-            return $this->readResponse($deadline, $binary, $payload);
+            return $this->runTextCommand($command, $payload, Deadline::after($timeout ?? $this->timeout));
         });
+    }
+
+    private function runTextCommand(int $command, string $payload, Deadline $deadline): array|bool
+    {
+        $this->writeTextCommand($command, $payload, $deadline);
+        return $this->readResponse($deadline, false, $payload);
     }
 
     /** 共用发包顺序；SQL 支持性检查及 Deadline 创建仍由原入口按原时机执行。 */
@@ -581,6 +593,9 @@ final class Connection
         $this->errno = $code;
         $this->error = $message;
         $this->state->applyServerError($code);
+        if ($code === PacketStream::ER_CLIENT_INTERACTION_TIMEOUT) {
+            $this->invalidateConnection();
+        }
         throw new Exception("{$context}: {$message}", $code);
     }
 

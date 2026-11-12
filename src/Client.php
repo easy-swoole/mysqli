@@ -44,10 +44,10 @@ class Client
         if ($this->mysqlClient?->isBusy()) {
             throw new Exception('Concurrent operations on one MySQL connection are not allowed');
         }
-        $this->mysqlClient?->assertTransactionUsable();
         if ($this->mysqlClient?->isConnected()) {
-            return true;
+            return $this->mysqlClient->connect($timeout);
         }
+        $this->mysqlClient?->assertTransactionUsable();
         $this->mysqlClient = new Connection($this->config);
         try {
             return $this->mysqlClient->connect($timeout);
@@ -58,12 +58,16 @@ class Client
     }
 
     /**
-     * 通过服务端预处理执行查询构造器生成的 SQL。
+     * 通过服务端预处理执行构造器 SQL，表锁命令使用文本协议。
      * @return bool|list<array<array-key, mixed>>
      */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
         $sql = $builder->getLastPrepareQuery();
+        $operation = $builder->getLastTransactionOp();
+        if ($operation === QueryBuilder::TS_OP_LOCK_TABLE || $operation === QueryBuilder::TS_OP_UNLOCK_TABLE) {
+            return $this->rawQuery($sql, $timeout);
+        }
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {

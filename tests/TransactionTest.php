@@ -343,9 +343,13 @@ final class TransactionTest extends TestCase
     public function testReleaseFlagsActuallyCloseServerSession(): void
     {
         foreach (['commit', 'rollback'] as $method) {
-            foreach ([TransactionCompletionFlags::Release, TransactionCompletionFlags::NoChainRelease] as $flags) {
+            foreach ([TransactionCompletionFlags::Release, TransactionCompletionFlags::NoChainRelease,
+                TransactionCompletionFlags::None, TransactionCompletionFlags::NoChain, TransactionCompletionFlags::Chain] as $flags) {
                 $writer = $this->newClient();
                 try {
+                    if (!$flags->releasesConnection()) {
+                        $writer->rawQuery('SET SESSION completion_type = 2');
+                    }
                     $connection = $writer->mysqlClient();
                     $connection->begin_transaction();
                     $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");

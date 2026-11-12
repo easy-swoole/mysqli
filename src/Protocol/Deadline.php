@@ -15,6 +15,9 @@ final class Deadline
 
     public static function after(float $seconds): self
     {
+        if (!is_finite($seconds)) {
+            throw new \InvalidArgumentException('Query timeout must be finite');
+        }
         if ($seconds <= 0) {
             throw new \InvalidArgumentException('Query timeout must be greater than zero');
         }
