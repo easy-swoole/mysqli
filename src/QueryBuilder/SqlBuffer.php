@@ -13,7 +13,7 @@ final class SqlBuffer
     public function bind(mixed $value): void { $this->parameters[] = $value; }
 
     /** @param iterable<mixed> $values */
-    public function bindAll(mixed $values): void
+    public function bindAll(iterable $values): void
     {
         foreach ($values as $value) { $this->bind($value); }
     }

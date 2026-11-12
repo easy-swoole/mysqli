@@ -6,13 +6,45 @@ use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Exception\Exception;
 
-/** @internal 编译 INSERT/REPLACE 值、UPDATE 赋值及重复键更新。 */
+/** @internal 处理批量选项、写入字段过滤、赋值及重复键更新。 */
 final class WriteCompiler
 {
     /** @var array<string, string>|null */
     private ?array $batchColumns = null;
 
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
+
+    /** @return array{statement: 'INSERT'|'REPLACE', fields: ?array} */
+    public static function batchOptions(mixed $options, ?array $selectedFields): array
+    {
+        if (!is_array($options)) {
+            throw new \TypeError('Batch insert options must be an array');
+        }
+        $unknown = array_diff_key($options, ['field' => true, 'replace' => true]);
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException('Unknown batch insert option: ' . array_key_first($unknown));
+        }
+        $options += ['replace' => false];
+        $fields = null;
+        if (array_key_exists('field', $options)) {
+            $fields = $options['field'];
+            if (!is_array($fields)) {
+                throw new \TypeError('Batch insert field option must be an array of column names');
+            }
+            foreach ($fields as $field) {
+                if (!is_string($field)) {
+                    throw new \TypeError('Batch insert field option must contain only strings');
+                }
+            }
+            if ($selectedFields !== null) {
+                $fields = array_filter($fields, static fn(string $field): bool => in_array($field, $selectedFields, true));
+            }
+        }
+        if (!is_bool($options['replace'])) {
+            throw new \TypeError('Batch insert replace option must be a boolean');
+        }
+        return ['statement' => $options['replace'] ? 'REPLACE' : 'INSERT', 'fields' => $fields];
+    }
 
     /**
      * 保留过滤后的行，字段引用按首行的键顺序生成一次。
@@ -52,12 +84,13 @@ final class WriteCompiler
             $columns = $batchData['columns'];
             $this->batchColumns = $columns;
             $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
+            $separator = '';
             foreach ($batchData['rows'] as $row) {
-                $this->buffer->sql .= '(';
+                $this->buffer->sql .= $separator . '(';
                 $this->appendPairs($row, $columns, true);
-                $this->buffer->sql .= '),';
+                $this->buffer->sql .= ')';
+                $separator = ',';
             }
-            $this->buffer->sql = rtrim($this->buffer->sql, ',');
             return [];
         }
         $tableData = self::filterRow($tableData, $fields);
@@ -97,43 +130,50 @@ final class WriteCompiler
     /** @param array<string, string> $columns 以绑定顺序保存列名及其 SQL 引用。 */
     private function appendPairs(array $tableData, array $columns, bool $isInsert): void
     {
+        $separator = '';
         foreach ($columns as $column => $columnReference) {
+            $this->buffer->sql .= $separator;
+            $separator = ', ';
             $value = $tableData[$column];
             if (!$isInsert) {
                 $this->buffer->sql .= $columnReference . ' = ';
             }
             if ($value instanceof Expression) {
-                $this->buffer->sql .= $value->getSql() . ', ';
+                $this->buffer->sql .= $value->getSql();
                 $this->buffer->bindAll($value->getParameters());
                 continue;
             }
             if ($value instanceof QueryBuilder && $value->isSubQuery()) {
-                $this->buffer->sql .= $this->conditions->pair('', $value) . ', ';
+                // 把子查询渲染器生成的尾部空格留给下一项分隔符。
+                $this->buffer->sql .= substr($this->conditions->pair('', $value), 0, -1);
+                $separator = ' , ';
                 continue;
             }
             if (!is_array($value)) {
                 $this->buffer->bind($value);
-                $this->buffer->sql .= '?, ';
+                $this->buffer->sql .= '?';
                 continue;
             }
             $key = key($value);
             $val = $value[$key];
             switch ($key) {
                 case '[I]':
-                    $this->buffer->sql .= $columnReference . $val . ', ';
+                    $this->buffer->sql .= $columnReference . $val;
                     break;
                 case '[F]':
-                    $this->buffer->sql .= $val[0] . ', ';
-                    if (!empty($val[1])) { $this->buffer->bindAll($val[1]); }
+                    $this->buffer->sql .= $val[0];
+                    $parameters = $val[1] ?? null;
+                    if ($parameters !== null) {
+                        $this->buffer->bindAll($parameters);
+                    }
                     break;
                 case '[N]':
-                    $this->buffer->sql .= '!' . ($val == null ? $columnReference : $val) . ', ';
+                    $this->buffer->sql .= '!' . ($val ?? $columnReference);
                     break;
                 default:
                     throw new Exception("Wrong operation or value for column {$column} in table {$this->buffer->tableName}");
             }
         }
-        $this->buffer->sql = rtrim($this->buffer->sql, ', ');
     }
 
     public function appendDuplicate(mixed $tableData, mixed $updateColumns): void

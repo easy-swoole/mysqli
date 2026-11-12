@@ -31,10 +31,13 @@ final class ExpressionFactory
         return array("[I]" => " - " . $num);
     }
 
-    /** @return array{'[N]': string} */
+    /** @return array{'[N]': ?string} */
     public static function not(mixed $col = null): array
     {
-        return array("[N]" => (string)$col);
+        if ($col !== null && !is_string($col)) {
+            throw new \TypeError('Negated column must be a string or null');
+        }
+        return ['[N]' => $col];
     }
 
     /** @return array{'[F]': array{0: mixed, 1: mixed}} */

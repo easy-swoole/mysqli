@@ -48,13 +48,7 @@ final class TableReference
             return ['sql' => $sql, 'name' => $name, 'target' => self::alias($suffix, $identifier) ?? $quoted];
         }
 
-        // 保留不能作为结构化表名解析的可信 SQL 片段。
-        if (!str_contains($tableName, '.')) {
-            $tableName = $prefix . $tableName;
-        }
-        $sql = !$quoteBare || str_contains($tableName, '`') || str_contains($tableName, ' ')
-            ? $tableName : '`' . str_replace('.', '`.`', $tableName) . '`';
-        return ['sql' => $sql, 'name' => $tableName, 'target' => null];
+        return ['sql' => $tableName, 'name' => $tableName, 'target' => null];
     }
 
     private static function alias(string $suffix, string $identifier): ?string

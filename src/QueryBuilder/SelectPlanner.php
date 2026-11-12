@@ -84,11 +84,10 @@ final class SelectPlanner
     /**
      * 转换写时复制的状态副本；公开入口仍克隆自身并调用副本的 get()。
      * @param State $state
-     * @return array{state: State, quotedAlias: string}
+     * @return State
      */
-    public static function countInput(array $state, string $alias): array
+    public static function countSource(array $state): array
     {
-        $quotedAlias = TableReference::identifier($alias);
         $state['ordering'] = [];
         $state['limit'] = null;
         $state['forUpdate'] = false;
@@ -114,10 +113,10 @@ final class SelectPlanner
                 $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
             }
         }
-        return ['state' => $state, 'quotedAlias' => $quotedAlias];
+        return $state;
     }
 
-    /** 别名来自 countInput()；参数保持已构建来源查询中的 SQL 顺序。 */
+    /** 参数保持已构建来源查询中的 SQL 顺序。 */
     public static function countSql(string $sourceSql, string $quotedAlias): string
     {
         return 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($sourceSql)

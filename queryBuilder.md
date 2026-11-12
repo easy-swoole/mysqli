@@ -462,10 +462,10 @@ $builder->insertAll('users', [
 ], ['field' => ['id', 'name']]);
 ```
 
-- 数据必须是非空的关联行数组，每行也非空。`fields()` 和 `$option['field']` 都能限制列，两者都指定时只保留交集。空白名单没有可写列。
+- 数据必须是非空的关联行数组，每行也非空。`$option` 为数组，只接受 `field` 和 `replace`。`field` 接受列名字符串组成的数组，与 `fields()` 同时指定时只保留交集。空白名单没有可写列。
 - 各行可以有不同的键顺序，绑定时统一按第一行的列顺序排列；缺列、多列或过滤后为空会抛出 `InvalidArgumentException`，不会自动补 NULL。
 - 显式 `null` 是实际待写入值，与缺少字段不同；是否允许该值由数据库列约束决定。字段名必须是非空字符串且不含 NUL，反引号会被转义。
-- 默认生成 INSERT。`$option['replace']` 为布尔值 `true` 时生成 REPLACE。需要重复键更新时，配合 `onDuplicate()` 或使用 `upsert()`。
+- `replace` 接受布尔值，省略或传 `false` 生成 INSERT，传 `true` 生成 REPLACE。需要重复键更新时，配合 `onDuplicate()` 或使用 `upsert()`。
 
 ### `upsert($tableName, array $rows, array $updateColumns)` / `onDuplicate($updateColumns)`
 
@@ -528,7 +528,8 @@ $builder->where('u.id', 1)->update('users u', [
 ```
 
 - UPDATE 字段支持 `字段`、`别名.字段`、`数据库.表.字段` 及正确引用的各段，已加反引号的字段不会被再次引用。名称本身包含点时用单个引用名，例如 `` `odd.name` ``。
-- `inc()` / `dec()` / 无参数 `not()` 引用自身字段时采用相同引用规则；值仍单独绑定。字段名和写入范围由调用方确定。
+- 使用普通查询构造器构建 UPDATE 或 DELETE。在 `QueryBuilder::subQuery()` 创建的构造器上调用 `update()` 或 `delete()` 会抛出 `LogicException`。
+- `inc()`、`dec()` 和省略参数或传入 `null` 的 `not()` 引用当前字段。为 `not()` 指定其他字段时传入字符串。`func($sql, $bindParams)` 的绑定值使用数组，省略参数或传入 `null` 表示没有绑定值。
 
 ### `fromSub($subquery, $alias)` / `getFromSub($subquery, $alias, $numRows = null, $columns = null)`
 
@@ -605,7 +606,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 // SQL：SELECT ? AS value；参数：[99]
 ```
 
-- 设置整条可信 SQL 和位置参数，并清除待构建设置。`$param` 为数组，按传入顺序绑定，默认空数组。
+- `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。多语句和 CALL 限制同样适用。
 
 
@@ -795,6 +796,7 @@ $builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orde
 // ORDER BY id DESC LIMIT 10
 ```
 
+- `$isUnionAll` 接受布尔值，默认 `false` 生成 UNION，传 `true` 生成 UNION ALL。
 - 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立 Builder 完成该分支的 `get()`，再传给 `union()`。
 - 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
 - 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
@@ -956,7 +958,7 @@ $builder->selectForUpdate(true, LockWaitPolicy::SkipLocked)->get('orders');
 $builder->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('orders');
 ```
 
-- `Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。`$isLock` 默认仍为 `true`，`$option` 默认仍为 `null`，仍返回构造器（现显式声明 `QueryBuilder`）。
+- `selectForUpdate()` 和 `lockInShareMode()` 的 `$isLock` 接受布尔值，默认 `true`。`Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。
 - 显式枚举 `Default` 会清除已设置的等待策略；兼容旧调用，省略 `$option`、传 `null` 或字符串 `''` 不覆盖已有策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
 - 已知策略字符串继续接受，并按大小写无关及去除首尾空白的结果映射，例如 `' nowait '` 输出 NOWAIT。未知字符串尾部按旧接口原样保留，例如已有的 `OF ...` 片段；只能来自可信代码，是否能执行由目标服务端决定，不代表支持了新的数据库方言。
 - 方法仅构建 SQL，不开启事务或立即申请锁；在同一客户端连接的业务事务中执行。SELECT 锁标记和等待策略在构建完成或 `reset()` 后清除。
@@ -1122,7 +1124,7 @@ try {
 
 ## 内部实现与兼容性
 
-公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，最近成功结果独立保存在只读 `CompiledQuery` 中；克隆和重置不共享可变状态对象。SELECT 头部、COUNT 和聚合由无状态 `SelectPlanner` 规划，SQL 编译委托给 `src/QueryBuilder/` 内部协作类。
+公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。SELECT 语句头、COUNT 来源和聚合由 `SelectPlanner` 规划。写入语句头和子句顺序由 `QueryCompiler` 处理，批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
 条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
-现有方法名、参数名、顺序、默认值及链式行为继续保留；本轮为属性、参数和返回值补齐原生类型声明，相关结构参数沿用枚举与字符串联合输入，数据库值及灵活的旧接口输入使用 `mixed`。普通链式返回 `QueryBuilder`，`update()` / `delete()` 保留子查询返回 `null` 的行为而声明 `?QueryBuilder`，构建事务 SQL 的三个方法返回 `void`。子查询读取时机和 UNION 快照规则保留，新增 FROM 子查询同样保存调用时快照。字段引用、自定义排序值、字段提取和失败构建的状态处理按各方法说明修正，`reset()` 保留最近成功结果，`raw()` 替换整组参数。子类重写新增类型的方法时须同步兼容的返回类型（如 `QueryBuilder` 或协变的 `static`），参数不能缩窄父类允许的输入；COUNT/聚合保留子类克隆和公开方法分派，工厂仍返回子类实例。
+普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。子类重写方法时须声明兼容的返回类型，例如 `QueryBuilder` 或协变的 `static`，并接受父类支持的参数。COUNT 和聚合使用子类克隆及公开方法，工厂返回子类实例。
 内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。

@@ -515,9 +515,15 @@ final class Connection
     private function parseOk(string $packet): void
     {
         $offset = 1;
-        $this->affected_rows = Codec::lenencInt($packet, $offset) ?? 0;
-        $this->insert_id = Codec::lenencInt($packet, $offset) ?? 0;
-        $this->state->applyServerStatus(Codec::int2($packet, $offset));
+        $affectedRows = Codec::lenencInt($packet, $offset);
+        $insertId = Codec::lenencInt($packet, $offset);
+        if ($affectedRows === null || $insertId === null) {
+            throw new ProtocolException('Malformed MySQL OK packet metadata');
+        }
+        $status = Codec::int2($packet, $offset);
+        $this->affected_rows = $affectedRows;
+        $this->insert_id = $insertId;
+        $this->state->applyServerStatus($status);
     }
 
     /**

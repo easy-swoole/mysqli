@@ -142,7 +142,7 @@ final class QueryBuilderUpsertTest extends TestCase
     public function testBatchReplaceRequiresTrue(): void
     {
         $builder = new QueryBuilder();
-        foreach ([[], ['replace' => false], ['replace' => 1]] as $options) {
+        foreach ([[], ['replace' => false]] as $options) {
             $builder->insertAll('users', [['id' => 1]], $options);
             self::assertSame('INSERT  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
         }
@@ -150,6 +150,29 @@ final class QueryBuilderUpsertTest extends TestCase
         $builder->insertAll('users', [['id' => 1]], ['replace' => true]);
         self::assertSame('REPLACE  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
         self::assertSame([1], $builder->getLastBindParams());
+    }
+
+    public function testBatchInsertRejectsInvalidOptions(): void
+    {
+        $builder = (new QueryBuilder())->raw('SELECT ?', [9]);
+        $cases = [
+            [false, \TypeError::class],
+            [['filed' => ['id']], \InvalidArgumentException::class],
+            [['field' => null], \TypeError::class],
+            [['field' => [1]], \TypeError::class],
+            [['replace' => 1], \TypeError::class],
+            [['replace' => null], \TypeError::class],
+        ];
+        foreach ($cases as [$options, $expected]) {
+            try {
+                $builder->insertAll('users', [['id' => 1]], $options);
+                self::fail('Expected invalid batch insert options to fail');
+            } catch (\TypeError|\InvalidArgumentException $error) {
+                self::assertInstanceOf($expected, $error);
+                self::assertSame('SELECT ?', $builder->getLastPrepareQuery());
+                self::assertSame([9], $builder->getLastBindParams());
+            }
+        }
     }
 
     public function testWriteWhitelistsApplyToSingleRowsAndBatches(): void

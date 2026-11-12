@@ -77,32 +77,33 @@ final class SelectPlannerTest extends TestCase
             'forUpdate' => true, 'lockInShareMode' => true, 'selectLockOption' => 'NOWAIT',
             'queryOptions' => ['DISTINCT', 'SQL_CALC_FOUND_ROWS'], 'whereConditions' => [['', 'tenantId', '=', 7]]]);
         $before = $state;
-        $plan = SelectPlanner::countInput($state, 'total`count');
+        $plan = SelectPlanner::countSource($state);
         self::assertSame($before, $state);
-        self::assertSame('`total``count`', $plan['quotedAlias']);
-        self::assertSame([$projection], $plan['state']['fields']);
-        self::assertSame([$branch], $plan['state']['unionBranches']);
-        self::assertSame([['', 'tenantId', '=', 7]], $plan['state']['whereConditions']);
-        self::assertSame([], $plan['state']['ordering']);
-        self::assertNull($plan['state']['limit']);
-        self::assertFalse($plan['state']['forUpdate']);
-        self::assertFalse($plan['state']['lockInShareMode']);
-        self::assertSame('', $plan['state']['selectLockOption']);
-        self::assertSame(['DISTINCT'], $plan['state']['queryOptions']);
-        self::assertSame('app_', $plan['state']['prefix']);
+        self::assertStringStartsWith('SELECT COUNT(*) AS `total``count` FROM ',
+            (new QueryBuilder())->count('orders', 'total`count')->getLastPrepareQuery());
+        self::assertSame([$projection], $plan['fields']);
+        self::assertSame([$branch], $plan['unionBranches']);
+        self::assertSame([['', 'tenantId', '=', 7]], $plan['whereConditions']);
+        self::assertSame([], $plan['ordering']);
+        self::assertNull($plan['limit']);
+        self::assertFalse($plan['forUpdate']);
+        self::assertFalse($plan['lockInShareMode']);
+        self::assertSame('', $plan['selectLockOption']);
+        self::assertSame(['DISTINCT'], $plan['queryOptions']);
+        self::assertSame('app_', $plan['prefix']);
     }
 
     public function testCountPlanningPreservesPositionalGroupingAndAssignsNamesToCompoundGroups(): void
     {
-        $ordinary = SelectPlanner::countInput($this->state(), 'aggregate')['state'];
+        $ordinary = SelectPlanner::countSource($this->state());
         self::assertSame('1 AS `__mysqli_row`', $ordinary['fields'][0]->getSql());
-        $grouped = SelectPlanner::countInput($this->state(['groups' => ["COALESCE(status, 'x,y'), tenantId"]]), 'aggregate')['state'];
+        $grouped = SelectPlanner::countSource($this->state(['groups' => ["COALESCE(status, 'x,y'), tenantId"]]));
         self::assertSame(["COALESCE(status, 'x,y') AS `__mysqli_group0`", ' tenantId AS `__mysqli_group1`'],
             array_map(static fn(Expression $field): string => $field->getSql(), $grouped['fields']));
         foreach ([null, ['*']] as $fields) {
-            $ordinal = SelectPlanner::countInput($this->state(['fields' => $fields, 'groups' => ['status, 1']]), 'aggregate')['state'];
+            $ordinal = SelectPlanner::countSource($this->state(['fields' => $fields, 'groups' => ['status, 1']]));
             self::assertSame($fields, $ordinal['fields']);
-            $distinct = SelectPlanner::countInput($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]), 'aggregate')['state'];
+            $distinct = SelectPlanner::countSource($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]));
             self::assertSame($fields, $distinct['fields']);
         }
         self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT ? AS id) AS `__mysqli_count`',

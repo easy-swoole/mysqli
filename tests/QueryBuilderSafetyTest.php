@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Tests;
 
-use EasySwoole\Mysqli\{ConditionValue, QueryBuilder};
+use EasySwoole\Mysqli\{ConditionValue, Expression, QueryBuilder};
 use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderSafetyTest extends TestCase
@@ -62,12 +62,18 @@ final class QueryBuilderSafetyTest extends TestCase
     public function testInvalidBuilderArgumentsAreNotSilentlyIgnored(): void
     {
         $cases = [
+            [static fn(QueryBuilder $q) => $q->raw(['SELECT ?', 'SELECT ?'], [1, 2]), \TypeError::class],
             [static fn(QueryBuilder $q) => $q->raw('SELECT ?', 7), \TypeError::class],
             [static fn(QueryBuilder $q) => $q->getColumn('users', ['id']), \TypeError::class],
             [static fn(QueryBuilder $q) => $q->onDuplicate(false), \TypeError::class],
             [static fn(QueryBuilder $q) => $q->union(false), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->union('SELECT 1', 'false'), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->selectForUpdate('false'), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->lockInShareMode('false'), \TypeError::class],
             [static fn(QueryBuilder $q) => $q->union(new QueryBuilder()), \InvalidArgumentException::class],
             [static fn(QueryBuilder $q) => $q->insert('users', ['id' => 1]), \LogicException::class],
+            [static fn(QueryBuilder $q) => $q->update('users', ['id' => 1]), \LogicException::class],
+            [static fn(QueryBuilder $q) => $q->delete('users'), \LogicException::class],
         ];
         foreach ($cases as [$build, $expected]) {
             $builder = QueryBuilder::subQuery()->raw('SELECT ? AS id', [9]);
@@ -78,6 +84,48 @@ final class QueryBuilderSafetyTest extends TestCase
                 self::assertInstanceOf($expected, $error);
                 self::assertSame('SELECT ? AS id', $builder->getLastPrepareQuery());
                 self::assertSame([9], $builder->getLastBindParams());
+            }
+        }
+    }
+
+    public function testDebugSqlRejectsUnsupportedParameterTypes(): void
+    {
+        $builder = (new QueryBuilder())->raw('SELECT ?', [new \stdClass()]);
+        $this->expectException(\TypeError::class);
+        $builder->getLastQuery();
+    }
+
+    public function testTablePrefixDoesNotTurnAnEmptyWriteTargetIntoATableName(): void
+    {
+        $builder = (new QueryBuilder())->setPrefix('app_')->where('id', 1)->update('', ['status' => 'open']);
+        self::assertSame('UPDATE  SET `status` = ? WHERE  `id` = ? ', $builder->getLastPrepareQuery());
+        self::assertSame(['open', 1], $builder->getLastBindParams());
+    }
+
+    public function testCompilersKeepCommasInsideCallerProvidedSqlFragments(): void
+    {
+        $builder = (new QueryBuilder())->groupBy('id,')->get('users', null, 'id');
+        self::assertStringEndsWith('GROUP BY id, ', $builder->getLastPrepareQuery());
+
+        $builder->orderByRaw('id,')->get('users', null, 'id');
+        self::assertStringEndsWith('ORDER BY id, ', $builder->getLastPrepareQuery());
+
+        $builder->where('id', 1)->update('users', ['score' => new Expression('?,', [5])]);
+        self::assertSame('UPDATE `users` SET `score` = ?, WHERE  `id` = ? ', $builder->getLastPrepareQuery());
+        self::assertSame([5, 1], $builder->getLastBindParams());
+    }
+
+    public function testWrongExpressionArgumentTypesAreNotTreatedAsOmitted(): void
+    {
+        foreach ([
+            static fn() => QueryBuilder::not(false),
+            static fn() => (new QueryBuilder())->update('users', ['score' => QueryBuilder::func('ABS(-1)', false)]),
+        ] as $build) {
+            try {
+                $build();
+                self::fail('Expected invalid expression arguments to fail');
+            } catch (\TypeError $error) {
+                self::assertNotEmpty($error->getMessage());
             }
         }
     }

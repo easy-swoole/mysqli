@@ -8,7 +8,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 final class CompiledQuery
 {
     public function __construct(
-        public readonly mixed $sql,
+        public readonly string $sql,
         public readonly array $parameters,
         public readonly array $options,
         public readonly ?int $transactionOp,

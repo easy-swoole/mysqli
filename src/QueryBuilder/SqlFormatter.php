@@ -1,12 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace EasySwoole\Mysqli\QueryBuilder;
 
 /** @internal 生成调试展示 SQL，不修改可执行 SQL 或参数。 */
 final class SqlFormatter
 {
-    /** @return string|array<array-key, string>|null 保留 preg_replace_callback 输入与结果的类型形状。 */
-    public static function render(mixed $str, mixed $vals): string|array|null
+    public static function render(string $str, array $vals): ?string
     {
         $i = 0;
         // 先匹配已引用的字面量及注释，再匹配实际占位符。
@@ -27,7 +28,7 @@ REGEX;
             if (is_int($val) || is_float($val)) {
                 return (string)$val;
             }
-            return "'" . addslashes(is_object($val) ? '[object]' : $val) . "'";
+            return "'" . addslashes($val) . "'";
         }, $str);
     }
 }

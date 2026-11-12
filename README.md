@@ -13,6 +13,8 @@
 
 ## 使用示例
 
+`new Config($options)` 和 `Config::restore($options)` 接受配置属性名，未知键会抛出 `InvalidArgumentException`。传入 FastDb 的完整连接池配置时，连接池专用字段仍由 FastDb 和连接池使用。
+
 `Client::connect(?float $timeout = null)` 始终使用构造函数传入的 `Config` 建立连接，不接受配置数组。可选参数仅指定本次建连的总超时（秒），不会修改配置；省略或传入 `null` 时使用 `maxConnectTime`。显式超时仍受 `maxConnectTime` 上限约束，以先到期的截止时间为准。查询方法会在需要时自动建连，也可以主动调用 `connect()`。
 
 数据库操作需要在 Swoole 协程中执行：
@@ -618,10 +620,10 @@ $builder->insertAll('users', [
 ], ['field' => ['id', 'name']]);
 ```
 
-- 数据必须是非空的关联行数组，每行也非空。可用 `fields()` 或 `$option['field']` 指定允许写入的列，两者都指定时只保留交集。空白名单没有可写列。
+- 数据必须是非空的关联行数组，每行也非空。`$option` 为数组，只接受 `field` 和 `replace`。`field` 接受列名字符串组成的数组，与 `fields()` 同时指定时只保留交集。空白名单没有可写列。
 - 各行可以有不同的键顺序，绑定时统一按第一行的列顺序排列；缺列、多列或过滤后为空会抛出 `InvalidArgumentException`，不会自动补 NULL。
 - 显式 `null` 是实际待写入值，与缺少字段不同；是否允许该值由数据库列约束决定。字段名必须是非空字符串且不含 NUL，反引号会被转义。
-- 默认生成 INSERT。将 `$option['replace']` 设置为布尔值 `true` 可生成 REPLACE。需要按重复键更新指定字段时，配合 `onDuplicate()` 或使用 `upsert()`。
+- `replace` 接受布尔值，省略或传 `false` 生成 INSERT，传 `true` 生成 REPLACE。需要重复键更新时，配合 `onDuplicate()` 或使用 `upsert()`。
 
 ### `upsert($tableName, array $rows, array $updateColumns)` / `onDuplicate($updateColumns)`
 
@@ -722,7 +724,8 @@ $builder->where('u.id', 1)->update('users u', [
 ```
 
 - UPDATE 字段支持 `字段`、`别名.字段`、`数据库.表.字段` 及正确引用的各段，已加反引号的字段不会被再次引用。名称本身包含点时用单个引用名，例如 `` `odd.name` ``。
-- `inc()` / `dec()` / 无参数 `not()` 引用自身字段时采用相同引用规则；值仍单独绑定。字段名和写入范围由调用方确定。
+- 使用普通查询构造器构建 UPDATE 或 DELETE。在 `QueryBuilder::subQuery()` 创建的构造器上调用 `update()` 或 `delete()` 会抛出 `LogicException`。
+- `inc()`、`dec()` 和省略参数或传入 `null` 的 `not()` 引用当前字段。为 `not()` 指定其他字段时传入字符串。`func($sql, $bindParams)` 的绑定值使用数组，省略参数或传入 `null` 表示没有绑定值。
 - `fields()` 可限制赋值列。UPDATE 至少需要一个可写字段，过滤后无列会抛出 `InvalidArgumentException`。
 
 ### `fromSub($subquery, $alias)` / `getFromSub($subquery, $alias, $numRows = null, $columns = null)`
@@ -799,7 +802,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 // SQL：SELECT ? AS value；参数：[99]
 ```
 
-- 设置整条可信 SQL 和位置参数，并清除待构建设置。`$param` 为数组，按传入顺序绑定，默认空数组。
+- `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看；执行使用预处理 SQL 和绑定参数。多语句和 CALL 限制同样适用。
 
 
@@ -1063,6 +1066,7 @@ $builder->where('status', 'open')->union($archive)->orderByDesc('id')->get('orde
 // ORDER BY id DESC LIMIT 10
 ```
 
+- `$isUnionAll` 接受布尔值，默认 `false` 生成 UNION，传 `true` 生成 UNION ALL。
 - 主构造器的排序分页作用于 UNION 整体结果；要限制某个分支，先在独立构造器完成该分支的 `get()`，再传给 `union()`。
 - 有局部排序、分页、锁选项或嵌套 UNION 的分支自动加括号；原始 SQL 分支也加括号，以保留分支范围。
 - 各分支返回列数必须一致，整体排序使用结果列名或统一列别名，不使用分支表名限定字段。
@@ -1133,7 +1137,7 @@ $builder->selectForUpdate(true, LockWaitPolicy::SkipLocked)->get('orders');
 $builder->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('orders');
 ```
 
-- `Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。`$isLock` 默认仍为 `true`，`$option` 默认仍为 `null`，仍返回构造器（现显式声明 `QueryBuilder`）。
+- `selectForUpdate()` 和 `lockInShareMode()` 的 `$isLock` 接受布尔值，默认 `true`。`Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。
 - 显式枚举 `Default` 会清除已设置的等待策略；兼容旧调用，省略 `$option`、传 `null` 或字符串 `''` 不覆盖已有策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
 - 已知策略字符串继续接受，并按大小写无关及去除首尾空白的结果映射，例如 `' nowait '` 输出 NOWAIT。未知字符串尾部按旧接口原样保留，例如已有的 `OF ...` 片段；只能来自可信代码，是否能执行由目标服务端决定，不代表支持了新的数据库方言。
 - 方法仅构建 SQL，不开启事务或立即申请锁；在同一客户端连接的业务事务中执行。SELECT 锁标记和等待策略在构建完成或 `reset()` 后清除。
@@ -1252,15 +1256,15 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 
 | 类 | 职责 |
 | --- | --- |
-| `QueryBuilder` | 收集链式调用状态、维护最近构建结果、重置状态和兼容入口 |
+| `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
-| `SelectPlanner` / `SelectPlan` | 无状态规划 SELECT 来源、COUNT、聚合，返回只读 SELECT 头部 |
+| `SelectPlanner` / `SelectPlan` | 规划 SELECT 语句头、COUNT 来源状态和聚合表达式 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
-| `QueryCompiler` | 按语句类型校验修饰符并编译子句，处理 SELECT 行锁和事务标记 |
+| `QueryCompiler` | 构建写入语句头，按语句类型和绑定顺序协调子句编译，生成 SELECT 行锁及事务标记 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
 | `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
-| `WriteCompiler` | 写入字段过滤、批量列集合校验和有序绑定、INSERT/REPLACE 值、UPDATE 赋值及重复键更新 |
+| `WriteCompiler` | 批量选项、写入字段过滤、列对齐和值绑定，以及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
 | `SqlList` | 在引号、块注释和嵌套表达式之外解析选择列表 |
@@ -1269,12 +1273,12 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `SqlFormatter` | 仅生成调试展示 SQL，不参与数据库执行 |
 
 各编译器仅依赖本次 SQL 缓冲和所需输入，不回调整个 Builder 读取私有状态，也不负责连接数据库。
-每次编译使用独立的 SQL 缓冲。成功构建后即可按需读取调试 SQL，可执行结果在 `reset()` 时发布。
+每次编译使用独立的 SQL 缓冲。构建完成后统一记录调试结果，再调用 `reset()` 发布可执行结果并清除待构建状态。
 UNION 保存已构建分支快照，IN/EXISTS 在外层构建时读取子查询；这些时序和 `reset()` 保留前缀等既有规则不变。
 `QueryBuilderPublicApiTest` 记录公开接口快照；API 契约测试保护方法名、命名参数和默认值，类型完整性测试保护原生类型声明。有意增加或调整公开 API 时，应审查并同步更新相应基线。
 
 ### 原生类型与子类重写
 
-- 普通链式方法声明返回 `QueryBuilder`；`update()` / `delete()` 保留对子查询返回 `null` 的既有行为，因此为 `?QueryBuilder`。`startTransaction()` / `commit()` / `rollback()` 只构建 SQL，返回 `void`。
+- 普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。`startTransaction()`、`commit()` 和 `rollback()` 只构建 SQL，返回 `void`。
 - 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，COUNT、聚合仍经过子类方法。
 - 继承 Client 并重写 `rawQuery()` 时同步声明 `bool|array`；`query()` 原有返回类型不变。`Connection::set_charset()` 明确返回 `bool`。这轮类型声明会影响子类方法的 PHP 继承检查，旧的无返回类型重写需要同步适配。

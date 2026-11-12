@@ -39,22 +39,41 @@ final class ConfigTest extends TestCase
         self::assertSame(0.125, $config->getTimeout());
     }
 
-    public function testTimeoutsAreIndependentAndLegacyAliasIsIgnored(): void
+    public function testTimeoutsAreIndependent(): void
     {
-        $config = new Config(['timeout' => 0.25, 'maxConnectTim' => 0.5]);
+        $config = new Config(['timeout' => 0.25]);
         self::assertSame(0.25, $config->getTimeout());
         self::assertSame(1.0, $config->getMaxConnectTime());
-        self::assertArrayNotHasKey('maxConnectTim', $config->toArray());
 
         $config = new Config(['maxConnectTime' => 0.75]);
         self::assertSame(3.0, $config->getTimeout());
         self::assertSame(0.75, $config->getMaxConnectTime());
-        $config->restore(['timeout' => 0.125, 'maxConnectTim' => 0.5]);
+        $config->restore(['timeout' => 0.125]);
         self::assertSame(0.125, $config->getTimeout());
         self::assertSame(0.75, $config->getMaxConnectTime());
         $config->setMaxConnectTime(1.5);
         self::assertSame(0.125, $config->getTimeout());
         self::assertSame(1.5, $config->getMaxConnectTime());
+    }
+
+    public function testConstructorRejectsMisspelledTlsOption(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unknown mysqli config option: tlsMod');
+        new Config(['tlsMod' => 'verify_identity']);
+    }
+
+    public function testRestoreRejectsUnknownOptionsBeforeApplyingKnownOptions(): void
+    {
+        $config = new Config(['timeout' => 0.25, 'maxConnectTime' => 0.75]);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unknown mysqli config option: maxConnectTim');
+        try {
+            $config->restore(['timeout' => 0.125, 'maxConnectTim' => 0.5]);
+        } finally {
+            self::assertSame(0.25, $config->getTimeout());
+            self::assertSame(0.75, $config->getMaxConnectTime());
+        }
     }
 
     #[DataProvider('timeoutValues')]
@@ -103,6 +122,15 @@ final class ConfigTest extends TestCase
             'charset' => 'utf8mb4',
             'autoPing' => 5,
             'useMysqli' => false,
+            'name' => 'default',
+            'isForceRollback' => false,
+            'intervalCheckTime' => 5000,
+            'maxObjectNum' => 16,
+            'intervalCheckBatchSize' => 8,
+            'minObjectNum' => 8,
+            'getObjectTimeout' => 3.0,
+            'waitLoadAverageTime' => 0.001,
+            'extraConf' => null,
             'compress' => true,
         ]);
 
@@ -112,6 +140,7 @@ final class ConfigTest extends TestCase
         self::assertSame(1.0, $config->getMaxConnectTime());
         self::assertTrue($config->isCompress());
         self::assertTrue($config->toArray()['compress']);
+        self::assertArrayNotHasKey('maxObjectNum', $config->toArray());
     }
 
     public function testDefaultValues(): void

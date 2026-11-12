@@ -76,11 +76,7 @@ final class SelectCompiler
         if (empty($groups)) {
             return;
         }
-        $this->buffer->sql .= " GROUP BY ";
-        foreach ($groups as $key => $value) {
-            $this->buffer->sql .= $value . ", ";
-        }
-        $this->buffer->sql = rtrim($this->buffer->sql, ', ') . " ";
+        $this->buffer->sql .= ' GROUP BY ' . implode(', ', $groups) . ' ';
     }
 
     /** @param array<array-key, UnionNode>|null $unions */
@@ -102,22 +98,24 @@ final class SelectCompiler
         if (empty($ordering)) {
             return;
         }
-        $this->buffer->sql .= " ORDER BY ";
+        $separator = ' ORDER BY ';
         foreach ($ordering as $order) {
+            $this->buffer->sql .= $separator;
+            $separator = ', ';
             $prop = $order['field'];
             $value = $order['direction'];
             if ($prop instanceof Expression) {
-                $this->buffer->sql .= $prop->getSql() . ($value !== '' ? ' ' . $value : '') . ', ';
+                $this->buffer->sql .= $prop->getSql() . ($value !== '' ? ' ' . $value : '');
                 $this->buffer->bindAll($prop->getParameters());
                 $this->buffer->bindAll($order['params']);
             } elseif (strtolower(str_replace(" ", "", $prop)) == 'rand()') {
-                $this->buffer->sql .= "rand(), ";
+                $this->buffer->sql .= 'rand()';
             } else {
-                $this->buffer->sql .= $prop . " " . $value . ", ";
+                $this->buffer->sql .= $prop . ' ' . $value;
                 $this->buffer->bindAll($order['params']);
             }
         }
-        $this->buffer->sql = rtrim($this->buffer->sql, ', ') . " ";
+        $this->buffer->sql .= ' ';
     }
 
     public function appendLimit(mixed $numRows): void

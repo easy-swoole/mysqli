@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
 use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Config;
-use EasySwoole\Mysqli\Exception\TimeoutException;
+use EasySwoole\Mysqli\Exception\{ProtocolException, TimeoutException};
 use PHPUnit\Framework\TestCase;
 use Swoole\Coroutine;
 use Swoole\Coroutine\Channel;
@@ -490,6 +490,31 @@ final class ProtocolTest extends TestCase
         self::assertSame('18446744073709551615', $client->mysqlClient()->affected_rows);
         $client->close();
         $this->assertServerCompleted($completed);
+    }
+
+    public function testOkPacketRejectsNullMetadataAndClosesConnection(): void
+    {
+        foreach (["\xfb\x01", "\x01\xfb"] as $metadata) {
+            [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($metadata): void {
+                $peer = $listener->accept(1.0);
+                self::acceptSession($peer);
+                self::receivePacket($peer);
+                self::sendPacket($peer, "\0" . $metadata . "\x02\0\0\0", 1);
+                $peer->close();
+            });
+            try {
+                $client->rawQuery('DO 1');
+                self::fail('Expected malformed metadata to be rejected');
+            } catch (ProtocolException $error) {
+                self::assertStringContainsString('Malformed MySQL OK packet metadata', $error->getMessage());
+                self::assertNull($client->getLastAffectRows());
+                self::assertNull($client->getLastInsertId());
+                self::assertFalse($client->mysqlClient()->isConnected());
+            } finally {
+                $client->close();
+            }
+            $this->assertServerCompleted($completed);
+        }
     }
 
     public function testTransactionStatusFromOkAndResultEofPreventsReconnectAfterTimeout(): void

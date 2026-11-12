@@ -58,6 +58,8 @@ class QueryBuilder
         }
     }
 
+    // 投影、索引与分页
+
     /** 设置查询的返回数量或偏移及数量。 */
     public function limit(int $one, int|null $two = null): QueryBuilder
     {
@@ -120,6 +122,12 @@ class QueryBuilder
         return $this;
     }
 
+    /** 获取显式配置的字段，未配置时返回 null。 */
+    public function getField(): ?array
+    {
+        return $this->pending['fields'];
+    }
+
     /** 添加带绑定参数的 SELECT 表达式；首次调用替换隐式默认字段 *。 */
     public function selectRaw(string $sql, array $parameters = []): QueryBuilder
     {
@@ -128,58 +136,11 @@ class QueryBuilder
         return $this;
     }
 
-    public static function rawExpression(string $sql, array $parameters = []): Expression
-    {
-        return new Expression($sql, $parameters);
-    }
+    // WHERE 条件
 
     public function whereRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addRawCondition($this->pending['whereConditions'], $sql, $parameters, $cond);
-    }
-
-    public function havingRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
-    {
-        return $this->addRawCondition($this->pending['havingConditions'], $sql, $parameters, $cond);
-    }
-
-    private function addRawCondition(array &$conditions, string $sql, array $parameters, ConditionConjunction|string $cond): QueryBuilder
-    {
-        $concat = $this->conditionConjunction($cond);
-        $expression = new Expression($sql, $parameters);
-        $conditions[] = ['expression' => $expression, 'concat' => $conditions === [] ? '' : $concat];
-        return $this;
-    }
-
-    private function conditionConjunction(ConditionConjunction|string $cond, bool $strict = true): string
-    {
-        if ($cond instanceof ConditionConjunction) { return $cond->value; }
-        // 旧 WHERE/HAVING/ON 字符串保留原有拼写及可扩展的 SQL 语法。
-        if (!$strict) { return $cond; }
-        $conjunction = ConditionConjunction::tryFrom(strtoupper(trim($cond)));
-        if ($conjunction === null) {
-            throw new \InvalidArgumentException('Condition conjunction must be AND or OR');
-        }
-        return $conjunction->value;
-    }
-
-    private function comparisonOperator(ComparisonOperator|string $operator, bool $strict = false): string
-    {
-        if ($operator instanceof ComparisonOperator) { return $operator->value; }
-        // 普通条件也接受 LIKE、IN、BETWEEN 等已有 SQL 运算符。
-        if (!$strict) { return $operator; }
-        $comparison = ComparisonOperator::tryFrom(strtoupper(trim($operator)));
-        if ($comparison === null) {
-            throw new \InvalidArgumentException('Unsupported column comparison operator');
-        }
-        return $comparison->value;
-    }
-
-    private function lockWaitOption(LockWaitPolicy|string $option): string
-    {
-        if ($option instanceof LockWaitPolicy) { return $option->value; }
-        // 保留旧 SQL 尾部片段（例如 OF table_name）；仅规范化已知策略。
-        return LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option;
     }
 
     public function whereColumn(string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
@@ -190,30 +151,6 @@ class QueryBuilder
     public function orWhereColumn(string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
     {
         return $this->whereColumn($first, $second, $operator, 'OR');
-    }
-
-    public function havingColumn(string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
-    {
-        return $this->addColumnCondition($this->pending['havingConditions'], $first, $second, $operator, $cond);
-    }
-
-    public function orHavingColumn(string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
-    {
-        return $this->havingColumn($first, $second, $operator, 'OR');
-    }
-
-    private function addColumnCondition(array &$conditions, string $first, string $second, ComparisonOperator|string $operator, ConditionConjunction|string $cond, bool $on = false): QueryBuilder
-    {
-        $operator = $this->comparisonOperator($operator, true);
-        $concat = $this->conditionConjunction($cond);
-        $conditions[] = ['column' => [$first, $operator, $second], 'concat' => !$on && $conditions === [] ? '' : $concat];
-        return $this;
-    }
-
-    /** 获取显式配置的字段，未配置时返回 null。 */
-    public function getField(): ?array
-    {
-        return $this->pending['fields'];
     }
 
     /** WHERE 条件。 */
@@ -280,32 +217,12 @@ class QueryBuilder
 
     public function whereExists(QueryBuilder $subquery, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $this->validateConditionSubquery($subquery);
         return $this->addExistsCondition($subquery, 'EXISTS', $cond);
     }
 
     public function whereNotExists(QueryBuilder $subquery, ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $this->validateConditionSubquery($subquery);
         return $this->addExistsCondition($subquery, 'NOT EXISTS', $cond);
-    }
-
-    private function addExistsCondition(QueryBuilder $subquery, string $operator, ConditionConjunction|string $cond): QueryBuilder
-    {
-        $alias = $subquery->getSubQuery()['alias'];
-        if ($alias !== null && $alias !== '') {
-            throw new \InvalidArgumentException('EXISTS subqueries must not have an alias');
-        }
-        $cond = $this->conditionConjunction($cond, false);
-        $this->pending['whereConditions'][] = ['exists' => $subquery, 'operator' => $operator, 'concat' => $this->pending['whereConditions'] === [] ? '' : $cond];
-        return $this;
-    }
-
-    private function validateConditionSubquery(array|QueryBuilder $value): void
-    {
-        if ($value instanceof QueryBuilder && (!$value->isSubQuery() || $value->getLastPrepareQuery() === null)) {
-            throw new \InvalidArgumentException('Use a built QueryBuilder::subQuery() for condition subqueries');
-        }
     }
 
     /** 将全部已有 WHERE 条件作为一组，便于继续追加必须同时满足的约束。 */
@@ -328,50 +245,7 @@ class QueryBuilder
         return $this->addWhereGroup($callback, 'OR');
     }
 
-    private function addWhereGroup(callable $callback, string $concat): QueryBuilder
-    {
-        return $this->addConditionGroup($this->pending['whereConditions'], $callback, $concat, 'whereConditions', 'WHERE');
-    }
-
-    public function havingGroup(callable $callback): QueryBuilder
-    {
-        return $this->addConditionGroup($this->pending['havingConditions'], $callback, 'AND', 'havingConditions', 'HAVING');
-    }
-
-    public function orHavingGroup(callable $callback): QueryBuilder
-    {
-        return $this->addConditionGroup($this->pending['havingConditions'], $callback, 'OR', 'havingConditions', 'HAVING');
-    }
-
-    public function joinWhereGroup(string $table, callable $callback): QueryBuilder
-    {
-        $key = $table;
-        $conditions = $this->pending['joinConditions'][$key] ?? [];
-        $this->addConditionGroup($conditions, $callback, 'AND', 'whereConditions', 'ON', true);
-        $this->pending['joinConditions'][$key] = $conditions;
-        return $this;
-    }
-
-    public function joinOrWhereGroup(string $table, callable $callback): QueryBuilder
-    {
-        $key = $table;
-        $conditions = $this->pending['joinConditions'][$key] ?? [];
-        $this->addConditionGroup($conditions, $callback, 'OR', 'whereConditions', 'ON', true);
-        $this->pending['joinConditions'][$key] = $conditions;
-        return $this;
-    }
-
-    private function addConditionGroup(array &$conditions, callable $callback, string $concat, string $source, string $label, bool $on = false): QueryBuilder
-    {
-        $group = new static();
-        $group->setPrefix($this->prefix);
-        $callback($group);
-        if ($group->pending[$source] === []) {
-            throw new \InvalidArgumentException($label . ' groups must contain at least one condition');
-        }
-        $conditions[] = ['group' => $group->pending[$source], 'concat' => !$on && $conditions === [] ? '' : $concat];
-        return $this;
-    }
+    // 排序、分组与 HAVING 条件
 
     public function orderByRaw(string $sql, array $parameters = []): QueryBuilder
     {
@@ -435,6 +309,33 @@ class QueryBuilder
         return $this->having($havingProp, $havingValue, $operator, 'OR');
     }
 
+    public function havingRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addRawCondition($this->pending['havingConditions'], $sql, $parameters, $cond);
+    }
+
+    public function havingColumn(string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
+    {
+        return $this->addColumnCondition($this->pending['havingConditions'], $first, $second, $operator, $cond);
+    }
+
+    public function orHavingColumn(string $first, string $second, ComparisonOperator|string $operator = '='): QueryBuilder
+    {
+        return $this->havingColumn($first, $second, $operator, 'OR');
+    }
+
+    public function havingGroup(callable $callback): QueryBuilder
+    {
+        return $this->addConditionGroup($this->pending['havingConditions'], $callback, 'AND', 'havingConditions', 'HAVING');
+    }
+
+    public function orHavingGroup(callable $callback): QueryBuilder
+    {
+        return $this->addConditionGroup($this->pending['havingConditions'], $callback, 'OR', 'havingConditions', 'HAVING');
+    }
+
+    // JOIN 与 UNION
+
     /** JOIN 关联查询。 */
     public function join(mixed $joinTable, mixed $joinCondition, JoinType|string $joinType = ''): QueryBuilder
     {
@@ -470,10 +371,9 @@ class QueryBuilder
 
     public function joinOn(string $table, string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $key = $table;
-        $conditions = $this->pending['joinConditions'][$key] ?? [];
+        $conditions = $this->pending['joinConditions'][$table] ?? [];
         $this->addColumnCondition($conditions, $first, $second, $operator, $cond, true);
-        $this->pending['joinConditions'][$key] = $conditions;
+        $this->pending['joinConditions'][$table] = $conditions;
         return $this;
     }
 
@@ -482,9 +382,22 @@ class QueryBuilder
         return $this->joinOn($table, $first, $second, $operator, 'OR');
     }
 
+    public function joinWhereGroup(string $table, callable $callback): QueryBuilder
+    {
+        return $this->addJoinGroup($table, $callback, 'AND');
+    }
+
+    public function joinOrWhereGroup(string $table, callable $callback): QueryBuilder
+    {
+        return $this->addJoinGroup($table, $callback, 'OR');
+    }
+
     /** 构建UNION语句 */
     public function union(mixed $cond, mixed $isUnionAll = false): QueryBuilder
     {
+        if (!is_bool($isUnionAll)) {
+            throw new \TypeError('UNION ALL flag must be a boolean');
+        }
         if ($cond instanceof QueryBuilder) {
             $sql = $cond->getLastPrepareQuery();
             if ($sql === null) {
@@ -502,9 +415,14 @@ class QueryBuilder
         return $this;
     }
 
+    // 锁与查询选项
+
     /** InnoDB 共享行锁。 */
     public function lockInShareMode(mixed $isLock = true): QueryBuilder
     {
+        if (!is_bool($isLock)) {
+            throw new \TypeError('Shared lock flag must be a boolean');
+        }
         if ($isLock) {
             $this->setQueryOption(['LOCK IN SHARE MODE']);
         } else {
@@ -516,8 +434,11 @@ class QueryBuilder
     /** InnoDB 排他行锁（SELECT FOR UPDATE）。 */
     public function selectForUpdate(mixed $isLock = true, LockWaitPolicy|string|null $option = null): QueryBuilder
     {
+        if (!is_bool($isLock)) {
+            throw new \TypeError('FOR UPDATE flag must be a boolean');
+        }
         if ($isLock) {
-            $hasOption = $option instanceof LockWaitPolicy || (bool) $option;
+            $hasOption = $option !== null && $option !== '';
             $lockOption = $hasOption ? $this->lockWaitOption($option) : null;
             $this->setQueryOption(['FOR UPDATE']);
             if ($hasOption) {
@@ -573,17 +494,13 @@ class QueryBuilder
             }
             $references[] = TableReference::parse($name, $this->prefix) . ' ' . $this->tableLockMethod;
         }
-        $this->completeBuild('LOCK TABLES ' . implode(', ', $references), [], self::TS_OP_LOCK_TABLE);
-        $this->reset();
-        return $this;
+        return $this->completeBuild('LOCK TABLES ' . implode(', ', $references), [], self::TS_OP_LOCK_TABLE);
     }
 
     /** 释放表锁 */
     public function unlockTable(): QueryBuilder
     {
-        $this->completeBuild('UNLOCK TABLES', [], self::TS_OP_UNLOCK_TABLE);
-        $this->reset();
-        return $this;
+        return $this->completeBuild('UNLOCK TABLES', [], self::TS_OP_UNLOCK_TABLE);
     }
 
     /** 设置查询条件 */
@@ -605,10 +522,8 @@ class QueryBuilder
                 $this->pending['forUpdate'] = true;
             } elseif ($option == 'LOCK IN SHARE MODE') {
                 $this->pending['lockInShareMode'] = true;
-            } else {
-                if (!in_array($option,$this->pending['queryOptions'])){
-                    $this->pending['queryOptions'][] = $option;
-                }
+            } elseif (!in_array($option, $this->pending['queryOptions'], true)) {
+                $this->pending['queryOptions'][] = $option;
             }
         }
         return $this;
@@ -635,7 +550,7 @@ class QueryBuilder
         return $this;
     }
 
-    //---------- 查询方法 ---------- //
+    // SELECT 与聚合
 
     /** 保存带参数的 FROM 子查询快照；使用 get(null) 或 getFromSub() 完成查询。 */
     public function fromSub(QueryBuilder $subquery, string $alias): QueryBuilder
@@ -663,21 +578,18 @@ class QueryBuilder
         );
         $this->pending['tableName'] = $plan->tableName;
         $buffer = new SqlBuffer($plan->sql, $plan->parameters, $plan->tableName);
-        $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
-        $this->reset();
-        return $this;
+        return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
     }
 
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
     public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
     {
         // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
-        TableReference::identifier($alias);
+        $quotedAlias = TableReference::identifier($alias);
         $source = clone $this;
-        $plan = SelectPlanner::countInput($source->pending, $alias);
-        $source->pending = $plan['state'];
+        $source->pending = SelectPlanner::countSource($source->pending);
         $source->get($tableName);
-        $sql = SelectPlanner::countSql($source->getLastPrepareQuery(), $plan['quotedAlias']);
+        $sql = SelectPlanner::countSql($source->getLastPrepareQuery(), $quotedAlias);
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
         return $this->raw($sql, $source->getLastBindParams());
@@ -734,26 +646,19 @@ class QueryBuilder
         return $this->getColumn($tableName, $columns, 1);
     }
 
+    // 写入语句
+
     /** 插入数据 */
     public function insert(mixed $tableName, mixed $insertData): QueryBuilder
     {
-        $this->buildInsert($tableName, $insertData, 'INSERT');
-        $this->reset();
-        return $this;
+        return $this->compileWrite('INSERT', $tableName, $insertData);
     }
-    //多行插入为INSERT INTO ... VALUES (...) , (...)
+
     /** 构造使用多个 VALUES 分组的批量插入语句。 */
     public function insertAll(mixed $tableName, mixed $insertData, mixed $option = []): QueryBuilder
     {
-        $fields = $this->pending['fields'];
-        $allowFields = $option['field'] ?? null;
-        if ($fields !== null && $allowFields !== null) {
-            $allowFields = array_filter($allowFields, static fn($field) => in_array($field, $fields, true));
-        }
-        $operation = ($option['replace'] ?? false) === true ? 'REPLACE' : 'INSERT';
-        $this->buildInsert($tableName, $insertData, $operation, true, $allowFields);
-        $this->reset();
-        return $this;
+        $batch = WriteCompiler::batchOptions($option, $this->pending['fields']);
+        return $this->compileWrite($batch['statement'], $tableName, $insertData, batch: true, fields: $batch['fields']);
     }
 
     /** 依据表的主键或唯一键约束执行批量插入或更新。 */
@@ -774,9 +679,7 @@ class QueryBuilder
     /** REPLACE插入 */
     public function replace(mixed $tableName, mixed $insertData): QueryBuilder
     {
-        $this->buildInsert($tableName, $insertData, 'REPLACE');
-        $this->reset();
-        return $this;
+        return $this->compileWrite('REPLACE', $tableName, $insertData);
     }
 
     /** 设置插入时的重复键更新（onDuplicate）。 */
@@ -792,45 +695,16 @@ class QueryBuilder
     /** UPDATE 更新查询。 */
     public function update(mixed $tableName, mixed $tableData, mixed $numRows = null): ?QueryBuilder
     {
-        if ($this->isSubQuery) {
-            return null;
-        }
-
-        $this->readyToPublish = null;
-        $this->pending['tableName'] = $tableName;
-        $table = TableReference::parse($this->pending['tableName'], $this->prefix);
-        $modifiers = QueryCompiler::modifierSql('UPDATE', $this->pending['queryOptions']);
-        $buffer = new SqlBuffer(rtrim('UPDATE ' . $modifiers) . ' ' . $table, tableName: $this->pending['tableName']);
-        $this->compilePending($buffer, 'UPDATE', $numRows ?? $this->pending['limit'], $tableData);
-        $this->reset();
-        return $this;
+        return $this->compileWrite('UPDATE', $tableName, $tableData, $numRows);
     }
 
     /** DELETE 删除查询。 */
     public function delete(mixed $tableName, mixed $numRows = null): ?QueryBuilder
     {
-        if ($this->isSubQuery) {
-            return null;
-        }
-        $this->readyToPublish = null;
-        $reference = TableReference::resolve($tableName, $this->prefix);
-        $this->pending['tableName'] = $reference['name'];
-        $target = '';
-        if ($this->pending['joins'] !== []) {
-            if ($reference['target'] === null) {
-                throw new \InvalidArgumentException('DELETE with JOIN requires an identifiable target table');
-            }
-            $target = $reference['target'] . ' ';
-        }
-        $modifiers = QueryCompiler::modifierSql('DELETE', $this->pending['queryOptions']);
-        $sql = rtrim('DELETE ' . $modifiers) . ' ' . $target . 'FROM ' . $reference['sql'];
-        $buffer = new SqlBuffer($sql, tableName: $reference['name']);
-        $this->compilePending($buffer, 'DELETE', $numRows ?? $this->pending['limit']);
-        $this->reset();
-        return $this;
+        return $this->compileWrite('DELETE', $tableName, numRows: $numRows);
     }
 
-    //---------- 辅助方法 ---------- //
+    // 状态重置与表达式工厂
 
     /** 重置构造器 */
     public function reset(): QueryBuilder
@@ -841,6 +715,11 @@ class QueryBuilder
         }
         $this->pending = PendingQuery::DEFAULTS;
         return $this;
+    }
+
+    public static function rawExpression(string $sql, array $parameters = []): Expression
+    {
+        return new Expression($sql, $parameters);
     }
 
     /** MySQL 函数及当前时间表达式的快捷方法。 */
@@ -879,7 +758,7 @@ class QueryBuilder
         return new static(true, $subQueryAlias);
     }
 
-    //---------- 输出方法 ---------- //
+    // 构建结果
 
     /** 获取构建的SQL */
     public function getLastPrepareQuery(): ?string
@@ -965,10 +844,129 @@ class QueryBuilder
     /** 保存原始 SQL 和绑定参数。 */
     public function raw(mixed $sql, mixed $param = []): QueryBuilder
     {
+        if (!is_string($sql)) {
+            throw new \TypeError('Raw SQL must be a string');
+        }
         $parameters = array_map(static fn($value) => $value, array_values($param));
-        $this->completeBuild($sql, $parameters, $this->pending['transactionOp']);
-        $this->reset();
+        return $this->completeBuild($sql, $parameters, $this->pending['transactionOp']);
+    }
+
+    // 条件构建与选项处理
+
+    private function conditionConjunction(ConditionConjunction|string $cond, bool $strict = true): string
+    {
+        if ($cond instanceof ConditionConjunction) { return $cond->value; }
+        // 旧 WHERE/HAVING/ON 字符串保留原有拼写及可扩展的 SQL 语法。
+        if (!$strict) { return $cond; }
+        $conjunction = ConditionConjunction::tryFrom(strtoupper(trim($cond)));
+        if ($conjunction === null) {
+            throw new \InvalidArgumentException('Condition conjunction must be AND or OR');
+        }
+        return $conjunction->value;
+    }
+
+    private function comparisonOperator(ComparisonOperator|string $operator, bool $strict = false): string
+    {
+        if ($operator instanceof ComparisonOperator) { return $operator->value; }
+        // 普通条件也接受 LIKE、IN、BETWEEN 等已有 SQL 运算符。
+        if (!$strict) { return $operator; }
+        $comparison = ComparisonOperator::tryFrom(strtoupper(trim($operator)));
+        if ($comparison === null) {
+            throw new \InvalidArgumentException('Unsupported column comparison operator');
+        }
+        return $comparison->value;
+    }
+
+    private function addRawCondition(array &$conditions, string $sql, array $parameters, ConditionConjunction|string $cond): QueryBuilder
+    {
+        $concat = $this->conditionConjunction($cond);
+        $expression = new Expression($sql, $parameters);
+        $conditions[] = ['expression' => $expression, 'concat' => $conditions === [] ? '' : $concat];
         return $this;
+    }
+
+    private function addColumnCondition(array &$conditions, string $first, string $second, ComparisonOperator|string $operator, ConditionConjunction|string $cond, bool $on = false): QueryBuilder
+    {
+        $operator = $this->comparisonOperator($operator, true);
+        $concat = $this->conditionConjunction($cond);
+        $conditions[] = ['column' => [$first, $operator, $second], 'concat' => !$on && $conditions === [] ? '' : $concat];
+        return $this;
+    }
+
+    private function validateConditionSubquery(array|QueryBuilder $value): void
+    {
+        if ($value instanceof QueryBuilder && (!$value->isSubQuery() || $value->getLastPrepareQuery() === null)) {
+            throw new \InvalidArgumentException('Use a built QueryBuilder::subQuery() for condition subqueries');
+        }
+    }
+
+    private function addExistsCondition(QueryBuilder $subquery, string $operator, ConditionConjunction|string $cond): QueryBuilder
+    {
+        $this->validateConditionSubquery($subquery);
+        $alias = $subquery->getSubQuery()['alias'];
+        if ($alias !== null && $alias !== '') {
+            throw new \InvalidArgumentException('EXISTS subqueries must not have an alias');
+        }
+        $cond = $this->conditionConjunction($cond, false);
+        $this->pending['whereConditions'][] = ['exists' => $subquery, 'operator' => $operator, 'concat' => $this->pending['whereConditions'] === [] ? '' : $cond];
+        return $this;
+    }
+
+    private function addWhereGroup(callable $callback, string $concat): QueryBuilder
+    {
+        return $this->addConditionGroup($this->pending['whereConditions'], $callback, $concat, 'whereConditions', 'WHERE');
+    }
+
+    private function addJoinGroup(string $table, callable $callback, string $concat): QueryBuilder
+    {
+        $conditions = $this->pending['joinConditions'][$table] ?? [];
+        $this->addConditionGroup($conditions, $callback, $concat, 'whereConditions', 'ON', true);
+        $this->pending['joinConditions'][$table] = $conditions;
+        return $this;
+    }
+
+    private function addConditionGroup(array &$conditions, callable $callback, string $concat, string $source, string $label, bool $on = false): QueryBuilder
+    {
+        $group = new static();
+        $group->setPrefix($this->prefix);
+        $callback($group);
+        if ($group->pending[$source] === []) {
+            throw new \InvalidArgumentException($label . ' groups must contain at least one condition');
+        }
+        $conditions[] = ['group' => $group->pending[$source], 'concat' => !$on && $conditions === [] ? '' : $concat];
+        return $this;
+    }
+
+    private function lockWaitOption(LockWaitPolicy|string $option): string
+    {
+        if ($option instanceof LockWaitPolicy) { return $option->value; }
+        // 保留旧 SQL 尾部片段（例如 OF table_name）；仅规范化已知策略。
+        return LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option;
+    }
+
+    // 语句编译与结果发布
+
+    /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
+    private function compileWrite(
+        string $statement,
+        mixed $tableName,
+        mixed $tableData = null,
+        mixed $numRows = null,
+        bool $batch = false,
+        ?array $fields = null,
+    ): QueryBuilder {
+        if ($this->isSubQuery) {
+            $operation = $statement === 'INSERT' || $statement === 'REPLACE' ? 'INSERT or REPLACE' : $statement;
+            throw new \LogicException('A subquery builder cannot build ' . $operation);
+        }
+        $this->readyToPublish = null;
+        if ($statement !== 'DELETE') {
+            $this->pending['tableName'] = $tableName;
+        }
+        $reference = TableReference::resolve($tableName, $this->prefix);
+        $this->pending['tableName'] = $reference['name'];
+        $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
+        return $this->compilePending($buffer, $statement, $numRows ?? $this->pending['limit'], $tableData, $batch, $fields);
     }
 
     private function compilePending(
@@ -978,36 +976,23 @@ class QueryBuilder
         mixed $tableData = null,
         bool $batch = false,
         ?array $fields = null
-    ): void {
+    ): QueryBuilder {
         $parts = PendingQuery::parts($this->pending);
         $operation = (new QueryCompiler())->compile(
             $buffer, $parts, $statement, $numRows, $tableData, $fields ?? $this->pending['fields'], $batch
         );
         $needsParentheses = $statement !== 'SELECT' || $parts->ordering !== [] || $numRows !== null
             || $parts->unions !== [] || $parts->forUpdate || $parts->lockInShareMode;
-        $this->completeBuild($buffer->sql, $buffer->parameters, $operation, $needsParentheses);
+        return $this->completeBuild($buffer->sql, $buffer->parameters, $operation, $needsParentheses);
     }
 
-    private function completeBuild(mixed $sql, array $parameters, ?int $operation, bool $needsParentheses = true): void
+    private function completeBuild(string $sql, array $parameters, ?int $operation, bool $needsParentheses = true): QueryBuilder
     {
         $query = new CompiledQuery($sql, $parameters, $this->pending['queryOptions'], $operation, $needsParentheses);
         $this->lastBuilt = $query;
         $this->readyToPublish = $query;
-    }
-
-    /** 构建插入或替换语句。 */
-    private function buildInsert(mixed $tableName, mixed $insertData, string $operation, bool $batch = false, ?array $fields = null): void
-    {
-        if ($this->isSubQuery) {
-            throw new \LogicException('A subquery builder cannot build INSERT or REPLACE');
-        }
-        $this->readyToPublish = null;
-        $this->pending['tableName'] = $tableName;
-        $table = TableReference::parse($this->pending['tableName'], $this->prefix);
-        $modifiers = QueryCompiler::modifierSql($operation, $this->pending['queryOptions']);
-        $sql = $operation . ' ' . $modifiers . ' INTO ' . $table;
-        $buffer = new SqlBuffer($sql, tableName: $this->pending['tableName']);
-        $this->compilePending($buffer, $operation, $this->pending['limit'], $insertData, $batch, $fields);
+        $this->reset();
+        return $this;
     }
 
 }

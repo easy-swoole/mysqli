@@ -8,6 +8,21 @@ use EasySwoole\Spl\SplBean;
 
 class Config extends SplBean
 {
+    // FastDb 会传入整份配置，这些字段由 FastDb 或其连接池使用。
+    private const SHARED_POOL_OPTIONS = [
+        'autoPing' => true,
+        'useMysqli' => true,
+        'name' => true,
+        'isForceRollback' => true,
+        'intervalCheckTime' => true,
+        'maxObjectNum' => true,
+        'intervalCheckBatchSize' => true,
+        'minObjectNum' => true,
+        'getObjectTimeout' => true,
+        'waitLoadAverageTime' => true,
+        'extraConf' => true,
+    ];
+
     protected string $host = '127.0.0.1';
     protected string $user = '';
     protected string $password = '';
@@ -25,6 +40,15 @@ class Config extends SplBean
     protected string $tlsKeyPassphrase = '';
     protected string $tlsServerName = '';
     protected array $tlsVersions = ['TLSv1.2', 'TLSv1.3'];
+
+    public function restore(array $data = []): static
+    {
+        $unknown = array_diff_key($data, array_fill_keys($this->allProperty(), true), self::SHARED_POOL_OPTIONS);
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException('Unknown mysqli config option: ' . array_key_first($unknown));
+        }
+        return parent::restore($data);
+    }
 
     /**
      * 获取数据库主机地址。

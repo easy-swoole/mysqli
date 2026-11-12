@@ -47,6 +47,28 @@ final class QueryCompiler
         return implode(' ', array_keys(array_intersect_key(self::MODIFIERS, $selected)));
     }
 
+    /**
+     * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
+     * @param array{sql: string, name: string, target: ?string} $table
+     */
+    public static function writeHead(string $statement, array $table, array $options, bool $hasJoins): SqlBuffer
+    {
+        $target = '';
+        if ($statement === 'DELETE' && $hasJoins) {
+            if ($table['target'] === null) {
+                throw new \InvalidArgumentException('DELETE with JOIN requires an identifiable target table');
+            }
+            $target = $table['target'] . ' ';
+        }
+        $modifiers = self::modifierSql($statement, $options);
+        $sql = match ($statement) {
+            'INSERT', 'REPLACE' => $statement . ' ' . $modifiers . ' INTO ' . $table['sql'],
+            'UPDATE' => rtrim('UPDATE ' . $modifiers) . ' ' . $table['sql'],
+            'DELETE' => rtrim('DELETE ' . $modifiers) . ' ' . $target . 'FROM ' . $table['sql'],
+        };
+        return new SqlBuffer($sql, tableName: $table['name']);
+    }
+
     /** @param 'SELECT'|'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
     public function compile(
         SqlBuffer $buffer,
