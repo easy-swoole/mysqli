@@ -59,14 +59,34 @@ final class PaginationTest extends TestCase
         self::assertCount(2, $client->queries);
     }
 
-    private function client(array $results): Client
+    public function testPaginationBuildsBothQueriesBeforeTheFirstCanChangeTheTemplate(): void
     {
-        return new class($results) extends Client {
+        $subquery = QueryBuilder::subQuery()->where('active', true)->get('users', null, 'id');
+        $template = (new QueryBuilder())->where('tenantId', 7)->whereIn('userId', $subquery);
+        $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]], static function () use ($template, $subquery): void {
+            $template->where('status', 'paid');
+            $subquery->where('active', false)->get('users', null, 'id');
+        });
+        self::assertSame(1, $client->paginate($template, 'orders')['total']);
+        self::assertSame([7, true], $client->queries[0][1]);
+        self::assertSame([7, true], $client->queries[1][1]);
+        self::assertStringNotContainsString('status', $client->queries[1][0]);
+    }
+
+    private function client(array $results, ?\Closure $afterFirstQuery = null): Client
+    {
+        return new class($results, $afterFirstQuery) extends Client {
             public array $queries = [];
-            public function __construct(private array $results) { parent::__construct(new Config()); }
+            public function __construct(private array $results, private readonly ?\Closure $afterFirstQuery)
+            {
+                parent::__construct(new Config());
+            }
             public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
             {
                 $this->queries[] = [$builder->getLastPrepareQuery(), $builder->getLastBindParams(), $timeout];
+                if (count($this->queries) === 1) {
+                    $this->afterFirstQuery?->__invoke();
+                }
                 return array_shift($this->results);
             }
         };

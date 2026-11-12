@@ -26,9 +26,9 @@ final class ConditionCompiler
             return ' ' . $operator . ' ? ';
         }
         if ($value instanceof QueryBuilder) {
-            $subQuery = $value->getSubQuery();
+            $subQuery = SelectPlanner::subqueryReference($value, derivedTable: false);
             $this->buffer->bindAll($subQuery['params']);
-            return " " . $operator . " (" . $subQuery['query'] . ") " . $subQuery['alias'];
+            return ' ' . $operator . ' ' . $subQuery['sql'] . ' ';
         }
         $type = get_class($value);
         throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");

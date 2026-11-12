@@ -11,10 +11,10 @@ namespace EasySwoole\Mysqli\QueryBuilder;
  *   transactionOp: ?int, joins: list<array>, whereConditions: list<array>,
  *   unionBranches: list<array>, joinConditions: array<array-key, array>, havingConditions: list<array>,
  *   ordering: array<array-key, array>, groups: list<mixed>, queryOptions: list<string>,
- *   parameters: array, updateColumns: mixed, tableName: mixed,
+ *   updateColumns: ?array, tableName: mixed,
  *   forUpdate: bool, lockInShareMode: bool, selectLockOption: string|false,
  *   limit: mixed, fields: ?array, forceIndexes: list<string>, useIndexes: list<string>,
- *   ignoreIndexes: list<string>, sql: mixed, isCompiled: bool,
+ *   ignoreIndexes: list<string>,
  *   fromSource: null|array{sql: string, params: array, alias: string}
  * }
  */
@@ -24,11 +24,11 @@ final class PendingQuery
         'transactionOp' => null,
         'joins' => [], 'whereConditions' => [], 'unionBranches' => [],
         'joinConditions' => [], 'havingConditions' => [], 'ordering' => [], 'groups' => [],
-        'queryOptions' => [], 'parameters' => [], 'updateColumns' => null,
+        'queryOptions' => [], 'updateColumns' => null,
         'tableName' => '', 'forUpdate' => false, 'lockInShareMode' => false,
         'selectLockOption' => '', 'limit' => null, 'fields' => null,
         'forceIndexes' => [], 'useIndexes' => [], 'ignoreIndexes' => [],
-        'sql' => null, 'isCompiled' => false, 'fromSource' => null,
+        'fromSource' => null,
     ];
 
     /** @param State $state */

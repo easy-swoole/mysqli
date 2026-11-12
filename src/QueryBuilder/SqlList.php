@@ -2,13 +2,13 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal 解析 SQL 列表时，不拆分已引用文本、注释或嵌套表达式。 */
+/** @internal 解析 SQL 列表时，不拆分已引用文本、块注释或嵌套表达式。 */
 final class SqlList
 {
-    /** 避免 SQL 尾部行注释吞掉闭括号。 */
+    /** 原样包裹 SQL。 */
     public static function parenthesized(string $sql): string
     {
-        return '(' . implode(',', self::items($sql)) . ')';
+        return '(' . $sql . ')';
     }
 
     /**
@@ -33,15 +33,10 @@ final class SqlList
         $length = strlen($sql);
         $depth = 0;
         $quote = null;
-        $lineComment = false;
         $blockComment = false;
         for ($position = 0; $position < $length; $position++) {
             $character = $sql[$position];
             $next = $position + 1 < $length ? $sql[$position + 1] : null;
-            if ($lineComment) {
-                if ($character === "\n" || $character === "\r") { $lineComment = false; }
-                continue;
-            }
             if ($blockComment) {
                 if ($character === '*' && $next === '/') { $blockComment = false; $position++; }
                 continue;
@@ -59,9 +54,6 @@ final class SqlList
             } elseif ($character === '/' && $next === '*') {
                 $blockComment = true;
                 $position++;
-            } elseif ($character === '#' || ($character === '-' && $next === '-'
-                && ($position + 2 === $length || ord($sql[$position + 2]) <= 32))) {
-                $lineComment = true;
             } elseif ($character === '(') {
                 $depth++;
             } elseif ($character === ')') {
@@ -70,7 +62,6 @@ final class SqlList
                 return substr($sql, 0, $position);
             }
         }
-        // 在调用方追加其他 SQL 子句之前结束尾部行注释。
-        return $lineComment ? $sql . "\n" : $sql;
+        return $sql;
     }
 }

@@ -208,6 +208,9 @@ final class Connection
     /** 共享预处理会话检查和分段参数编码，缓冲与流式读取使用同一命令格式。 */
     private function writeStatementCommand(Statement $statement, array $parameters, Deadline $deadline): void
     {
+        if (!$statement->belongsTo($this)) {
+            throw new \LogicException('The prepared statement belongs to a different MySQL connection');
+        }
         $this->assertStatementGeneration($statement->getGeneration());
         [$nullBitmap, $types, $values] = ParameterEncoder::encode($parameters);
         $payload = chr(self::COM_STMT_EXECUTE) . pack('V', $statement->getId())

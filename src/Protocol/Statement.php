@@ -85,6 +85,9 @@ final class Statement
      * 获取语句所属连接的会话代次。
      */
     public function getGeneration(): int { return $this->generation; }
+
+    /** @internal 核对语句是否由指定连接创建。 */
+    public function belongsTo(Connection $connection): bool { return $this->connection === $connection; }
     /**
      * 获取服务端分配的语句 ID。
      */

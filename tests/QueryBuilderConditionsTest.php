@@ -152,6 +152,45 @@ final class QueryBuilderConditionsTest extends TestCase
         self::assertSame([1, 7, 'active', 'active', 'staff', 7], $builder->getLastBindParams());
     }
 
+    public function testUnmatchedJoinConditionsFailBeforePublishingAWrite(): void
+    {
+        $builder = (new QueryBuilder())->get('previous');
+        $previous = $builder->getLastPrepareQuery();
+        $builder->join('users u', 'u.id=o.userId')->joinWhere('u', 'u.active', true);
+        try {
+            $builder->delete('orders o');
+            self::fail('Expected the unmatched ON condition to be rejected');
+        } catch (\InvalidArgumentException $error) {
+            self::assertStringContainsString('JOIN condition target was not joined: u', $error->getMessage());
+            self::assertSame($previous, $builder->getLastPrepareQuery());
+        }
+        $builder->reset()->joinOn('users u', 'u.id', 'o.userId')->join('users u', 'u.active=1')->get('orders o');
+        self::assertStringContainsString('AND `u`.`id` = `o`.`userId`', $builder->getLastPrepareQuery());
+    }
+
+    public function testSubqueryReferencesRequireAnAliasOnlyForDerivedTables(): void
+    {
+        $unbuilt = QueryBuilder::subQuery('u');
+        $withoutAlias = QueryBuilder::subQuery()->raw('SELECT ? AS id', [3]);
+        $withAlias = QueryBuilder::subQuery('user list')->raw('SELECT ? AS id', [7]);
+        foreach ([
+            static fn(QueryBuilder $q) => $q->join($unbuilt, 'u.id=o.userId')->get('orders o'),
+            static fn(QueryBuilder $q) => $q->join($withoutAlias, 'u.id=o.userId')->get('orders o'),
+            static fn(QueryBuilder $q) => $q->whereIn('userId', $withAlias)->get('orders'),
+        ] as $build) {
+            try {
+                $build(new QueryBuilder());
+                self::fail('Expected an invalid subquery reference to be rejected');
+            } catch (\InvalidArgumentException $error) {
+                self::assertNotEmpty($error->getMessage());
+            }
+        }
+        $builder = (new QueryBuilder())->join($withAlias, '`user list`.id=o.userId')
+            ->joinWhere('user list', '`user list`.id', 7)->whereIn('o.userId', $withoutAlias)->get('orders o');
+        self::assertStringContainsString('(SELECT ? AS id) `user list`', $this->sql($builder));
+        self::assertSame([7, 7, 3], $builder->getLastBindParams());
+    }
+
     public function testUsingTextInsideColumnNamesStillProducesOnJoin(): void
     {
         $builder = (new QueryBuilder())->join('users u', 'u.using_flag=o.using_flag', 'LEFT')->get('orders o');

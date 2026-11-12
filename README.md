@@ -169,7 +169,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 ## 会话安全与超时
 
-预处理语句属于创建它的服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
+预处理语句绑定到创建它的连接和服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
 连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
 
@@ -219,7 +219,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 // ['items' => [...], 'total' => 42, 'page' => 2, 'perPage' => 20, 'lastPage' => 3]
 ```
 
-- 在独立副本上先 COUNT、再读取当前页，不修改模板。COUNT 采用 `count()` 的结果集行数规则；带 FROM 子查询的模板将 `$table` 传 `null`。
+- 在独立副本上先构建 COUNT 和当前页语句，再依次执行。两条语句的 SQL 和参数在首次查询前确定。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
@@ -239,7 +239,7 @@ try {
 }
 ```
 
-- `$builder` 必须已经构建。方法通过服务端预处理启动查询，返回 `ResultStream`，逐行读取，不收集完整结果数组；若转成数组，仍会占用完整结果所需内存。
+- `$builder` 必须已经构建。方法在准备语句前读取 SQL 和参数，返回 `ResultStream` 供逐行读取。将结果转成数组仍会占用完整结果所需内存。
 - 预处理、执行、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
 - 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前退出循环、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
 - 流结束前连接保持独占，不能在同一 Client 上发起查询、创建预处理语句、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在读取时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
@@ -310,7 +310,7 @@ try {
 
 ## 常用查询语法糖
 
-新增方法保留原有 `where()`、`orWhere()`、`orderBy()`、`selectForUpdate()` 等接口及行为。
+查询构造器提供 `where()`、`orWhere()`、`orderBy()`、`selectForUpdate()` 等链式接口。
 值继续通过预处理参数绑定；构建完成或调用 `reset()` 后，条件、排序、索引提示和行锁设置自动清除，表前缀保留。
 
 ```php
@@ -439,7 +439,8 @@ $builder->join('users', '', JoinType::Natural)->get('orders');
 - 默认仍为原字符串 `''`；既有大小写和首尾空白处理不变，例如 `' left outer '` 仍可用。固定类型字符串通过枚举的 `tryFrom()` 校验；无效类型在追加 JOIN 前报错。
 - 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
-- 其他类型的 `$joinCondition` 仍是原有 ON / USING 条件或 Expression，JOIN 类型枚举不负责字段引用、值绑定或自动生成条件。表名、别名及条件继续由可信代码提供。
+- 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。普通表名应用表前缀，数据库限定的表名保留原数据库和表名。
+- JOIN 子查询使用带别名的 `QueryBuilder::subQuery($alias)`。构建外层语句时，读取已构建的子查询 SQL、别名和参数。IN、EXISTS 和写入值中的子查询使用无别名的 `QueryBuilder::subQuery()`。
 
 ### `Expression` / `rawExpression(string $sql, array $parameters = [])`
 
@@ -460,7 +461,7 @@ $builder->where('id', $id)->update('users', [
 - SQL 片段必须来自可信代码，不能直接使用请求中的 SQL；绑定参数只保护值，不会让动态表名、字段名、运算符或 SQL 结构自动安全。
 - 使用位置占位符 `?`，不使用 `:name`；参数只能是标量或 `null`，数组/对象需要先转换成业务所需的字符串，例如 JSON 使用 `json_encode()`。占位符的数量和顺序应与参数一致。
 - SQL 不能为空或包含 NUL 字节；片段不自动添加别名、字段引用或运算符，需要时在可信片段内写明 `AS alias`。同一个 Expression 多处使用时，每个位置都会合并一次参数。
-- 原有 `QueryBuilder::func()`、`now()`、`inc()`、`dec()`、`not()` 及整条查询 `raw()` 继续可用，不需要迁移旧调用。
+- 可使用 `QueryBuilder::func()`、`now()`、`inc()`、`dec()`、`not()` 或整条查询 `raw()`。`now()` 的时间间隔为带可选正负号的整数及单位，例如 `'-2h'`。省略单位时按天计算。
 
 ### `getColumn($tableName, $columns = null, $numRows = null)` / `getScalar($tableName, $columns = null)`
 
@@ -469,8 +470,8 @@ $builder->getColumn('users', QueryBuilder::rawExpression('COALESCE(name, ?)', ['
 $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status = ? THEN amount ELSE 0 END)', ['paid']));
 ```
 
-- 两个方法的字段参数均可直接传入 Expression；表达式中的参数随 SELECT 合并，字段参数仍兼容原来的字符串用法。
-- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
+- 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
+- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
 ### `selectRaw(string $sql, array $parameters = [])`
@@ -654,9 +655,19 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 - GROUP BY、HAVING、UNION 和行锁用于 SELECT。INSERT 和 REPLACE 接收写入值，不能同时配置 JOIN、WHERE、ORDER BY 或 LIMIT。
 - `get()` 等方法完成构建时就会清除当前设置，并非等到执行后才清除；已成功构建的 SQL 和绑定参数保留。手动 `reset()` 也只清待构建状态，表前缀不会自动清除。
 - 构建失败不覆盖最近成功结果；放弃失败条件后使用 `reset()` 开始新查询。`setQueryOption([...])` 会先验证整批选项，遇到非法项不会部分应用。
-- 字段名、索引名、SQL 表达式和 AND/OR 连接符使用代码常量或白名单；参数绑定只保护条件值，不保护 SQL 结构。
+- 字段名、索引名、SQL 表达式和 AND/OR 连接符使用代码常量或白名单。原始 SQL 片段须符合插入位置的语法。参数绑定用于条件值。
 - 集合、范围和 LIKE 方法的第三个参数是 `$cond`；NULL 和 EXISTS 方法的第二个参数是 `$cond`，默认均为 `'AND'`。可用 `ConditionConjunction::And` / `Or` 或原字符串；建议仅使用 AND / OR，首个条件的连接符自动省略。
 - AND/OR 仍遵循 SQL 的优先级，需要括号时使用条件组。这些 WHERE 方法也可用于 UPDATE、DELETE，写入前应确认条件范围。
+
+### `setQueryOption($options)`：语句选项
+
+```php
+$builder->setQueryOption('IGNORE')->where('id', 1)->update('users', ['name' => 'Alice']);
+$builder->setQueryOption(['LOW_PRIORITY', 'IGNORE'])->insert('users', ['id' => 2]);
+```
+
+- 选项接受一个字符串或字符串数组。构建时按语句类型校验，并按 MySQL 语法顺序输出。
+- `IGNORE` 用于 INSERT、UPDATE 和 DELETE，`QUICK` 用于 DELETE，`DISTINCT` 用于 SELECT。语句不支持的选项或互斥选项会在构建时抛出 `InvalidArgumentException`。
 
 ### `fields($fields)` / `setPrefix($prefix = '')`：字段与表名引用
 
@@ -788,7 +799,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 // SQL：SELECT ? AS value；参数：[99]
 ```
 
-- 设置整条可信 SQL 和位置参数，并清除待构建设置。参数数组会替换此前参数，不与失败编译或旧查询参数拼接；无需先 `reset()` 才能开始一条 raw 查询。
+- 设置整条可信 SQL 和位置参数，并清除待构建设置。`$param` 为数组，按传入顺序绑定，默认空数组。
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看；执行使用预处理 SQL 和绑定参数。多语句和 CALL 限制同样适用。
 
 
@@ -1030,7 +1041,7 @@ $builder->orderBy('status', 'ASC', ['awaiting/payment', 'paid+confirmed'])->get(
 - 第三个参数为非空数组时生成 FIELD 自定义顺序，所有成员按原值绑定，不过滤引号、斜杠、加号等字符。成员只能是标量或 null；空数组、嵌套数组、对象会在修改排序前报错。
 - 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
 - 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
-- 字段名仍使用代码常量或白名单。通过 `Client::query()` 执行预处理 SQL；`getLastQuery()` 仅供调试展示，不用于重新拼接执行。
+- `orderBy()` 和 `groupBy()` 按传入的文本拼接表达式。字段名使用代码常量或白名单。使用表别名时按 SQL 中的别名限定字段，引用带前缀的实际表时填写完整表名。
 
 ```php
 use EasySwoole\Mysqli\QueryBuilder\SortDirection;
@@ -1065,7 +1076,7 @@ $builder->limit(25)->get('orders', 0);    // 显式的 0 覆盖 25
 $builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
 ```
 
-- 只有 `null` 表示未指定条数并使用此前 `limit()` 设置；数字 `0` 不取消 LIMIT。
+- `null` 表示使用此前的 `limit()` 设置，`0` 表示限制为零行。LIMIT 数值使用非负整数或十进制数字字符串，偏移分页使用 `[偏移量, 条数]`。
 - 未指定条数且未设置 `limit()` 才不限制条数；SELECT 的偏移分页 `[0, 0]` 返回零行。
 - 单表 UPDATE 和 DELETE 可用 `limit(5)` 限制行数。带 JOIN 的 UPDATE 和 DELETE 不支持 ORDER BY 或 LIMIT，写入语句也不支持带偏移量的 LIMIT。这些组合会在构建时抛出 `InvalidArgumentException`。
 - `get(null)` 仅在此前设置 `fromSub()` 时有效；设置派生表来源后不再传普通表名。普通查询的表名必须是非空字符串。
@@ -1079,7 +1090,8 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 ```
 
 - NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
-- 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`；JOIN 子查询则传其别名。条件位于 JOIN 的 ON 部分，不是外层 WHERE。LEFT JOIN 中移动条件到 WHERE 可能改变保留行范围。
+- 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`。JOIN 子查询传其别名。构建时，找不到对应 JOIN 或定位到多个 JOIN 会抛出 `InvalidArgumentException`。
+- 条件位于 JOIN 的 ON 部分。LEFT JOIN 中将条件移到 WHERE 可能改变保留行范围。
 - 仅适用于 ON JOIN；初始条件为 `USING(...)` 时不能追加 `joinWhere()`、`joinOrWhere()`、`joinOn()` 或 ON 分组，需要追加条件时从 `join()` 开始使用 ON 条件。
 - 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
 
@@ -1097,7 +1109,7 @@ $builder->join('users u', 'u.id=o.userId', JoinType::Left)
 $builder->orderByAsc('created_at')->orderByAsc('id')->get('orders', 10);
 ```
 
-- 等价于旧的 `orderBy($column, 'ASC')`，保留旧方法的字段处理规则；字段名用固定值或白名单，不直接接收请求参数。
+- 等价于 `orderBy($column, 'ASC')`。字段名用固定值或白名单，不直接接收请求参数。
 - 多次调用不同字段按调用顺序排列；同一字段再次设置会覆盖原方向。
 - 不提供旧 `orderBy()` 的第三个自定义排序参数；需要自定义排序时继续调用原方法。分页需要稳定顺序时可追加唯一字段。
 
@@ -1245,19 +1257,19 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
 | `SelectPlanner` / `SelectPlan` | 无状态规划 SELECT 来源、COUNT、聚合，返回只读 SELECT 头部 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
-| `QueryCompiler` | 按语句类型及 SQL 顺序编译子句，处理 SELECT 行锁和事务标记 |
+| `QueryCompiler` | 按语句类型校验修饰符并编译子句，处理 SELECT 行锁和事务标记 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
 | `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
-| `WriteCompiler` | 写入字段过滤、批量字段对齐、INSERT/REPLACE 值、UPDATE 赋值及重复键更新 |
+| `WriteCompiler` | 写入字段过滤、批量列集合校验和有序绑定、INSERT/REPLACE 值、UPDATE 赋值及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
-| `SqlList` | 在引号、注释和嵌套表达式之外解析选择列表 |
+| `SqlList` | 在引号、块注释和嵌套表达式之外解析选择列表 |
 | `Pagination` | 分页参数校验与大整数总数、末页计算 |
 | `ExpressionFactory` | 保持 now/inc/dec/not/func 的既有表达式格式 |
 | `SqlFormatter` | 仅生成调试展示 SQL，不参与数据库执行 |
 
 各编译器仅依赖本次 SQL 缓冲和所需输入，不回调整个 Builder 读取私有状态，也不负责连接数据库。
-调试 SQL 保留原有可见时机：成功渲染后即更新，其他完成结果在 `reset()` 发布；子类重写这些方法时也保持该顺序。
+每次编译使用独立的 SQL 缓冲。成功构建后即可按需读取调试 SQL，可执行结果在 `reset()` 时发布。
 UNION 保存已构建分支快照，IN/EXISTS 在外层构建时读取子查询；这些时序和 `reset()` 保留前缀等既有规则不变。
 `QueryBuilderPublicApiTest` 记录公开接口快照；API 契约测试保护方法名、命名参数和默认值，类型完整性测试保护原生类型声明。有意增加或调整公开 API 时，应审查并同步更新相应基线。
 

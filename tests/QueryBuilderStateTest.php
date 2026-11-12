@@ -297,6 +297,26 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame([0], $builder->getLastBindParams());
     }
 
+    public function testNewWritesDoNotUseParametersFromAnUnpublishedBuild(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public bool $publish = false;
+            public function reset(): QueryBuilder { return $this->publish ? parent::reset() : $this; }
+        };
+        foreach ([
+            static fn(QueryBuilder $q) => $q->insert('users', ['id' => 42]),
+            static fn(QueryBuilder $q) => $q->update('users', ['id' => 42]),
+            static fn(QueryBuilder $q) => $q->where('id', 42)->delete('users'),
+        ] as $build) {
+            $builder->publish = false;
+            $builder->raw('SELECT ?', [7]);
+            $builder->publish = true;
+            $build($builder);
+            self::assertSame([42], $builder->getLastBindParams());
+            self::assertStringContainsString('42', $builder->getLastQuery());
+        }
+    }
+
     public function testFromSubAndUnionSnapshotWhileInAndExistsReadTheirSourceAtBuildTime(): void
     {
         $sub = QueryBuilder::subQuery()->where('state', 'initial')->get('items', null, 'id');

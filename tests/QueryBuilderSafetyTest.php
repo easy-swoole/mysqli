@@ -59,6 +59,58 @@ final class QueryBuilderSafetyTest extends TestCase
         }
     }
 
+    public function testInvalidBuilderArgumentsAreNotSilentlyIgnored(): void
+    {
+        $cases = [
+            [static fn(QueryBuilder $q) => $q->raw('SELECT ?', 7), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->getColumn('users', ['id']), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->onDuplicate(false), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->union(false), \TypeError::class],
+            [static fn(QueryBuilder $q) => $q->union(new QueryBuilder()), \InvalidArgumentException::class],
+            [static fn(QueryBuilder $q) => $q->insert('users', ['id' => 1]), \LogicException::class],
+        ];
+        foreach ($cases as [$build, $expected]) {
+            $builder = QueryBuilder::subQuery()->raw('SELECT ? AS id', [9]);
+            try {
+                $build($builder);
+                self::fail('Expected invalid input to fail');
+            } catch (\TypeError|\LogicException $error) {
+                self::assertInstanceOf($expected, $error);
+                self::assertSame('SELECT ? AS id', $builder->getLastPrepareQuery());
+                self::assertSame([9], $builder->getLastBindParams());
+            }
+        }
+    }
+
+    public function testInvalidLimitsDoNotTurnIntoDifferentLimits(): void
+    {
+        $builder = (new QueryBuilder())->get('users', '0');
+        $sql = $builder->getLastPrepareQuery();
+        self::assertStringEndsWith('LIMIT 0', $sql);
+        foreach (['unknown', [5], -1, 1.5] as $limit) {
+            try {
+                $builder->get('users', $limit);
+                self::fail('Expected an invalid limit to fail');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('LIMIT', $error->getMessage());
+                self::assertSame($sql, $builder->getLastPrepareQuery());
+            }
+        }
+    }
+
+    public function testNowRequiresACompleteInterval(): void
+    {
+        self::assertSame(['[F]' => ['NOW() - interval 2 hour ']], QueryBuilder::now(' -2 h '));
+        foreach (['later', '2h-extra'] as $interval) {
+            try {
+                QueryBuilder::now($interval);
+                self::fail('Expected invalid interval to fail');
+            } catch (\InvalidArgumentException $error) {
+                self::assertSame('Invalid time interval', $error->getMessage());
+            }
+        }
+    }
+
     public function testFailedCompilationDoesNotPublishPartialSqlOrLeakIntoRaw(): void
     {
         $q = (new QueryBuilder())->where('id', 1)->get('orders');

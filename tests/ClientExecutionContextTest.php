@@ -192,13 +192,16 @@ final class ClientExecutionContextTest extends TestCase
         $this->assertClosed($statement);
     }
 
-    private function overrideClient(Statement $statement, ?Connection $connection = null): Client
+    private function overrideClient(Statement $statement, ?Connection $connection = null, ?\Closure $duringPrepare = null): Client
     {
-        return new class($statement, $connection) extends Client {
+        return new class($statement, $connection, $duringPrepare) extends Client {
             /** @var list<array{string, ?float}> */
             public array $prepareCalls = [];
-            public function __construct(private readonly Statement $statement, ?Connection $connection)
-            {
+            public function __construct(
+                private readonly Statement $statement,
+                ?Connection $connection,
+                private readonly ?\Closure $duringPrepare
+            ) {
                 parent::__construct(new Config());
                 $this->mysqlClient = $connection;
                 $this->lastInsertId = 9;
@@ -207,6 +210,7 @@ final class ClientExecutionContextTest extends TestCase
             public function prepare(string $sql, ?float $timeout = null): Statement
             {
                 $this->prepareCalls[] = [$sql, $timeout];
+                $this->duringPrepare?->__invoke();
                 return $this->statement;
             }
         };
@@ -255,6 +259,40 @@ final class ClientExecutionContextTest extends TestCase
             self::assertLessThanOrEqual(0.5, $client->prepareCalls[0][1]);
             self::assertNull($client->getLastAffectRows());
             if (!$failCleanup) { $this->assertClosed($statement); }
+        }
+    }
+
+    public function testIterateKeepsTheParametersReadBeforePrepare(): void
+    {
+        $builder = (new QueryBuilder())->raw('SELECT ? AS id', [1]);
+        $statement = $this->statement(parameters: 1);
+        $client = $this->overrideClient($statement, duringPrepare: static function () use ($builder): void {
+            $builder->raw('SELECT ? AS id, ? AS other', [2, 3]);
+        });
+        try {
+            $client->iterate($builder);
+            self::fail('Expected the disconnected fixture to reject execution');
+        } catch (\LogicException $error) {
+            // 参数数量校验应先通过，之后才到达断开连接的检查。
+            self::assertStringContainsString('expired MySQL session', $error->getMessage());
+        }
+        self::assertSame('SELECT ? AS id', $client->prepareCalls[0][0]);
+        $this->assertClosed($statement);
+    }
+
+    public function testConnectionRejectsAStatementOwnedByAnotherConnection(): void
+    {
+        $owner = new Connection(new Config());
+        $other = new Connection(new Config());
+        $statement = new Statement($owner, 1, 'SELECT 1', 0, 1, 0);
+        foreach (['executeStatement', 'iterateStatement'] as $execute) {
+            try {
+                $other->{$execute}($statement, [], null);
+                self::fail('Expected the other connection to reject the statement');
+            } catch (\LogicException $error) {
+                self::assertStringContainsString('different MySQL connection', $error->getMessage());
+            }
+            self::assertFalse($other->isBusy());
         }
     }
 

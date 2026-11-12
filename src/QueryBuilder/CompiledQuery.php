@@ -12,5 +12,6 @@ final class CompiledQuery
         public readonly array $parameters,
         public readonly array $options,
         public readonly ?int $transactionOp,
+        public readonly bool $unionOperandNeedsParentheses = true,
     ) {}
 }

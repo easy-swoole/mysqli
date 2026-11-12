@@ -9,41 +9,37 @@ use EasySwoole\Mysqli\Exception\Exception;
 /** @internal 编译 INSERT/REPLACE 值、UPDATE 赋值及重复键更新。 */
 final class WriteCompiler
 {
-    /** @var list<string>|null */
+    /** @var array<string, string>|null */
     private ?array $batchColumns = null;
 
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
 
     /**
-     * 生成 SQL 前校验并对齐各行字段，保留行顺序及 NULL 值。
-     * @return non-empty-list<non-empty-array<string, mixed>>
+     * 保留过滤后的行，字段引用按首行的键顺序生成一次。
+     * @return array{columns: non-empty-array<string, string>, rows: non-empty-list<non-empty-array<string, mixed>>}
      */
     public static function normalizeBatch(mixed $rows, ?array $fields = null): array
     {
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        $columns = null;
-        $columnSet = [];
+        $columns = [];
         $normalized = [];
         foreach ($rows as $row) {
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
             }
             $row = self::filterRow($row, $fields);
-            if ($columns === null) {
-                $columns = array_keys($row);
-                foreach ($columns as $column) { self::quoteIdentifier($column); }
-                $columnSet = array_fill_keys($columns, true);
-            }
-            if (count($row) !== count($columns) || array_diff_key($columnSet, $row) !== []) {
+            if ($columns === []) {
+                foreach (array_keys($row) as $column) {
+                    $columns[$column] = TableReference::identifier($column);
+                }
+            } elseif (count($row) !== count($columns) || array_diff_key($columns, $row) !== []) {
                 throw new \InvalidArgumentException('All batch rows must contain exactly the same columns');
             }
-            $aligned = [];
-            foreach ($columns as $column) { $aligned[$column] = $row[$column]; }
-            $normalized[] = $aligned;
+            $normalized[] = $row;
         }
-        return $normalized;
+        return ['columns' => $columns, 'rows' => $normalized];
     }
 
     /** 返回过滤后的单行，供单行重复键更新读取。 */
@@ -52,12 +48,11 @@ final class WriteCompiler
         $this->batchColumns = null;
         $first = array_key_first($tableData);
         if ($isInsert && ($batch || (is_int($first) && is_array($tableData[$first])))) {
-            $rows = self::normalizeBatch($tableData, $fields);
-            $columns = array_keys($rows[0]);
+            $batchData = self::normalizeBatch($tableData, $fields);
+            $columns = $batchData['columns'];
             $this->batchColumns = $columns;
-            $this->buffer->sql .= ' (' . implode(', ', array_map([self::class, 'quoteIdentifier'], $columns)) . ') ';
-            $this->buffer->sql .= ' VALUES ';
-            foreach ($rows as $row) {
+            $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
+            foreach ($batchData['rows'] as $row) {
                 $this->buffer->sql .= '(';
                 $this->appendPairs($row, $columns, true);
                 $this->buffer->sql .= '),';
@@ -69,10 +64,14 @@ final class WriteCompiler
         if (!$isInsert && $tableData === []) {
             throw new \InvalidArgumentException('UPDATE requires at least one assignment');
         }
-        $columns = array_keys($tableData);
+        $columns = [];
+        foreach (array_keys($tableData) as $column) {
+            $columns[$column] = !$isInsert && is_string($column)
+                ? TableReference::column($column) : TableReference::identifier($column);
+        }
         if ($isInsert) {
             if ($columns !== []) {
-                $this->buffer->sql .= ' (' . implode(', ', array_map([self::class, 'quoteIdentifier'], $columns)) . ') ';
+                $this->buffer->sql .= ' (' . implode(', ', $columns) . ') ';
             }
             $this->buffer->sql .= ' VALUES (';
         } else {
@@ -95,15 +94,12 @@ final class WriteCompiler
         return $filtered;
     }
 
-    private function appendPairs(mixed $tableData, mixed $tableColumns, mixed $isInsert, bool $literalColumns = false): void
+    /** @param array<string, string> $columns 以绑定顺序保存列名及其 SQL 引用。 */
+    private function appendPairs(array $tableData, array $columns, bool $isInsert): void
     {
-        foreach ($tableColumns as $column) {
+        foreach ($columns as $column => $columnReference) {
             $value = $tableData[$column];
-            $columnReference = self::quoteIdentifier($column);
             if (!$isInsert) {
-                if (!$literalColumns) {
-                    $columnReference = TableReference::column($column);
-                }
                 $this->buffer->sql .= $columnReference . ' = ';
             }
             if ($value instanceof Expression) {
@@ -142,33 +138,40 @@ final class WriteCompiler
 
     public function appendDuplicate(mixed $tableData, mixed $updateColumns): void
     {
-        if (!is_array($updateColumns) || $updateColumns === []) { return; }
+        if ($updateColumns === null || $updateColumns === []) { return; }
         $explicit = [];
+        $references = $this->batchColumns ?? [];
         foreach ($updateColumns as $key => $value) {
             if (is_int($key)) {
-                self::quoteIdentifier($value);
+                if (!is_string($value) || !isset($references[$value])) {
+                    $reference = TableReference::identifier($value);
+                    $references[$value] = $reference;
+                }
                 $updateColumns[$value] = '';
                 unset($updateColumns[$key]);
             } else {
                 $explicit[$key] = $value;
             }
         }
-        $columns = array_keys($updateColumns);
+        $columns = [];
+        foreach (array_keys($updateColumns) as $column) {
+            $columns[$column] = $references[$column] ?? TableReference::identifier($column);
+        }
         if ($this->batchColumns === null) {
-            foreach ($columns as $column) {
-                if (!array_key_exists($column, $explicit) && (!is_array($tableData) || !array_key_exists($column, $tableData))) {
+            foreach ($columns as $column => $reference) {
+                if (!array_key_exists($column, $explicit) && !array_key_exists($column, $tableData)) {
                     throw new \InvalidArgumentException('Implicit duplicate-update column must exist in the inserted row');
                 }
             }
             foreach ($explicit as $column => $value) { $tableData[$column] = $value; }
             $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-            $this->appendPairs($tableData, $columns, false, true);
+            $this->appendPairs($tableData, $columns, false);
             return;
         }
         $incomingColumns = [];
-        foreach ($columns as $column) {
+        foreach ($columns as $column => $reference) {
             if (array_key_exists($column, $explicit)) { continue; }
-            if (!in_array($column, $this->batchColumns, true)) {
+            if (!isset($this->batchColumns[$column])) {
                 throw new \InvalidArgumentException('Implicit duplicate-update column must exist in every batch row');
             }
             $incomingColumns[] = $column;
@@ -177,25 +180,19 @@ final class WriteCompiler
         if ($incomingColumns !== []) {
             $table = trim(str_replace('`', '', (string) $this->buffer->tableName));
             $table = substr($table, strrpos('.' . $table, '.'));
-            $alias = strcasecmp($table, '__mysqli_new') === 0 ? '__mysqli_new_row' : '__mysqli_new';
-            $this->buffer->sql .= ' AS ' . self::quoteIdentifier($alias);
+            $alias = TableReference::identifier(strcasecmp($table, '__mysqli_new') === 0 ? '__mysqli_new_row' : '__mysqli_new');
+            $this->buffer->sql .= ' AS ' . $alias;
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
         $separator = '';
-        foreach ($columns as $column) {
+        foreach ($columns as $column => $reference) {
             $this->buffer->sql .= $separator;
             if (array_key_exists($column, $explicit)) {
-                $this->appendPairs($explicit, [$column], false, true);
+                $this->appendPairs($explicit, [$column => $reference], false);
             } else {
-                $this->buffer->sql .= self::quoteIdentifier($column) . ' = '
-                    . self::quoteIdentifier($alias) . '.' . self::quoteIdentifier($column);
+                $this->buffer->sql .= $reference . ' = ' . $alias . '.' . $reference;
             }
             $separator = ', ';
         }
-    }
-
-    private static function quoteIdentifier(mixed $name): string
-    {
-        return TableReference::identifier($name);
     }
 }

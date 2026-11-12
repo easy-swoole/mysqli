@@ -117,14 +117,33 @@ final class QueryBuilderIdentifierRegressionTest extends TestCase
             ['`a``b,c` AS label, id', '`a``b,c` AS label'],
             ["'a\\'b,c' AS label, id", "'a\\'b,c' AS label"],
             ["id /* comment, ( ' */ AS label, other", "id /* comment, ( ' */ AS label"],
-            ["id -- comment, (\n AS label, other", "id -- comment, (\n AS label"],
-            ["id # comment, (\r\n AS label, other", "id # comment, (\r\n AS label"],
             ['1--not_a_comment, id', '1--not_a_comment'],
-            ["id -- comment,\n, other", "id -- comment,\n"],
-            ['id -- trailing comment,', "id -- trailing comment,\n"],
             ['  name AS label  , id', '  name AS label  '],
             ['id', 'id'],
         ];
+    }
+
+    public function testJoinedDeleteSharesQualifiedTableParsingAndKeepsTheWholeAlias(): void
+    {
+        $builder = (new QueryBuilder())->setPrefix('app_')
+            ->join('archive.orders o', 'o.user_id=`target user`.id')
+            ->joinWhere('archive.orders o', 'o.status', 'closed')
+            ->delete('users AS `target user`');
+        self::assertSame(
+            'DELETE `target user` FROM app_users AS `target user` JOIN archive.orders o on o.user_id=`target user`.id AND o.status = ?',
+            $this->sql($builder)
+        );
+        self::assertSame(['closed'], $builder->getLastBindParams());
+    }
+
+    public function testGroupingAndOrderingKeepQuotedIdentifiersAndAliases(): void
+    {
+        $builder = (new QueryBuilder())->setPrefix('app_')
+            ->fields('`u`.`tenant$id`')->groupBy('`u`.`tenant$id`')->orderByAsc('`u`.`tenant$id`')->get('users u');
+        self::assertSame(
+            'SELECT `u`.`tenant$id` FROM app_users u GROUP BY `u`.`tenant$id` ORDER BY `u`.`tenant$id` ASC',
+            $this->sql($builder)
+        );
     }
 
     public function testColumnHelpersRetainAliasesAndCompleteFunctionArguments(): void
@@ -136,11 +155,5 @@ final class QueryBuilderIdentifierRegressionTest extends TestCase
         $builder->fields([new Expression('COALESCE(name, ?) AS display_name', ['guest']), 'id'])->getColumn('users');
         self::assertSame('SELECT COALESCE(name, ?) AS display_name FROM `users`', $this->sql($builder));
         self::assertSame(['guest'], $builder->getLastBindParams());
-    }
-
-    public function testColumnHelperPreservesLineCommentTerminatorsBeforeFrom(): void
-    {
-        $builder = (new QueryBuilder())->fields("id -- ignored,\n, name")->getColumn('users');
-        self::assertStringContainsString("id -- ignored,\n FROM", $builder->getLastPrepareQuery());
     }
 }

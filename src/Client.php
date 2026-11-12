@@ -88,9 +88,11 @@ class Client
     public function iterate(QueryBuilder $builder, ?float $timeout = null): ResultStream
     {
         $execution = $this->beginExecution($timeout);
-        $statement = $execution->ownStatement($this->prepare($builder->getLastPrepareQuery(), $execution->remaining()));
+        $sql = $builder->getLastPrepareQuery();
+        $parameters = $builder->getLastBindParams();
+        $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
         try {
-            $stream = $statement->iterate($builder->getLastBindParams(), $execution->remaining());
+            $stream = $statement->iterate($parameters, $execution->remaining());
         } catch (\Throwable $error) {
             $execution->discardOwnedStatement();
             throw $error;
@@ -118,9 +120,12 @@ class Client
         $offset = \EasySwoole\Mysqli\QueryBuilder\Pagination::offset($perPage, $page);
         $deadline = $this->queryDeadline($timeout);
         $counter = clone $query;
-        $counts = $this->query($counter->count($table, '__mysqli_total'), $deadline->remaining());
         $data = clone $query;
-        $items = $this->query($data->limit($offset, $perPage)->get($table), $deadline->remaining());
+        // 两条语句先构建完，避免查询回调或协程切换改变分页条件。
+        $countQuery = $counter->count($table, '__mysqli_total');
+        $dataQuery = $data->limit($offset, $perPage)->get($table);
+        $counts = $this->query($countQuery, $deadline->remaining());
+        $items = $this->query($dataQuery, $deadline->remaining());
         return \EasySwoole\Mysqli\QueryBuilder\Pagination::result($items, $counts[0]['__mysqli_total'], $perPage, $page);
     }
 

@@ -7,6 +7,46 @@ use EasySwoole\Mysqli\QueryBuilder;
 /** @internal 按语句类型及参数绑定顺序协调各子句编译器。 */
 final class QueryCompiler
 {
+    // 按 MySQL 语法顺序列出各语句可用的修饰符。
+    private const MODIFIERS = [
+        'ALL' => ['SELECT'],
+        'DISTINCT' => ['SELECT'],
+        'DISTINCTROW' => ['SELECT'],
+        'LOW_PRIORITY' => ['INSERT', 'REPLACE', 'UPDATE', 'DELETE'],
+        'HIGH_PRIORITY' => ['SELECT', 'INSERT'],
+        'STRAIGHT_JOIN' => ['SELECT'],
+        'SQL_SMALL_RESULT' => ['SELECT'],
+        'SQL_BIG_RESULT' => ['SELECT'],
+        'SQL_BUFFER_RESULT' => ['SELECT'],
+        'SQL_NO_CACHE' => ['SELECT'],
+        'SQL_CALC_FOUND_ROWS' => ['SELECT'],
+        'QUICK' => ['DELETE'],
+        'IGNORE' => ['INSERT', 'UPDATE', 'DELETE'],
+    ];
+
+    public static function knowsOption(string $option): bool
+    {
+        return isset(self::MODIFIERS[$option]) || $option === 'FOR UPDATE' || $option === 'LOCK IN SHARE MODE';
+    }
+
+    public static function modifierSql(string $statement, array $options): string
+    {
+        if ($options === []) {
+            return '';
+        }
+        foreach ($options as $option) {
+            if (!in_array($statement, self::MODIFIERS[$option] ?? [], true)) {
+                throw new \InvalidArgumentException($option . ' is not supported for ' . $statement);
+            }
+        }
+        $selected = array_fill_keys($options, true);
+        if (count(array_intersect_key($selected, ['ALL' => true, 'DISTINCT' => true, 'DISTINCTROW' => true])) > 1
+            || (isset($selected['LOW_PRIORITY'], $selected['HIGH_PRIORITY']))) {
+            throw new \InvalidArgumentException('Conflicting modifiers for ' . $statement);
+        }
+        return implode(' ', array_keys(array_intersect_key(self::MODIFIERS, $selected)));
+    }
+
     /** @param 'SELECT'|'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
     public function compile(
         SqlBuffer $buffer,
@@ -23,7 +63,7 @@ final class QueryCompiler
             || $parts->forUpdate || $parts->lockInShareMode)) {
             throw new \InvalidArgumentException('GROUP BY, HAVING, UNION and row locks require SELECT');
         }
-        if ($statement !== 'INSERT' && is_array($parts->updateColumns) && $parts->updateColumns !== []) {
+        if ($statement !== 'INSERT' && $parts->updateColumns !== null && $parts->updateColumns !== []) {
             throw new \InvalidArgumentException('ON DUPLICATE KEY UPDATE requires INSERT');
         }
 

@@ -98,7 +98,10 @@ final class QueryBuilderUpsertTest extends TestCase
                 self::fail('Expected malformed batch rows to be rejected');
             } catch (\InvalidArgumentException $error) { self::assertNotEmpty($error->getMessage()); }
         }
-        self::assertSame([['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => null]], WriteCompiler::normalizeBatch([
+        self::assertSame([
+            'columns' => ['id' => '`id`', 'name' => '`name`'],
+            'rows' => [['id' => 1, 'name' => 'a'], ['name' => null, 'id' => 2]],
+        ], WriteCompiler::normalizeBatch([
             3 => ['id' => 1, 'name' => 'a'], 8 => ['name' => null, 'id' => 2],
         ]));
     }

@@ -20,12 +20,12 @@ final class SelectPlannerTest extends TestCase
         ], $changes);
     }
 
-    public function testFromSubSnapshotsReferencedValuesAndKeepsTrailingCommentsSafe(): void
+    public function testFromSubSnapshotsReferencedValues(): void
     {
         $value = 7;
-        $source = SelectPlanner::fromSub('SELECT ? AS id -- comment', [&$value], 'odd`.alias');
+        $source = SelectPlanner::fromSub('SELECT ? AS id', [&$value], 'odd`.alias');
         $value = 99;
-        self::assertSame(['sql' => "(SELECT ? AS id -- comment\n) AS `odd``.alias`",
+        self::assertSame(['sql' => '(SELECT ? AS id) AS `odd``.alias`',
             'params' => [7], 'alias' => 'odd`.alias'], $source);
     }
 
@@ -105,8 +105,8 @@ final class SelectPlannerTest extends TestCase
             $distinct = SelectPlanner::countInput($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]), 'aggregate')['state'];
             self::assertSame($fields, $distinct['fields']);
         }
-        self::assertSame("SELECT COUNT(*) AS `total` FROM (SELECT ? AS id -- comment\n) AS `__mysqli_count`",
-            SelectPlanner::countSql('SELECT ? AS id -- comment', '`total`'));
+        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT ? AS id) AS `__mysqli_count`',
+            SelectPlanner::countSql('SELECT ? AS id', '`total`'));
     }
 
     public function testAggregateExpressionsQuoteColumnsAndPreserveExpressionParameters(): void

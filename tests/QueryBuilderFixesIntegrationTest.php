@@ -87,8 +87,8 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
             ->fromSub($group,'stats')->where('stats.total',50,'>')->get(null);
         self::assertSame([9,1,50],$outer->getLastBindParams());
         self::assertSame([['tenantId'=>2,'marker'=>9]],$this->client->query($outer));
-        $commented=(new QueryBuilder())->raw('SELECT ? AS id, ? AS marker -- source comment',[1,2]);
-        self::assertSame([['id'=>1,'marker'=>2]],$this->client->query((new QueryBuilder())->getFromSub($commented,'stats')));
+        $source = (new QueryBuilder())->raw('SELECT ? AS id, ? AS marker', [1, 2]);
+        self::assertSame([['id' => 1, 'marker' => 2]], $this->client->query((new QueryBuilder())->getFromSub($source, 'stats')));
         $outer=(new QueryBuilder())->fromSub($group,'stats')->sum(null,'stats.total');
         self::assertSame(104,(int)$this->client->query($outer)[0]['aggregate']);
         foreach (['sum'=>100,'avg'=>25,'min'=>10,'max'=>40] as $method=>$expected) {

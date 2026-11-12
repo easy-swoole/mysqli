@@ -9,12 +9,12 @@ use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderAggregateTest extends TestCase
 {
-    public function testFromSubTerminatesATrailingLineCommentBeforeClosingItsSource(): void
+    public function testFromSubDoesNotRepairInvalidSourceSql(): void
     {
-        $subquery=(new QueryBuilder())->raw('SELECT ? AS id, ? AS marker -- source comment',[1,2]);
-        $builder=(new QueryBuilder())->getFromSub($subquery,'stats');
-        self::assertStringContainsString("-- source comment\n) AS `stats`",$builder->getLastPrepareQuery());
-        self::assertSame([1,2],$builder->getLastBindParams());
+        $subquery = (new QueryBuilder())->raw('SELECT ? AS id,', [1]);
+        $builder = (new QueryBuilder())->getFromSub($subquery, 'stats');
+        self::assertSame('SELECT  * FROM (SELECT ? AS id,) AS `stats`', $builder->getLastPrepareQuery());
+        self::assertSame([1], $builder->getLastBindParams());
     }
 
     private function sql(QueryBuilder $builder): string

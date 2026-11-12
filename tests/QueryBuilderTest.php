@@ -604,6 +604,30 @@ final class QueryBuilderTest extends TestCase
         }
     }
 
+    public function testStatementModifiersAreValidatedAndRenderedForTheTargetStatement(): void
+    {
+        $builder = $this->builder->setQueryOption(['IGNORE', 'LOW_PRIORITY'])->update('users', ['name' => 'a']);
+        self::assertSame('UPDATE LOW_PRIORITY IGNORE `users` SET `name` = ?', $builder->getLastPrepareQuery());
+        self::assertSame(['a'], $builder->getLastBindParams());
+        $builder->setQueryOption(['IGNORE', 'QUICK', 'LOW_PRIORITY'])->delete('users');
+        self::assertSame('DELETE LOW_PRIORITY QUICK IGNORE FROM `users`', $builder->getLastPrepareQuery());
+
+        foreach ([
+            static fn(QueryBuilder $q) => $q->distinct()->insert('users', ['name' => 'a']),
+            static fn(QueryBuilder $q) => $q->setQueryOption('LOW_PRIORITY')->get('users'),
+            static fn(QueryBuilder $q) => $q->setQueryOption('IGNORE')->replace('users', ['name' => 'a']),
+            static fn(QueryBuilder $q) => $q->setQueryOption(['HIGH_PRIORITY', 'LOW_PRIORITY'])->insert('users', ['name' => 'a']),
+        ] as $build) {
+            try {
+                $build($builder);
+                self::fail('Expected incompatible modifiers to be rejected');
+            } catch (\InvalidArgumentException) {
+                self::assertSame('DELETE LOW_PRIORITY QUICK IGNORE FROM `users`', $builder->getLastPrepareQuery());
+            }
+            $builder->reset();
+        }
+    }
+
     public function testTableLockUsesTheSameTableReferencesForOneOrManyTables(): void
     {
         $builder = $this->builder->setPrefix('app_');
@@ -723,8 +747,8 @@ final class QueryBuilderTest extends TestCase
 
         $this->builder->join($usersQ, "p.userId=u.id", "LEFT");
         $this->builder->get ("products p", null, "u.login, p.productName");
-        $this->assertEquals('SELECT  u.login, p.productName FROM products p LEFT JOIN   (SELECT  * FROM `users` WHERE  `active` = ? ) u on p.userId=u.id',$this->builder->getLastPrepareQuery());
-        $this->assertEquals('SELECT  u.login, p.productName FROM products p LEFT JOIN   (SELECT  * FROM `users` WHERE  `active` = 1 ) u on p.userId=u.id',$this->builder->getLastQuery());
+        $this->assertEquals('SELECT  u.login, p.productName FROM products p LEFT JOIN   (SELECT  * FROM `users` WHERE  `active` = ? ) `u` on p.userId=u.id',$this->builder->getLastPrepareQuery());
+        $this->assertEquals('SELECT  u.login, p.productName FROM products p LEFT JOIN   (SELECT  * FROM `users` WHERE  `active` = 1 ) `u` on p.userId=u.id',$this->builder->getLastQuery());
         $this->assertEquals([1],$this->builder->getLastBindParams());
 
     }
@@ -756,7 +780,7 @@ final class QueryBuilderTest extends TestCase
         $this->builder->forceIndex('idx_userId')->join($sub, 'p.userId=u.id', 'LEFT')
             ->where('p.status', 2)->get('products p');
         self::assertSame(
-            'SELECT  * FROM products p FORCE INDEX (`idx_userId`) LEFT JOIN   (SELECT  * FROM `users` FORCE INDEX (`idx_active`) WHERE  `active` = ? ) u on p.userId=u.id WHERE  `p`.`status` = ? ',
+            'SELECT  * FROM products p FORCE INDEX (`idx_userId`) LEFT JOIN   (SELECT  * FROM `users` FORCE INDEX (`idx_active`) WHERE  `active` = ? ) `u` on p.userId=u.id WHERE  `p`.`status` = ? ',
             $this->builder->getLastPrepareQuery()
         );
         self::assertSame([1, 2], $this->builder->getLastBindParams());

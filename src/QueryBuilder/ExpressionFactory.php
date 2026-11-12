@@ -45,25 +45,15 @@ final class ExpressionFactory
 
     private static function interval(mixed $diff, mixed $func = "NOW()"): mixed
     {
-        $types = Array("s" => "second", "m" => "minute", "h" => "hour", "d" => "day", "M" => "month", "Y" => "year");
-        $incr = '+';
-        $items = '';
-        $type = 'd';
-        if ($diff && preg_match('/([+-]?) ?([0-9]+) ?([a-zA-Z]?)/', $diff, $matches)) {
-            if (!empty($matches[1])) {
-                $incr = $matches[1];
-            }
-            if (!empty($matches[2])) {
-                $items = $matches[2];
-            }
-            if (!empty($matches[3])) {
-                $type = $matches[3];
-            }
-            if (!in_array($type, array_keys($types))) {
-                throw new Exception("invalid interval type in '{$diff}'");
-            }
-            $func .= " " . $incr . " interval " . $items . " " . $types[$type] . " ";
+        if ($diff === null) {
+            return $func;
         }
-        return $func;
+        if (preg_match('/\A\s*([+-]?)\s*([0-9]+)\s*([smhdMY]?)\s*\z/', $diff, $matches) !== 1) {
+            throw new \InvalidArgumentException('Invalid time interval');
+        }
+        $types = ['s' => 'second', 'm' => 'minute', 'h' => 'hour', 'd' => 'day', 'M' => 'month', 'Y' => 'year'];
+        $sign = $matches[1] === '' ? '+' : $matches[1];
+        $type = $matches[3] === '' ? 'd' : $matches[3];
+        return $func . ' ' . $sign . ' interval ' . $matches[2] . ' ' . $types[$type] . ' ';
     }
 }

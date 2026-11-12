@@ -7,10 +7,20 @@ final class TableReference
 {
     public static function parse(mixed &$tableName, mixed $prefix): mixed
     {
+        $reference = self::resolve($tableName, $prefix);
+        $tableName = $reference['name'];
+        return $reference['sql'];
+    }
+
+    /**
+     * @return array{sql: string, name: string, target: ?string}
+     */
+    public static function resolve(string $tableName, mixed $prefix, bool $quoteBare = true): array
+    {
         $source = trim($tableName);
         // 派生表和表值表达式包含 SQL，不作为普通表名添加前缀。
         if (str_starts_with($source, '(') || preg_match('/\A[^\s`(]+\s*\(/', $source) === 1) {
-            return $tableName;
+            return ['sql' => $tableName, 'name' => $tableName, 'target' => null];
         }
 
         $identifier = '(?:`(?:``|[^`])*`|[^\s.`()]+)';
@@ -23,6 +33,7 @@ final class TableReference
             }, $tokens[0]);
             $unqualified = count($parts) === 1;
             if ($unqualified) {
+                $prefix ??= '';
                 $separator = strrpos($prefix, '.');
                 $quoted = $separator === false ? self::identifier($prefix . $parts[0])
                     : self::column(substr($prefix, 0, $separator)) . '.'
@@ -31,23 +42,34 @@ final class TableReference
                 $quoted = implode('.', array_map([self::class, 'identifier'], $parts));
             }
             $suffix = $match['suffix'] ?? '';
-            if (strpos($match['table'], '`') !== false) {
-                $tableName = $quoted . $suffix;
-                return $tableName;
-            }
-            // 保留普通别名、可信尾部片段及未引用表名元数据的原有拼写。
-            $tableName = ($unqualified ? $prefix . $match['table'] : $match['table']) . $suffix;
-            return $suffix !== '' ? $tableName : $quoted;
+            $hasQuotes = str_contains($match['table'], '`');
+            $name = ($hasQuotes ? $quoted : ($unqualified ? $prefix . $match['table'] : $match['table'])) . $suffix;
+            $sql = $suffix !== '' || (!$quoteBare && !$hasQuotes) ? $name : $quoted;
+            return ['sql' => $sql, 'name' => $name, 'target' => self::alias($suffix, $identifier) ?? $quoted];
         }
 
-        // 对标识符语法之外的可信旧 SQL 片段（例如表提示）保持原有处理。
-        if (strpos($tableName, '.') === false) {
+        // 保留不能作为结构化表名解析的可信 SQL 片段。
+        if (!str_contains($tableName, '.')) {
             $tableName = $prefix . $tableName;
         }
-        if (strpos($tableName, '`') !== false || strpos($tableName, ' ') !== false) {
-            return $tableName;
+        $sql = !$quoteBare || str_contains($tableName, '`') || str_contains($tableName, ' ')
+            ? $tableName : '`' . str_replace('.', '`.`', $tableName) . '`';
+        return ['sql' => $sql, 'name' => $tableName, 'target' => null];
+    }
+
+    private static function alias(string $suffix, string $identifier): ?string
+    {
+        if ($suffix === '') {
+            return null;
         }
-        return '`' . str_replace('.', '`.`', $tableName) . '`';
+        // 分区列表可出现在别名之前，索引提示不属于别名。
+        $suffix = preg_replace('~\APARTITION\s*\((?:`(?:``|[^`])*`|[^`)])*\)~i', '', ltrim($suffix));
+        if (preg_match('~\A(?:(AS)\s+)?(' . $identifier . ')(?=\s|\z)~i', ltrim($suffix), $match) !== 1) {
+            return null;
+        }
+        $alias = $match[2];
+        return $match[1] === '' && in_array(strtoupper($alias), ['PARTITION', 'USE', 'FORCE', 'IGNORE'], true)
+            ? null : $alias;
     }
 
     /** @return list<string> */
