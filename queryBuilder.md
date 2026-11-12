@@ -33,6 +33,7 @@ Coroutine\run(function (): void {
 
 构造器的 `get()`、`getOne()`、`insert()`、`update()` 等方法返回构造器，
 不会执行数据库操作。`getOne()` 构建 `LIMIT 1` 查询，执行后仍返回行数组。
+`get()` 和 `getOne()` 省略字段或传入 `null` 时沿用当前字段配置，显式传入 `'*'` 选择全部列。
 成功执行写入语句返回 `true`；影响行数和插入 ID 分别由客户端的
 `getLastAffectRows()`、`getLastInsertId()` 获取。
 
@@ -460,10 +461,10 @@ $builder->insertAll('users', [
 ], ['field' => ['id', 'name']]);
 ```
 
-- 数据必须是非空的关联行数组，每行也非空。启用 `$option['field']` 白名单时，先过滤白名单之外的字段，再按保留字段校验每行列集合一致。
+- 数据必须是非空的关联行数组，每行也非空。`fields()` 和 `$option['field']` 都能限制列，两者都指定时只保留交集。空白名单没有可写列。
 - 各行可以有不同的键顺序，绑定时统一按第一行的列顺序排列；缺列、多列或过滤后为空会抛出 `InvalidArgumentException`，不会自动补 NULL。
 - 显式 `null` 是实际待写入值，与缺少字段不同；是否允许该值由数据库列约束决定。字段名必须是非空字符串且不含 NUL，反引号会被转义。
-- `insertAll()` 本身仍只插入数据；需要重复键更新时配合 `onDuplicate()`，或使用 `upsert()`。原有单行 `insert()` 调用继续保留。
+- 默认生成 INSERT。`$option['replace']` 为布尔值 `true` 时生成 REPLACE。需要重复键更新时，配合 `onDuplicate()` 或使用 `upsert()`。
 
 ### `upsert($tableName, array $rows, array $updateColumns)` / `onDuplicate($updateColumns)`
 
@@ -485,9 +486,9 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回 Builder，实际执行交给 `Client::query()`。
 - 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
-- `upsert()` 要求非空行数据和非空更新列，所有行的列集合一致；隐式更新列必须存在于每一行中。它不接受 `insertAll()` 的白名单选项，需要时先自行筛选行数据，或用带白名单的 `insertAll()` 配合 `onDuplicate()`。
+- `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
 - 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
-- 重复键更新不是 REPLACE；不要把隐式新值更新与 `insertAll()` 的 REPLACE 选项组合使用。构建完成或 `reset()` 后，更新列设置自动清除。
+- 按插入值更新的字段必须在过滤后保留。重复键更新仅用于 INSERT，与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
 ### `whereLike($column, $pattern, $cond = 'AND')` 的字段引用
@@ -604,7 +605,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 ```
 
 - 设置整条可信 SQL 和位置参数，并清除待构建设置。参数数组会替换此前参数，不与失败编译或旧查询参数拼接；无需先 `reset()` 才能开始一条 raw 查询。
-- 它仍只构建查询；交给 `Client::query()` 执行。`getLastQuery()` 是调试展示，不用于重新拼接执行；多语句和 CALL 限制继续适用。
+- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。多语句和 CALL 限制同样适用。
 
 
 ## 查询（SELECT）
@@ -797,7 +798,8 @@ $builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
 ```
 
 - 只有 `null` 表示未指定条数并使用此前 `limit()` 设置；数字 `0` 不取消 LIMIT。
-- 未指定条数且未设置 `limit()` 才不限制条数；偏移分页 `[0, 0]` 同样返回零行。
+- 未指定条数且未设置 `limit()` 才不限制条数；SELECT 的偏移分页 `[0, 0]` 返回零行。
+- 单表 UPDATE 和 DELETE 可用 `limit(5)` 限制行数。带 JOIN 的 UPDATE 和 DELETE 不支持 ORDER BY 或 LIMIT，写入语句也不支持带偏移量的 LIMIT。这些组合会在构建时抛出 `InvalidArgumentException`。
 - `get(null)` 仅在此前设置 `fromSub()` 时有效；设置派生表来源后不再传普通表名。普通查询的表名必须是非空字符串。
 
 ### `joinWhere()` / `joinOrWhere()` 的 NULL 判断
@@ -903,7 +905,7 @@ $builder->insert ("products", $data);
 
 ## 锁
 
-行锁示例应在事务中执行。优先用下述枚举表达等待策略；兼容的原始字符串尾部必须可信且符合目标服务端语法。
+行锁用于 SELECT，应在事务中执行。同时设置 `FOR UPDATE` 和 `LOCK IN SHARE MODE` 会在构建时抛出 `InvalidArgumentException`。优先用下述枚举表达等待策略。自定义字符串尾部必须来自可信代码并符合服务端语法。
 
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
@@ -968,7 +970,8 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
-- 表锁模式沿用原有持久行为，构建完成或 `reset()` 不恢复为 READ；复用构造器时需要显式切回。表前缀处理和事务操作标记不变。
+- 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
+- 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。
 
 ## 批量插入
 

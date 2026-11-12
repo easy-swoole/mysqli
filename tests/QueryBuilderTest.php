@@ -378,6 +378,26 @@ final class QueryBuilderTest extends TestCase
         $this->assertEquals([],$this->builder->getLastBindParams());
     }
 
+    public function testGetOneUsesConfiguredFieldsOnlyWhenColumnsAreOmittedOrNull(): void
+    {
+        $this->builder->fields('id')->getOne('users');
+        self::assertSame('SELECT id FROM `users` LIMIT 1', $this->normalizedSql($this->builder));
+
+        $this->builder->fields('id')->getOne('users', null);
+        self::assertSame('SELECT id FROM `users` LIMIT 1', $this->normalizedSql($this->builder));
+
+        $this->builder->fields('id')->getOne('users', '*');
+        self::assertSame('SELECT * FROM `users` LIMIT 1', $this->normalizedSql($this->builder));
+    }
+
+    public function testGetRejectsAnExplicitEmptyColumnList(): void
+    {
+        $this->builder->fields('id');
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('SELECT requires at least one column');
+        $this->builder->get('users', null, []);
+    }
+
     public function testGetColumn(): void
     {
         $this->builder->getColumn('get');
@@ -534,15 +554,66 @@ final class QueryBuilderTest extends TestCase
         $this->assertEquals([1, 'whereValue'], $this->builder->getLastBindParams());
     }
 
-    /**
-     * @throws \Exception
-     */
-    public function testLockWhereLimitUpdate(): void
+    public function testStatementSpecificClausesCannotLeakIntoOtherStatements(): void
     {
-        $this->builder->setQueryOption("FOR UPDATE")->where('whereUpdate', 'whereValue')->update('updateTable', ['a' => 1], 2);
-        $this->assertEquals('UPDATE `updateTable` SET `a` = ? WHERE  `whereUpdate` = ?  LIMIT 2 FOR UPDATE', $this->builder->getLastPrepareQuery());
-        $this->assertEquals("UPDATE `updateTable` SET `a` = 1 WHERE  `whereUpdate` = 'whereValue'  LIMIT 2 FOR UPDATE", $this->builder->getLastQuery());
-        $this->assertEquals([1, 'whereValue'], $this->builder->getLastBindParams());
+        $builder = $this->builder->raw('SELECT ?', [1]);
+        $cases = [
+            static fn(QueryBuilder $q) => $q->setQueryOption('FOR UPDATE')->update('users', ['name' => 'a']),
+            static fn(QueryBuilder $q) => $q->forUpdate()->lockInShareMode()->get('users'),
+            static fn(QueryBuilder $q) => $q->onDuplicate(['name' => 'a'])->get('users'),
+            static fn(QueryBuilder $q) => $q->onDuplicate(['name' => 'a'])->replace('users', ['name' => 'b']),
+            static fn(QueryBuilder $q) => $q->where('id', 1)->insert('users', ['name' => 'a']),
+        ];
+        foreach ($cases as $build) {
+            try {
+                $build($builder);
+                self::fail('Expected an incompatible clause to be rejected');
+            } catch (\InvalidArgumentException) {
+                self::assertSame('SELECT ?', $builder->getLastPrepareQuery());
+                self::assertSame([1], $builder->getLastBindParams());
+                self::assertSame('SELECT 1', $builder->getLastQuery());
+            }
+            $builder->reset();
+        }
+    }
+
+    public function testUpdateAndDeleteRejectUnsupportedOrderingAndLimits(): void
+    {
+        $cases = [
+            [static fn(QueryBuilder $q) => $q->join('orders o', 'users.id=o.userId')->orderByAsc('users.id'), null, 'with JOIN'],
+            [static fn(QueryBuilder $q) => $q->join('orders o', 'users.id=o.userId')->limit(0), null, 'with JOIN'],
+            [static fn(QueryBuilder $q) => $q->limit(2, 5), null, 'row count only'],
+            [static fn(QueryBuilder $q) => $q, [2, 5], 'row count only'],
+        ];
+        foreach ($cases as [$configure, $limit, $message]) {
+            foreach (['update', 'delete'] as $statement) {
+                $builder = $configure((new QueryBuilder())->raw('SELECT ?', [7])->where('users.id', 1));
+                try {
+                    if ($statement === 'update') {
+                        $builder->update('users', ['name' => 'new'], $limit);
+                    } else {
+                        $builder->delete('users', $limit);
+                    }
+                    self::fail('Expected unsupported write syntax to be rejected');
+                } catch (\InvalidArgumentException $error) {
+                    self::assertStringContainsString($message, $error->getMessage());
+                    self::assertSame('SELECT ?', $builder->getLastPrepareQuery());
+                    self::assertSame([7], $builder->getLastBindParams());
+                }
+            }
+        }
+    }
+
+    public function testTableLockUsesTheSameTableReferencesForOneOrManyTables(): void
+    {
+        $builder = $this->builder->setPrefix('app_');
+        $builder->lockTable('orders');
+        self::assertSame('LOCK TABLES `app_orders` READ', $builder->getLastPrepareQuery());
+
+        $builder->lockTable([1 => 'orders', 'archive' => '`archive`.`orders`']);
+        self::assertSame('LOCK TABLES `app_orders` READ, `archive`.`orders` READ', $builder->getLastPrepareQuery());
+        self::assertSame(QueryBuilder::TS_OP_LOCK_TABLE, $builder->getLastTransactionOp());
+        self::assertSame([], $builder->getLastBindParams());
     }
 
     public function testForUpdate(): void

@@ -13,7 +13,7 @@ final class SelectPlannerTest extends TestCase
     private function state(array $changes = []): array
     {
         return array_replace([
-            'fields' => '*', 'groups' => [], 'havingConditions' => [], 'unionBranches' => [],
+            'fields' => null, 'groups' => [], 'havingConditions' => [], 'unionBranches' => [],
             'queryOptions' => [], 'ordering' => [], 'limit' => null, 'forUpdate' => false,
             'lockInShareMode' => false, 'selectLockOption' => '', 'fromSource' => null,
             'whereConditions' => [], 'joins' => [], 'prefix' => 'app_',
@@ -99,7 +99,7 @@ final class SelectPlannerTest extends TestCase
         $grouped = SelectPlanner::countInput($this->state(['groups' => ["COALESCE(status, 'x,y'), tenantId"]]), 'aggregate')['state'];
         self::assertSame(["COALESCE(status, 'x,y') AS `__mysqli_group0`", ' tenantId AS `__mysqli_group1`'],
             array_map(static fn(Expression $field): string => $field->getSql(), $grouped['fields']));
-        foreach (['*', ['*']] as $fields) {
+        foreach ([null, ['*']] as $fields) {
             $ordinal = SelectPlanner::countInput($this->state(['fields' => $fields, 'groups' => ['status, 1']]), 'aggregate')['state'];
             self::assertSame($fields, $ordinal['fields']);
             $distinct = SelectPlanner::countInput($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]), 'aggregate')['state'];

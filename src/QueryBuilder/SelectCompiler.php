@@ -127,6 +127,9 @@ final class SelectCompiler
         if (!is_array($columns)) {
             return (string) $columns;
         }
+        if ($columns === []) {
+            throw new \InvalidArgumentException('SELECT requires at least one column');
+        }
         $rendered = [];
         foreach ($columns as $column) {
             if ($column instanceof Expression) {

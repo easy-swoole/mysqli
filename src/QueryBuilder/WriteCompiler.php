@@ -18,7 +18,7 @@ final class WriteCompiler
      * 生成 SQL 前校验并对齐各行字段，保留行顺序及 NULL 值。
      * @return non-empty-list<non-empty-array<string, mixed>>
      */
-    public static function normalizeBatch(mixed $rows): array
+    public static function normalizeBatch(mixed $rows, ?array $fields = null): array
     {
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
@@ -30,6 +30,7 @@ final class WriteCompiler
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
             }
+            $row = self::filterRow($row, $fields);
             if ($columns === null) {
                 $columns = array_keys($row);
                 foreach ($columns as $column) { self::quoteIdentifier($column); }
@@ -45,13 +46,13 @@ final class WriteCompiler
         return $normalized;
     }
 
-    public function appendData(mixed $tableData): void
+    /** 返回过滤后的单行，供单行重复键更新读取。 */
+    public function appendData(array $tableData, bool $isInsert, ?array $fields, bool $batch = false): array
     {
         $this->batchColumns = null;
-        if (!is_array($tableData)) { return; }
-        $isInsert = preg_match('/\A(?:INSERT|REPLACE)\b/', $this->buffer->sql) === 1;
-        if ($isInsert && isset($tableData[0]) && is_array($tableData[0])) {
-            $rows = self::normalizeBatch($tableData);
+        $first = array_key_first($tableData);
+        if ($isInsert && ($batch || (is_int($first) && is_array($tableData[$first])))) {
+            $rows = self::normalizeBatch($tableData, $fields);
             $columns = array_keys($rows[0]);
             $this->batchColumns = $columns;
             $this->buffer->sql .= ' (' . implode(', ', array_map([self::class, 'quoteIdentifier'], $columns)) . ') ';
@@ -62,7 +63,11 @@ final class WriteCompiler
                 $this->buffer->sql .= '),';
             }
             $this->buffer->sql = rtrim($this->buffer->sql, ',');
-            return;
+            return [];
+        }
+        $tableData = self::filterRow($tableData, $fields);
+        if (!$isInsert && $tableData === []) {
+            throw new \InvalidArgumentException('UPDATE requires at least one assignment');
         }
         $columns = array_keys($tableData);
         if ($isInsert) {
@@ -75,6 +80,19 @@ final class WriteCompiler
         }
         $this->appendPairs($tableData, $columns, $isInsert);
         if ($isInsert) { $this->buffer->sql .= ')'; }
+        return $tableData;
+    }
+
+    private static function filterRow(array $row, ?array $fields): array
+    {
+        if ($fields === null || $row === []) {
+            return $row;
+        }
+        $filtered = array_filter($row, static fn($column) => in_array($column, $fields, true), ARRAY_FILTER_USE_KEY);
+        if ($filtered === []) {
+            throw new \InvalidArgumentException('No writable columns remain after field filtering');
+        }
+        return $filtered;
     }
 
     private function appendPairs(mixed $tableData, mixed $tableColumns, mixed $isInsert, bool $literalColumns = false): void
@@ -157,9 +175,6 @@ final class WriteCompiler
         }
         $alias = null;
         if ($incomingColumns !== []) {
-            if (!preg_match('/\AINSERT\b/', $this->buffer->sql)) {
-                throw new \InvalidArgumentException('Incoming-row duplicate updates require INSERT, not REPLACE');
-            }
             $table = trim(str_replace('`', '', (string) $this->buffer->tableName));
             $table = substr($table, strrpos('.' . $table, '.'));
             $alias = strcasecmp($table, '__mysqli_new') === 0 ? '__mysqli_new_row' : '__mysqli_new';

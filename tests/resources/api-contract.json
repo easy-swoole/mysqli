@@ -3829,8 +3829,8 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": {
-                                "type": "string",
-                                "value": "*"
+                                "type": "null",
+                                "value": null
                             },
                             "type": null
                         }
@@ -6650,13 +6650,26 @@
                             ]
                         },
                         {
+                            "name": "statement",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null,
+                            "type": [
+                                "string"
+                            ]
+                        },
+                        {
                             "name": "numRows",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
                             "hasDefault": false,
                             "default": null,
-                            "type": null
+                            "type": [
+                                "mixed"
+                            ]
                         },
                         {
                             "name": "tableData",
@@ -6665,7 +6678,32 @@
                             "optional": false,
                             "hasDefault": false,
                             "default": null,
-                            "type": null
+                            "type": [
+                                "mixed"
+                            ]
+                        },
+                        {
+                            "name": "fields",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null,
+                            "type": [
+                                "array",
+                                "null"
+                            ]
+                        },
+                        {
+                            "name": "batch",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null,
+                            "type": [
+                                "bool"
+                            ]
                         }
                     ],
                     "returnType": [
@@ -7428,11 +7466,50 @@
                             "optional": false,
                             "hasDefault": false,
                             "default": null,
-                            "type": null
+                            "type": [
+                                "array"
+                            ]
+                        },
+                        {
+                            "name": "isInsert",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null,
+                            "type": [
+                                "bool"
+                            ]
+                        },
+                        {
+                            "name": "fields",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null,
+                            "type": [
+                                "array",
+                                "null"
+                            ]
+                        },
+                        {
+                            "name": "batch",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": {
+                                "type": "bool",
+                                "value": false
+                            },
+                            "type": [
+                                "bool"
+                            ]
                         }
                     ],
                     "returnType": [
-                        "void"
+                        "array"
                     ]
                 },
                 "appendDuplicate": {
@@ -7477,7 +7554,24 @@
                             "optional": false,
                             "hasDefault": false,
                             "default": null,
-                            "type": null
+                            "type": [
+                                "mixed"
+                            ]
+                        },
+                        {
+                            "name": "fields",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": {
+                                "type": "null",
+                                "value": null
+                            },
+                            "type": [
+                                "array",
+                                "null"
+                            ]
                         }
                     ],
                     "returnType": [

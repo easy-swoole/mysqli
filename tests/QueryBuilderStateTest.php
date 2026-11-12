@@ -16,6 +16,40 @@ final class QueryBuilderStateTest extends TestCase
             $builder->getLastTransactionOp(), $builder->getLastQuery()];
     }
 
+    public function testGetFieldDistinguishesImplicitAndExplicitFields(): void
+    {
+        $builder = new QueryBuilder();
+        self::assertNull($builder->getField());
+        self::assertSame(['*'], $builder->fields('*')->getField());
+        self::assertSame([], $builder->fields([])->getField());
+        self::assertSame(['id'], $builder->fields('id')->getField());
+        self::assertSame(['id', 'name'], $builder->fields(['id', 'name'])->getField());
+        self::assertNull($builder->get('users')->getField());
+
+        $fields = $builder->selectRaw('COALESCE(name, ?)', ['guest'])->getField();
+        self::assertCount(1, $fields);
+        self::assertSame('COALESCE(name, ?)', $fields[0]->getSql());
+        self::assertSame(['guest'], $fields[0]->getParameters());
+        self::assertNull($builder->reset()->getField());
+    }
+
+    public function testGetOnePassesResolvedFieldsToAnOverriddenGet(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                return parent::get($tableName, $numRows, [...(array)($columns ?? '*'), 'audit_id']);
+            }
+        };
+
+        $builder->fields('id')->getOne('users');
+        self::assertSame('SELECT  id, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
+        $builder->fields('id')->getOne('users', null);
+        self::assertSame('SELECT  id, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
+        $builder->fields('id')->getOne('users', '*');
+        self::assertSame('SELECT  *, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
+    }
+
     public function testClonesStayIndependentAfterWhereHelpersAndWhenHelpersRunOnTheClone(): void
     {
         $helpers = [
@@ -195,7 +229,7 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame('SELECT  * FROM `app_records`', $builder->getLastPrepareQuery());
         self::assertSame([], $builder->getLastBindParams());
         $builder->lockTable('records');
-        self::assertSame('LOCK TABLES app_records WRITE', $builder->getLastPrepareQuery());
+        self::assertSame('LOCK TABLES `app_records` WRITE', $builder->getLastPrepareQuery());
     }
 
     public function testDebugSqlIsAvailableBeforeVirtualResetPublishesThePreparedSnapshot(): void

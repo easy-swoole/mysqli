@@ -602,6 +602,12 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 - `joinWhereGroup()` 以 AND 追加整个组，`joinOrWhereGroup()` 以 OR 追加；前面的初始 JOIN 条件不会自动被包进同一个组，需确认完整 ON 的优先级。
 - 闭包不构建/执行查询，仅收集条件；支持嵌套 WHERE 分组，空组或错误回调会报错且不追加半成品组。
 
+### `insert($tableName, $insertData)` / `replace($tableName, $insertData)`
+
+- 可传入单个关联行或按整数键组织的多行数组。需要使用任意外层键时，调用 `insertAll()`。
+- 设置 `fields()` 后，每行只保留白名单中的列。若某行原有数据在过滤后没有任何列，抛出 `InvalidArgumentException`。
+- 显式传入空数组可构建一行默认值。是否允许默认值由数据库列约束决定。
+
 ### `insertAll($tableName, $insertData, $option = [])` 的批量校验
 
 ```php
@@ -611,10 +617,10 @@ $builder->insertAll('users', [
 ], ['field' => ['id', 'name']]);
 ```
 
-- 数据必须是非空的关联行数组，每行也非空。启用 `$option['field']` 白名单时，先过滤白名单之外的字段，再按保留字段校验每行列集合一致。
+- 数据必须是非空的关联行数组，每行也非空。可用 `fields()` 或 `$option['field']` 指定允许写入的列，两者都指定时只保留交集。空白名单没有可写列。
 - 各行可以有不同的键顺序，绑定时统一按第一行的列顺序排列；缺列、多列或过滤后为空会抛出 `InvalidArgumentException`，不会自动补 NULL。
 - 显式 `null` 是实际待写入值，与缺少字段不同；是否允许该值由数据库列约束决定。字段名必须是非空字符串且不含 NUL，反引号会被转义。
-- `insertAll()` 本身仍只插入数据；需要重复键更新时配合 `onDuplicate()`，或使用 `upsert()`。原有单行 `insert()` 调用继续保留。
+- 默认生成 INSERT。将 `$option['replace']` 设置为布尔值 `true` 可生成 REPLACE。需要按重复键更新指定字段时，配合 `onDuplicate()` 或使用 `upsert()`。
 
 ### `upsert($tableName, array $rows, array $updateColumns)` / `onDuplicate($updateColumns)`
 
@@ -636,14 +642,16 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回构造器，实际执行交给 `Client::query()`。
 - 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
-- `upsert()` 要求非空行数据和非空更新列，所有行的列集合一致；隐式更新列必须存在于每一行中。它不接受 `insertAll()` 的白名单选项，需要时先自行筛选行数据，或用带白名单的 `insertAll()` 配合 `onDuplicate()`。
+- `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
 - 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
-- 重复键更新不是 REPLACE；不要把隐式新值更新与 `insertAll()` 的 REPLACE 选项组合使用。构建完成或 `reset()` 后，更新列设置自动清除。
+- 按插入值更新的字段必须在过滤后保留。固定值或表达式更新列由 `$updateColumns` 指定。
+- 重复键更新仅用于 INSERT。与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
 ### 通用调用规则
 
 - 先调用条件、排序、索引及锁方法，最后调用 `get()`、`getOne()`、`update()` 等构建方法，再交给 `$client->query($builder)` 执行。构建方法本身不访问数据库。
+- GROUP BY、HAVING、UNION 和行锁用于 SELECT。INSERT 和 REPLACE 接收写入值，不能同时配置 JOIN、WHERE、ORDER BY 或 LIMIT。
 - `get()` 等方法完成构建时就会清除当前设置，并非等到执行后才清除；已成功构建的 SQL 和绑定参数保留。手动 `reset()` 也只清待构建状态，表前缀不会自动清除。
 - 构建失败不覆盖最近成功结果；放弃失败条件后使用 `reset()` 开始新查询。`setQueryOption([...])` 会先验证整批选项，遇到非法项不会部分应用。
 - 字段名、索引名、SQL 表达式和 AND/OR 连接符使用代码常量或白名单；参数绑定只保护条件值，不保护 SQL 结构。
@@ -662,9 +670,35 @@ $builder->get('`archive`.`order`');
 // SELECT * FROM `archive`.`order`，显式数据库限定名不再添加表前缀
 ```
 
-- `fields()` 接受字符串、字段数组和 Expression；字符串中的表达式、空白和别名原样保留。它也用于 INSERT/UPDATE 的字段白名单，读取表达式与写入白名单不要混用。
+- `fields()` 接受字符串、字段数组和 Expression；字符串中的表达式、空白和别名原样保留。用于 INSERT、REPLACE 或 UPDATE 的字段白名单时，传入要保留的原始列名。
 - `setPrefix()` 保留到显式更改；`reset()` 不清除表前缀。普通表名、已有反引号的表名及其别名均可使用；数据库限定表名不添加前缀。
 - 表名、字段表达式及原始 FROM 片段仍来自可信代码；表名前缀处理不是任意 SQL 的安全过滤器。需要带参数的派生表时使用 `fromSub()`。
+
+### `getField(): ?array`：读取显式配置的字段
+
+```php
+$builder = new QueryBuilder();
+$builder->getField();                      // null
+$builder->fields('*')->getField();         // ['*']
+$builder->fields(['id', 'name'])->getField(); // ['id', 'name']
+$builder->fields([])->getField();          // []
+```
+
+- 未显式设置字段时返回 `null`，构建 SELECT 时默认选择 `*`。
+- `fields()` 设置的字段和 `selectRaw()` 添加的表达式均按数组返回。显式设置的空数组也会原样返回。
+- 此方法读取待构建状态。请在 `get()` 等构建方法前读取，构建完成或调用 `reset()` 后会恢复为 `null`。
+
+### `get($tableName, $numRows = null, $columns = null)` / `getOne($tableName, $columns = null)`
+
+```php
+$builder->fields('id')->get('users');           // SELECT id FROM `users`
+$builder->fields('id')->getOne('users');        // SELECT id FROM `users` LIMIT 1
+$builder->fields('id')->getOne('users', '*');   // SELECT * FROM `users` LIMIT 1
+```
+
+- 省略 `$columns` 或传入 `null` 时，使用当前的 `fields()` 和 `selectRaw()` 配置。未配置时默认选择 `*`。
+- 显式传入字段会覆盖当前配置。传入 `'*'` 选择全部列，空字段数组会抛出 `InvalidArgumentException`。
+- `getOne()` 固定生成 `LIMIT 1`。
 
 ### `update($tableName, $tableData, $numRows = null)`：限定字段名
 
@@ -678,6 +712,7 @@ $builder->where('u.id', 1)->update('users u', [
 
 - UPDATE 字段支持 `字段`、`别名.字段`、`数据库.表.字段` 及正确引用的各段，已加反引号的字段不会被再次引用。名称本身包含点时用单个引用名，例如 `` `odd.name` ``。
 - `inc()` / `dec()` / 无参数 `not()` 引用自身字段时采用相同引用规则；值仍单独绑定。字段名和写入范围由调用方确定。
+- `fields()` 可限制赋值列。UPDATE 至少需要一个可写字段，过滤后无列会抛出 `InvalidArgumentException`。
 
 ### `fromSub($subquery, $alias)` / `getFromSub($subquery, $alias, $numRows = null, $columns = null)`
 
@@ -754,7 +789,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 ```
 
 - 设置整条可信 SQL 和位置参数，并清除待构建设置。参数数组会替换此前参数，不与失败编译或旧查询参数拼接；无需先 `reset()` 才能开始一条 raw 查询。
-- 它仍只构建查询；交给 `Client::query()` 执行。`getLastQuery()` 是调试展示，不用于重新拼接执行；多语句和 CALL 限制继续适用。
+- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看；执行使用预处理 SQL 和绑定参数。多语句和 CALL 限制同样适用。
 
 
 ### `forceIndex($indexes)`
@@ -1031,7 +1066,8 @@ $builder->limit(25)->get('orders', null); // 使用此前 LIMIT 25
 ```
 
 - 只有 `null` 表示未指定条数并使用此前 `limit()` 设置；数字 `0` 不取消 LIMIT。
-- 未指定条数且未设置 `limit()` 才不限制条数；偏移分页 `[0, 0]` 同样返回零行。
+- 未指定条数且未设置 `limit()` 才不限制条数；SELECT 的偏移分页 `[0, 0]` 返回零行。
+- 单表 UPDATE 和 DELETE 可用 `limit(5)` 限制行数。带 JOIN 的 UPDATE 和 DELETE 不支持 ORDER BY 或 LIMIT，写入语句也不支持带偏移量的 LIMIT。这些组合会在构建时抛出 `InvalidArgumentException`。
 - `get(null)` 仅在此前设置 `fromSub()` 时有效；设置派生表来源后不再传普通表名。普通查询的表名必须是非空字符串。
 
 ### `joinWhere()` / `joinOrWhere()` 的 NULL 判断
@@ -1111,7 +1147,8 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
-- 表锁模式沿用原有持久行为，构建完成或 `reset()` 不恢复为 READ；复用构造器时需要显式切回。表前缀处理和事务操作标记不变。
+- 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
+- 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。
 
 ### `forUpdate($isLock = true)`
 
@@ -1124,7 +1161,7 @@ $rows = $client->query($builder);
 - 等价于 `selectForUpdate($isLock)`，用于 SELECT；不自动开启事务，调用方负责开启、提交或回滚事务，并在同一客户端连接上执行。
 - 需要跨语句持有锁时，在事务内执行；不要把 `get()` 或 `forUpdate()` 当作已经向服务端申请锁，实际锁定发生在查询执行时。
 - `forUpdate(false)` 取消排他锁及其等待选项。已调用 `skipLocked()` 或 `nowait()` 后再调用 `forUpdate(true)`，会保留已有等待选项。
-- 不要与 `lockInShareMode()` 混用；当前接口不会自动替你消除两种锁模式的冲突。外层的锁设置也不会自动传播到子查询。
+- 两种行锁只能选一种。同时开启 `forUpdate()` 和 `lockInShareMode()` 时，构建会抛出 `InvalidArgumentException`。行锁只作用于配置它的 SELECT。
 
 ### `skipLocked()`
 
@@ -1208,10 +1245,10 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
 | `SelectPlanner` / `SelectPlan` | 无状态规划 SELECT 来源、COUNT、聚合，返回只读 SELECT 头部 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
-| `QueryCompiler` | 按 SQL 顺序调度各类编译，处理最终行锁和事务标记 |
+| `QueryCompiler` | 按语句类型及 SQL 顺序编译子句，处理 SELECT 行锁和事务标记 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
 | `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
-| `WriteCompiler` | INSERT、REPLACE、UPDATE、批量值和重复键更新 |
+| `WriteCompiler` | 写入字段过滤、批量字段对齐、INSERT/REPLACE 值、UPDATE 赋值及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
 | `SqlList` | 在引号、注释和嵌套表达式之外解析选择列表 |

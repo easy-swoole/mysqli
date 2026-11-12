@@ -13,7 +13,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
  *   ordering: array<array-key, array>, groups: list<mixed>, queryOptions: list<string>,
  *   parameters: array, updateColumns: mixed, tableName: mixed,
  *   forUpdate: bool, lockInShareMode: bool, selectLockOption: string|false,
- *   limit: mixed, fields: mixed, forceIndexes: list<string>, useIndexes: list<string>,
+ *   limit: mixed, fields: ?array, forceIndexes: list<string>, useIndexes: list<string>,
  *   ignoreIndexes: list<string>, sql: mixed, isCompiled: bool,
  *   fromSource: null|array{sql: string, params: array, alias: string}
  * }
@@ -26,7 +26,7 @@ final class PendingQuery
         'joinConditions' => [], 'havingConditions' => [], 'ordering' => [], 'groups' => [],
         'queryOptions' => [], 'parameters' => [], 'updateColumns' => null,
         'tableName' => '', 'forUpdate' => false, 'lockInShareMode' => false,
-        'selectLockOption' => '', 'limit' => null, 'fields' => '*',
+        'selectLockOption' => '', 'limit' => null, 'fields' => null,
         'forceIndexes' => [], 'useIndexes' => [], 'ignoreIndexes' => [],
         'sql' => null, 'isCompiled' => false, 'fromSource' => null,
     ];

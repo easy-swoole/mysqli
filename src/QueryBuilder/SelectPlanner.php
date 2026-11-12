@@ -70,7 +70,7 @@ final class SelectPlanner
         $state['lockInShareMode'] = false;
         $state['selectLockOption'] = '';
         $state['queryOptions'] = array_values(array_diff($state['queryOptions'], ['SQL_CALC_FOUND_ROWS']));
-        if ($state['fields'] === '*' || $state['fields'] === ['*']) {
+        if ($state['fields'] === null || $state['fields'] === ['*']) {
             if ($state['groups'] !== [] && $state['unionBranches'] === []) {
                 $items = [];
                 foreach ($state['groups'] as $group) { array_push($items, ...SqlList::items($group)); }

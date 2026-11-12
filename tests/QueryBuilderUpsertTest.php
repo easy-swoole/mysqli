@@ -136,6 +136,93 @@ final class QueryBuilderUpsertTest extends TestCase
         }
     }
 
+    public function testBatchReplaceRequiresTrue(): void
+    {
+        $builder = new QueryBuilder();
+        foreach ([[], ['replace' => false], ['replace' => 1]] as $options) {
+            $builder->insertAll('users', [['id' => 1]], $options);
+            self::assertSame('INSERT  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
+        }
+
+        $builder->insertAll('users', [['id' => 1]], ['replace' => true]);
+        self::assertSame('REPLACE  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
+        self::assertSame([1], $builder->getLastBindParams());
+    }
+
+    public function testWriteWhitelistsApplyToSingleRowsAndBatches(): void
+    {
+        $builder = new QueryBuilder();
+        $builder->fields('id')->insert('users', ['id' => 1, 'name' => 'a']);
+        self::assertSame('INSERT  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
+        self::assertSame([1], $builder->getLastBindParams());
+
+        $rows = [2 => ['id' => 1, 'name' => 'a'], 5 => ['email' => 'b', 'id' => 2]];
+        $builder->fields('id')->insert('users', $rows);
+        self::assertSame('INSERT  INTO `users` (`id`)  VALUES (?),(?)', $builder->getLastPrepareQuery());
+        self::assertSame([1, 2], $builder->getLastBindParams());
+
+        $builder->fields(['id', 'name'])->insertAll('users', $rows, ['field' => ['id', 'email']]);
+        self::assertSame('INSERT  INTO `users` (`id`)  VALUES (?),(?)', $builder->getLastPrepareQuery());
+        self::assertSame([1, 2], $builder->getLastBindParams());
+
+        $builder->fields('id')->upsert('users', $rows, ['id']);
+        self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `id` = `__mysqli_new`.`id`', $builder->getLastPrepareQuery());
+        self::assertSame([1, 2], $builder->getLastBindParams());
+
+        $builder->fields('id')->replace('users', ['id' => 1, 'name' => 'a']);
+        self::assertSame('REPLACE  INTO `users` (`id`)  VALUES (?)', $builder->getLastPrepareQuery());
+        self::assertSame([1], $builder->getLastBindParams());
+
+        $builder->fields('name')->where('id', 1)->update('users', ['id' => 2, 'name' => null]);
+        self::assertSame('UPDATE `users` SET `name` = ? WHERE  `id` = ? ', $builder->getLastPrepareQuery());
+        self::assertSame([null, 1], $builder->getLastBindParams());
+    }
+
+    public function testFailedUpsertRestoresPreviousDuplicateUpdateSettings(): void
+    {
+        foreach ([null, ['name' => 'previous']] as $previous) {
+            $builder = (new QueryBuilder())->fields('id');
+            if ($previous !== null) {
+                $builder->onDuplicate($previous);
+            }
+
+            try {
+                $builder->upsert('users', [['name' => 'input']], ['name' => 'failed']);
+                self::fail('Expected filtering to reject the row');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('No writable columns', $error->getMessage());
+            }
+
+            $builder->insert('users', ['id' => 1]);
+            $sql = 'INSERT  INTO `users` (`id`)  VALUES (?)';
+            if ($previous === null) {
+                self::assertSame($sql, $builder->getLastPrepareQuery());
+                self::assertSame([1], $builder->getLastBindParams());
+            } else {
+                self::assertSame($sql . ' ON DUPLICATE KEY UPDATE `name` = ?', $builder->getLastPrepareQuery());
+                self::assertSame([1, 'previous'], $builder->getLastBindParams());
+            }
+        }
+    }
+
+    public function testWriteWhitelistCannotTurnAProvidedRowIntoAnEmptyWrite(): void
+    {
+        $cases = [
+            static fn(QueryBuilder $q) => $q->fields('id')->insert('users', ['name' => 'a']),
+            static fn(QueryBuilder $q) => $q->fields('id')->insertAll('users', [['id' => 1], ['name' => 'a']]),
+            static fn(QueryBuilder $q) => $q->insertAll('users', [['id' => 1]], ['field' => []]),
+            static fn(QueryBuilder $q) => $q->fields('id')->update('users', ['name' => 'a']),
+        ];
+        foreach ($cases as $build) {
+            try {
+                $build(new QueryBuilder());
+                self::fail('Expected an empty filtered row to be rejected');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('No writable columns', $error->getMessage());
+            }
+        }
+    }
+
     public function testBatchWhitelistFiltersBeforeMatchingColumns(): void
     {
         $q = (new QueryBuilder())->insertAll('users', [
