@@ -8,6 +8,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 final class CountCompilation
 {
     public bool $active = true;
+    public bool $skipResetHook = false;
 
     /** @param array{bool, bool}|null $quoteMode */
     public function __construct(public readonly ?array $quoteMode = null) {}

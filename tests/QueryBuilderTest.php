@@ -736,8 +736,8 @@ final class QueryBuilderTest extends TestCase
             "lastUpdated" => $this->builder->now()
         );
         $this->builder->insert ("products", $data);
-        $this->assertEquals('INSERT  INTO `products` (`productName`, `userId`, `lastUpdated`)  VALUES (?,   (SELECT  name FROM `users` WHERE  `id` = ?  LIMIT 1) , NOW())',$this->builder->getLastPrepareQuery());
-        $this->assertEquals("INSERT  INTO `products` (`productName`, `userId`, `lastUpdated`)  VALUES ('test product',   (SELECT  name FROM `users` WHERE  `id` = 6  LIMIT 1) , NOW())",$this->builder->getLastQuery());
+        $this->assertEquals('INSERT  INTO `products` (`productName`, `userId`, `lastUpdated`)  VALUES (?,   (SELECT  name FROM `users` WHERE  `id` = ?  LIMIT 1), NOW())',$this->builder->getLastPrepareQuery());
+        $this->assertEquals("INSERT  INTO `products` (`productName`, `userId`, `lastUpdated`)  VALUES ('test product',   (SELECT  name FROM `users` WHERE  `id` = 6  LIMIT 1), NOW())",$this->builder->getLastQuery());
         $this->assertEquals(["test product",6],$this->builder->getLastBindParams());
 
 

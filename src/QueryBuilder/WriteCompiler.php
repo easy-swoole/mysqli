@@ -47,7 +47,7 @@ final class WriteCompiler
     private static function prepareBatch(mixed $rows, ?array $fields): array
     {
         $rows = self::batchRows($rows, $fields);
-        $columns = self::batchReferences($rows->current());
+        $columns = self::insertReferences($rows->current());
         return [$columns, self::alignedRows($rows, $columns)];
     }
 
@@ -65,7 +65,7 @@ final class WriteCompiler
         }
     }
 
-    private static function batchReferences(array $row): array
+    private static function insertReferences(array $row): array
     {
         $columns = [];
         foreach ($row as $column => $_) {
@@ -89,28 +89,33 @@ final class WriteCompiler
 
     public function appendUpdate(array $tableData, ?array $fields): void
     {
-        $this->appendRow($tableData, false, $fields);
+        $row = self::filterRow($tableData, self::fieldKeys($fields));
+        if ($row === []) {
+            throw new \InvalidArgumentException('UPDATE requires at least one assignment');
+        }
+        $columns = [];
+        foreach (array_keys($row) as $column) {
+            $columns[$column] = is_string($column) ? TableReference::column($column) : TableReference::identifier($column);
+        }
+        $this->buffer->sql .= ' SET ';
+        $this->appendPairs($row, $columns, false);
     }
 
-    /** 单行和批量插入共用已写入的列映射。 */
+    /** 单行和批量插入共用列映射、VALUES 和重复键赋值。 */
     public function appendInsert(array $tableData, ?array $fields, bool $batch, ?array $updateColumns): void
     {
-        $batch = self::isBatch($tableData, $batch);
-        $columns = $batch ? $this->appendBatch($tableData, $fields) : $this->appendRow($tableData, true, $fields);
-        $this->appendDuplicateAssignments($columns, $updateColumns, $batch);
-    }
+        if (self::isBatch($tableData, $batch)) {
+            [$columns, $rows] = self::prepareBatch($tableData, $fields);
+        } else {
+            $row = self::filterRow($tableData, self::fieldKeys($fields));
+            $columns = self::insertReferences($row);
+            $rows = [$row];
+        }
 
-    private static function isBatch(array $tableData, bool $batch): bool
-    {
-        $first = array_key_first($tableData);
-        return $batch || (is_int($first) && is_array($tableData[$first]));
-    }
-
-    /** @return array<string, string> */
-    private function appendBatch(array $tableData, ?array $fields): array
-    {
-        [$columns, $rows] = self::prepareBatch($tableData, $fields);
-        $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
+        if ($columns !== []) {
+            $this->buffer->sql .= ' (' . implode(', ', $columns) . ') ';
+        }
+        $this->buffer->sql .= ' VALUES ';
         $separator = '';
         foreach ($rows as $row) {
             $this->buffer->sql .= $separator . '(';
@@ -118,31 +123,13 @@ final class WriteCompiler
             $this->buffer->sql .= ')';
             $separator = ',';
         }
-        return $columns;
+        $this->appendDuplicateAssignments($columns, $updateColumns);
     }
 
-    private function appendRow(array $tableData, bool $isInsert, ?array $fields): array
+    private static function isBatch(array $tableData, bool $batch): bool
     {
-        $tableData = self::filterRow($tableData, self::fieldKeys($fields));
-        if (!$isInsert && $tableData === []) {
-            throw new \InvalidArgumentException('UPDATE requires at least one assignment');
-        }
-        $columns = [];
-        foreach (array_keys($tableData) as $column) {
-            $columns[$column] = !$isInsert && is_string($column)
-                ? TableReference::column($column) : TableReference::identifier($column);
-        }
-        if ($isInsert) {
-            if ($columns !== []) {
-                $this->buffer->sql .= ' (' . implode(', ', $columns) . ') ';
-            }
-            $this->buffer->sql .= ' VALUES (';
-        } else {
-            $this->buffer->sql .= ' SET ';
-        }
-        $this->appendPairs($tableData, $columns, $isInsert);
-        if ($isInsert) { $this->buffer->sql .= ')'; }
-        return $columns;
+        $first = array_key_first($tableData);
+        return $batch || (is_int($first) && is_array($tableData[$first]));
     }
 
     private static function fieldKeys(?array $fields): ?array
@@ -172,7 +159,7 @@ final class WriteCompiler
     }
 
     /** @param array<string, string> $columns 以绑定顺序保存列名及其 SQL 引用。 */
-    private function appendPairs(array $tableData, array $columns, bool $isInsert, string $readQualifier = '', bool $batchDuplicate = false): void
+    private function appendPairs(array $tableData, array $columns, bool $isInsert, string $readQualifier = ''): void
     {
         $separator = '';
         foreach ($columns as $column => $columnReference) {
@@ -191,7 +178,6 @@ final class WriteCompiler
                 $subquery = SelectPlanner::subqueryReference($value, derivedTable: false);
                 $this->buffer->sql .= '  ' . $subquery['sql'];
                 $this->buffer->bindAll($subquery['params']);
-                if (!$batchDuplicate) { $separator = ' , '; }
                 continue;
             }
             if (!is_array($value)) {
@@ -221,7 +207,7 @@ final class WriteCompiler
         }
     }
 
-    private function appendDuplicateAssignments(array $insertColumns, ?array $updateColumns, bool $batch): void
+    private function appendDuplicateAssignments(array $insertColumns, ?array $updateColumns): void
     {
         if ($updateColumns === null || $updateColumns === []) { return; }
         $updates = [];
@@ -265,6 +251,6 @@ final class WriteCompiler
             }
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-        $this->appendPairs($values, $columns, false, $readQualifier, $batch);
+        $this->appendPairs($values, $columns, false, $readQualifier);
     }
 }

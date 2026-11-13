@@ -576,16 +576,20 @@ class QueryBuilder
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
         $this->readyToPublish = null;
-        $buffer = $this->selectBuffer($this->pending, $tableName, $columns);
+        $scope = $this->countCompilation;
+        $forCount = $scope?->active && $scope->quoteMode === null;
+        $buffer = $this->selectBuffer($this->pending, $tableName, $columns, $forCount);
         $this->pending['tableName'] = $buffer->tableName;
         return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
     }
 
     /** @param State $state */
-    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null): SqlBuffer
+    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null, bool $forCount = false): SqlBuffer
     {
+        // 等子类 get() 确定投影后，再决定普通行计数的默认列。
+        $columns ??= $state['fields'] ?? ($forCount ? SelectPlanner::countDefaultColumns($state) : '*');
         return SelectPlanner::selectBuffer(
-            $tableName, $columns ?? $state['fields'] ?? '*', $state['queryOptions'], $this->prefix,
+            $tableName, $columns, $state['queryOptions'], $this->prefix,
             $state['fromSource'], ['FORCE' => $state['forceIndexes'],
                 'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
         );
@@ -633,7 +637,7 @@ class QueryBuilder
     {
         if (static::class === self::class || $source === false) {
             $state = SelectPlanner::countSource($this->pending);
-            return $this->compileQuery($state, $this->selectBuffer($state, $tableName), 'SELECT', null);
+            return $this->compileQuery($state, $this->selectBuffer($state, $tableName, forCount: true), 'SELECT', null);
         }
 
         if ($source === $this) {
@@ -654,16 +658,15 @@ class QueryBuilder
     {
         $this->pending = SelectPlanner::countSource($this->pending);
         $previousCompilation = $this->countCompilation;
-        $compilation = $paging ? new CountCompilation() : null;
+        $compilation = new CountCompilation();
+        $compilation->skipResetHook = $paging;
         $this->countCompilation = $compilation;
         try {
             $source = $this->get($tableName);
             return new CompiledQuery($source->getLastPrepareQuery(), $source->getLastBindParams(),
                 [], null, quoteMode: $source->compiled->quoteMode);
         } finally {
-            if ($compilation !== null) {
-                $compilation->active = false;
-            }
+            $compilation->active = false;
             $this->countCompilation = $previousCompilation;
         }
     }
@@ -1116,7 +1119,7 @@ class QueryBuilder
     {
         $this->lastBuilt = $query;
         $this->readyToPublish = $query;
-        if ($this->countCompilation?->active && $this->countCompilation->quoteMode === null) {
+        if ($this->countCompilation?->active && $this->countCompilation->skipResetHook) {
             $this->resetBuildState();
         } else {
             $this->reset();

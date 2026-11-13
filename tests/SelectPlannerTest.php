@@ -96,7 +96,8 @@ final class SelectPlannerTest extends TestCase
     public function testCountPlanningPreservesExplicitFieldsAndGrouping(): void
     {
         $ordinary = SelectPlanner::countSource($this->state());
-        self::assertSame(['1'], $ordinary['fields']);
+        self::assertNull($ordinary['fields']);
+        self::assertSame('1', SelectPlanner::countDefaultColumns($ordinary));
         foreach ([null, ['*'], ["COALESCE(status, 'x,y') AS label", 'tenantId']] as $fields) {
             $group = "ROLLUP(COALESCE(status, 'x,y'), tenantId)";
             $grouped = SelectPlanner::countSource($this->state(['fields' => $fields, 'groups' => [$group]]));

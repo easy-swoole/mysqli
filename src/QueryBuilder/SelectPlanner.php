@@ -98,13 +98,17 @@ final class SelectPlanner
         $state['queryOptions'] = array_values(array_diff(
             $state['queryOptions'], ['SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY']
         ));
-        // 只有普通行计数的隐式投影可以换成常量。分组和集合查询沿用调用方的投影。
-        if ($state['fields'] === null && $state['groups'] === [] && $state['havingConditions'] === []
-            && $state['unionBranches'] === []
-            && array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) === []) {
-            $state['fields'] = ['1'];
-        }
         return $state;
+    }
+
+    /** @param State $state */
+    public static function countDefaultColumns(array $state): string
+    {
+        if ($state['groups'] === [] && $state['havingConditions'] === [] && $state['unionBranches'] === []
+            && array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) === []) {
+            return '1';
+        }
+        return '*';
     }
 
     public static function countSql(string $sourceSql, string $quotedAlias): string

@@ -43,6 +43,26 @@ final class QueryBuilderAdvancedIntegrationTest extends TestCase
         ));
     }
 
+    public function testSingleAndBatchDuplicateUpdatePreserveQualifiedExpressionsAndSubqueries(): void
+    {
+        $name = QueryBuilder::subQuery()->selectRaw('UPPER(?) AS name', ['updated'])->get('(SELECT 1) seed');
+        foreach (['insert' => 1, 'insertAll' => 2] as $method => $id) {
+            $row = ['id' => $id, 'score' => new Expression('? + ?', [10, $id]), 'baseline' => 99];
+            $builder = (new QueryBuilder())->onDuplicate([
+                'score',
+                'name' => $name,
+                'baseline' => new Expression('qb_advanced.baseline + ?', [2]),
+            ])->$method('qb_advanced', $method === 'insert' ? $row : [$row]);
+            self::assertSame([$id, 10, $id, 99, 'updated', 2], $builder->getLastBindParams());
+            self::assertStringContainsString('qb_advanced.baseline + ?', $builder->getLastPrepareQuery());
+            self::assertTrue($this->client->query($builder));
+        }
+        self::assertSame([
+            ['score' => 11, 'name' => 'UPDATED', 'baseline' => 7],
+            ['score' => 12, 'name' => 'UPDATED', 'baseline' => 27],
+        ], $this->client->rawQuery('SELECT score, name, baseline FROM qb_advanced WHERE id IN (1, 2) ORDER BY id'));
+    }
+
     public function testBatchUpsertUsesEachRowsIncomingValueAndPreservesNull(): void
     {
         $builder = (new QueryBuilder())->upsert('qb_advanced', [

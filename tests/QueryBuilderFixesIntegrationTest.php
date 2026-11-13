@@ -304,6 +304,30 @@ SQL;
         self::assertSame(['SELECT 5 AS diagnostic'], $builder->diagnostics);
     }
 
+    public function testCountAndPaginationUseTheDefaultProjectionChosenByGetOverride(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                if ($columns === null && $this->getField() === null) {
+                    $this->selectRaw('SUM(score + ?) AS score', [1]);
+                }
+                return parent::get($tableName, $numRows, $columns);
+            }
+        };
+        $table = 'qb_fix_orders';
+        $builder->where('tenantId', 1);
+        $count = (clone $builder)->count($table);
+        self::assertSame([1, 1], $count->getLastBindParams());
+        self::assertSame([['aggregate' => 1]], $this->client->query($count));
+        $page = $this->client->paginate($builder, $table, 1);
+        self::assertSame(1, $page['total']);
+        self::assertSame(1, $page['lastPage']);
+        self::assertSame([['score' => '32']], $page['items']);
+        self::assertNull($builder->getField());
+        self::assertNull($builder->getLastPrepareQuery());
+    }
+
     public function testCountAndPaginationKeepTopLevelSelectOptionsOutOfTheCountSource(): void
     {
         $table = 'qb_fix_orders';
