@@ -565,8 +565,8 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT，钩子内构建的子查询保留自己的 ORDER BY 和 LIMIT。
-- 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT。
+- 忽略外层 ORDER BY、LIMIT 和行锁。子查询和 UNION 分支保留各自的 ORDER BY、LIMIT 和绑定参数。外层投影、WHERE、JOIN 和 HAVING 的参数仍按 SQL 顺序绑定。
 - 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
@@ -1144,7 +1144,7 @@ try {
 
 ## 内部实现与兼容性
 
-公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。SELECT 语句头、COUNT 来源和聚合由 `SelectPlanner` 规划。写入语句头和子句顺序由 `QueryCompiler` 处理，批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
+公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。`SelectPlanner` 解析表来源与投影，并生成聚合表达式和外层 COUNT SQL。`QueryCompiler` 负责写入语句头和子句顺序，普通 SELECT 与 COUNT 共用查询主体。批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
 条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
 普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。子类重写方法时须声明兼容的返回类型，例如 `QueryBuilder` 或协变的 `static`，并接受父类支持的参数。COUNT 和聚合使用子类克隆及公开方法，工厂返回子类实例。
 内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。

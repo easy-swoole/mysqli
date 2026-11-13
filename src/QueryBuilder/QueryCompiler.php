@@ -71,6 +71,110 @@ final class QueryCompiler
         return $buffer;
     }
 
+    /** @param array{bool, bool} $quoteMode */
+    public function compileSelect(
+        SqlBuffer $buffer,
+        QueryParts $parts,
+        ?string $projection,
+        array $options,
+        mixed $numRows,
+        array $quoteMode,
+        bool $countOnly,
+        ?CountCompilation $scope,
+    ): CompiledQuery {
+        $conditions = new ConditionCompiler($buffer);
+        $select = new SelectCompiler($buffer, $conditions);
+        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, $countOnly);
+        if ($countOnly || $scope !== null) {
+            // 计数取到 UNION 为止，分支和子查询已经编译好的排序及分页仍然保留。
+            $count = $this->countSource($buffer, $parts, $projection, $options, $quoteMode);
+            if ($countOnly) {
+                return $count;
+            }
+        }
+
+        $operation = $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
+        $buffer->sql = self::selectHead($projection ?? '*', $options) . $buffer->sql;
+        $query = CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode);
+        if ($scope !== null) {
+            $scope->sources[$query] = $count;
+        }
+        return $query;
+    }
+
+    private function appendSelectBody(
+        SqlBuffer $buffer,
+        QueryParts $parts,
+        SelectCompiler $select,
+        ConditionCompiler $conditions,
+        bool $countOnly,
+    ): int {
+        if ($parts->updateColumns !== null && $parts->updateColumns !== []) {
+            throw new \InvalidArgumentException('ON DUPLICATE KEY UPDATE requires INSERT');
+        }
+        if (!$countOnly) {
+            if ($parts->forUpdate && $parts->lockInShareMode) {
+                throw new \InvalidArgumentException('FOR UPDATE and LOCK IN SHARE MODE cannot be combined');
+            }
+            if ($parts->unions !== [] && ($parts->forUpdate || $parts->lockInShareMode)) {
+                throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
+            }
+        }
+
+        $select->appendJoins($parts->joins, $parts->joinConditions);
+        $conditions->append('WHERE', $parts->where);
+        $select->appendGroups($parts->groups);
+        $conditions->append('HAVING', $parts->having);
+        $beforeUnionAndTail = strlen($buffer->sql);
+        $select->appendUnions($parts->unions);
+        return $beforeUnionAndTail;
+    }
+
+    private function appendSelectTail(
+        SqlBuffer $buffer,
+        QueryParts $parts,
+        SelectCompiler $select,
+        mixed $numRows,
+        int $beforeUnionAndTail,
+    ): ?int {
+        $select->appendOrder($parts->ordering);
+        $select->appendLimit($numRows);
+        $operation = null;
+        if ($parts->forUpdate) {
+            $buffer->sql .= $parts->selectLockOption ? ' FOR UPDATE ' . $parts->selectLockOption : ' FOR UPDATE';
+            $operation = QueryBuilder::TS_OP_LOCK_FOR_UPDATE;
+        } elseif ($parts->lockInShareMode) {
+            $buffer->sql .= ' LOCK IN SHARE MODE';
+            $operation = QueryBuilder::TS_OP_LOCK_IN_SHARE;
+        }
+        $buffer->unionOperandNeedsParentheses = strlen($buffer->sql) !== $beforeUnionAndTail;
+        return $operation;
+    }
+
+    /** @param array{bool, bool} $quoteMode */
+    private function countSource(
+        SqlBuffer $buffer,
+        QueryParts $parts,
+        ?string $projection,
+        array $options,
+        array $quoteMode,
+    ): CompiledQuery {
+        // 顶层 SELECT 的专用选项不能带进计数派生表。
+        $options = array_values(array_diff($options, ['SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY']));
+        if ($projection === null) {
+            $usesProjection = $parts->groups !== [] || $parts->having !== [] || $parts->unions !== []
+                || array_intersect(['DISTINCT', 'DISTINCTROW'], $options) !== [];
+            $projection = $usesProjection ? '*' : '1';
+        }
+        return new CompiledQuery(self::selectHead($projection, $options) . $buffer->sql,
+            $buffer->parameters, $options, null, quoteMode: $quoteMode);
+    }
+
+    private static function selectHead(string $projection, array $options): string
+    {
+        return 'SELECT ' . self::modifierSql('SELECT', $options) . ' ' . $projection;
+    }
+
     /** @param 'SELECT'|'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
     public function compile(
         SqlBuffer $buffer,
@@ -81,24 +185,21 @@ final class QueryCompiler
         ?array $fields,
         bool $batch
     ): ?int {
-        $isSelect = $statement === 'SELECT';
-        $isInsert = $statement === 'INSERT' || $statement === 'REPLACE';
-        if (!$isSelect && ($parts->groups !== [] || $parts->having !== [] || $parts->unions !== []
-            || $parts->forUpdate || $parts->lockInShareMode)) {
+        if ($statement === 'SELECT') {
+            $conditions = new ConditionCompiler($buffer);
+            $select = new SelectCompiler($buffer, $conditions);
+            $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, false);
+            return $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
+        }
+        if ($parts->groups !== [] || $parts->having !== [] || $parts->unions !== []
+            || $parts->forUpdate || $parts->lockInShareMode) {
             throw new \InvalidArgumentException('GROUP BY, HAVING, UNION and row locks require SELECT');
         }
         if ($statement !== 'INSERT' && $parts->updateColumns !== null && $parts->updateColumns !== []) {
             throw new \InvalidArgumentException('ON DUPLICATE KEY UPDATE requires INSERT');
         }
 
-        if ($parts->forUpdate && $parts->lockInShareMode) {
-            throw new \InvalidArgumentException('FOR UPDATE and LOCK IN SHARE MODE cannot be combined');
-        }
-        if ($parts->unions !== [] && ($parts->forUpdate || $parts->lockInShareMode)) {
-            throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
-        }
-
-        if ($isInsert) {
+        if ($statement === 'INSERT' || $statement === 'REPLACE') {
             if ($parts->joins !== [] || $parts->joinConditions !== [] || $parts->where !== []
                 || $parts->ordering !== [] || $numRows !== null) {
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
@@ -107,16 +208,13 @@ final class QueryCompiler
             return null;
         }
 
-        if (!$isSelect) {
-            if ($parts->joins !== [] && ($parts->ordering !== [] || $numRows !== null)) {
-                throw new \InvalidArgumentException('UPDATE and DELETE with JOIN do not support ORDER BY or LIMIT');
-            }
-            if (is_array($numRows)) {
-                throw new \InvalidArgumentException('UPDATE and DELETE LIMIT accept a row count only');
-            }
+        if ($parts->joins !== [] && ($parts->ordering !== [] || $numRows !== null)) {
+            throw new \InvalidArgumentException('UPDATE and DELETE with JOIN do not support ORDER BY or LIMIT');
+        }
+        if (is_array($numRows)) {
+            throw new \InvalidArgumentException('UPDATE and DELETE LIMIT accept a row count only');
         }
 
-        $headLength = $buffer->countSource === null ? 0 : strlen($buffer->sql);
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
         $select->appendJoins($parts->joins, $parts->joinConditions);
@@ -124,35 +222,8 @@ final class QueryCompiler
             (new WriteCompiler($buffer))->appendUpdate($tableData, $fields);
         }
         $conditions->append('WHERE', $parts->where);
-        if ($isSelect) {
-            $select->appendGroups($parts->groups);
-            $conditions->append('HAVING', $parts->having);
-        }
-        $beforeUnionAndTail = strlen($buffer->sql);
-        if ($isSelect) {
-            $select->appendUnions($parts->unions);
-        }
-        if ($buffer->countSource !== null) {
-            // 计数与正常 SELECT 共用来源和条件，保留已编译 UNION 分支。
-            $buffer->countSource->sql .= substr($buffer->sql, $headLength);
-            // 两个 SELECT 头的绑定顺序相同。默认常量只替换无绑定的星号。
-            $buffer->countSource->parameters = $buffer->parameters;
-        }
         $select->appendOrder($parts->ordering);
         $select->appendLimit($numRows);
-
-        if ($parts->forUpdate) {
-            $buffer->sql .= $parts->selectLockOption ? ' FOR UPDATE ' . $parts->selectLockOption : ' FOR UPDATE';
-            return QueryBuilder::TS_OP_LOCK_FOR_UPDATE;
-        }
-        if ($parts->lockInShareMode) {
-            $buffer->sql .= ' LOCK IN SHARE MODE';
-            return QueryBuilder::TS_OP_LOCK_IN_SHARE;
-        }
-        if ($isSelect) {
-            // UNION 分支只在实际生成集合、排序、分页或锁子句时需要括号。
-            $buffer->unionOperandNeedsParentheses = strlen($buffer->sql) !== $beforeUnionAndTail;
-        }
         return null;
     }
 }

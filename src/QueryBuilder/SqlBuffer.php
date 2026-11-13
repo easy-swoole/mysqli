@@ -7,7 +7,6 @@ final class SqlBuffer
 {
     public ?string $column = null;
     public ?string $baseTableName = null;
-    public ?self $countSource = null;
     public bool $unionOperandNeedsParentheses = true;
 
     /** @param array<array-key, mixed> $parameters */

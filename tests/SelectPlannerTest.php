@@ -10,16 +10,6 @@ use PHPUnit\Framework\TestCase;
 
 final class SelectPlannerTest extends TestCase
 {
-    private function state(array $changes = []): array
-    {
-        return array_replace([
-            'fields' => null, 'groups' => [], 'havingConditions' => [], 'unionBranches' => [],
-            'queryOptions' => [], 'ordering' => [], 'limit' => null, 'forUpdate' => false,
-            'lockInShareMode' => false, 'selectLockOption' => '', 'fromSource' => null,
-            'whereConditions' => [], 'joins' => [], 'prefix' => 'app_',
-        ], $changes);
-    }
-
     public function testFromSubSnapshotsReferencedValues(): void
     {
         $value = 7;
@@ -39,75 +29,55 @@ final class SelectPlannerTest extends TestCase
         }
     }
 
-    public function testSelectHeaderRetainsExactSpacingPrefixMetadataAndIndexHints(): void
+    public function testSelectBodyResolvesPrefixAndIndexHints(): void
     {
-        $plan = SelectPlanner::selectBuffer('`orders` o', ['id', new Expression('? AS marker', [7])], ['DISTINCT'], 'app_', null,
+        [$body, $projection] = SelectPlanner::selectBody('`orders` o', ['id', new Expression('? AS marker', [7])], 'app_', null,
             ['FORCE' => ['idx`name'], 'USE' => [], 'IGNORE' => ['idx_state']]);
-        self::assertInstanceOf(SqlBuffer::class, $plan);
-        self::assertSame('SELECT DISTINCT id, ? AS marker FROM `app_orders` o FORCE INDEX (`idx``name`) IGNORE INDEX (`idx_state`)', $plan->sql);
-        self::assertSame([7], $plan->parameters);
-        self::assertSame('`app_orders` o', $plan->tableName);
-        $plain = SelectPlanner::selectBuffer('orders', '*', [], 'app_', null, ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
-        self::assertSame('SELECT  * FROM `app_orders`', $plain->sql);
-        self::assertSame('app_orders', $plain->tableName);
+        self::assertInstanceOf(SqlBuffer::class, $body);
+        self::assertSame(' FROM `app_orders` o FORCE INDEX (`idx``name`) IGNORE INDEX (`idx_state`)', $body->sql);
+        self::assertSame('id, ? AS marker', $projection);
+        self::assertSame([7], $body->parameters);
+        self::assertSame('`app_orders` o', $body->tableName);
     }
 
     public function testFromSourceParametersFollowSelectedExpressionsWithoutApplyingOuterPrefix(): void
     {
         $source = SelectPlanner::fromSub('SELECT ? AS id', [2], 's');
-        $plan = SelectPlanner::selectBuffer(null, [new Expression('? AS marker', [1]), 's.id'], [], 'outer_', $source,
+        [$body, $projection] = SelectPlanner::selectBody(null, [new Expression('? AS marker', [1]), 's.id'], 'outer_', $source,
             ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
-        self::assertSame('SELECT  ? AS marker, s.id FROM (SELECT ? AS id) AS `s`', $plan->sql);
-        self::assertSame([1, 2], $plan->parameters);
-        self::assertSame('s', $plan->tableName);
+        self::assertSame(' FROM (SELECT ? AS id) AS `s`', $body->sql);
+        self::assertSame('? AS marker, s.id', $projection);
+        self::assertSame([1, 2], $body->parameters);
+        self::assertSame('s', $body->tableName);
         foreach ([['users', []], [null, ['FORCE' => ['idx']]]] as [$table, $hints]) {
             $error = null;
-            try { SelectPlanner::selectBuffer($table, '*', [], '', $source, $hints); }
+            try { SelectPlanner::selectBody($table, '*', '', $source, $hints); }
             catch (\InvalidArgumentException $caught) { $error = $caught; }
             self::assertNotNull($error);
         }
     }
 
-    public function testCountPlanningChangesOnlyTheCopiedOuterQueryAndPreservesProjectionParameters(): void
+    public function testCountIgnoresOuterLockAndPaginationWithoutChangingTheTemplate(): void
     {
-        $projection = new Expression('SUM(score + ?) AS total', [1]);
-        $branch = ['SELECT ? AS total ORDER BY total DESC LIMIT 2', [9], false, true];
-        $state = $this->state(['fields' => [$projection], 'groups' => ['userId'], 'unionBranches' => [$branch],
-            'ordering' => [['field' => new Expression('FIELD(id, ?)', [99])]], 'limit' => 10,
-            'forUpdate' => true, 'lockInShareMode' => true, 'selectLockOption' => 'NOWAIT',
-            'queryOptions' => ['DISTINCT', 'SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY'], 'whereConditions' => [['', 'tenantId', '=', 7]]]);
-        $before = $state;
-        $plan = SelectPlanner::countSource($state);
-        self::assertSame($before, $state);
-        self::assertStringStartsWith('SELECT COUNT(*) AS `total``count` FROM ',
-            (new QueryBuilder())->count('orders', 'total`count')->getLastPrepareQuery());
-        self::assertSame([$projection], $plan['fields']);
-        self::assertSame([$branch], $plan['unionBranches']);
-        self::assertSame([['', 'tenantId', '=', 7]], $plan['whereConditions']);
-        self::assertSame([], $plan['ordering']);
-        self::assertNull($plan['limit']);
-        self::assertFalse($plan['forUpdate']);
-        self::assertFalse($plan['lockInShareMode']);
-        self::assertSame('', $plan['selectLockOption']);
-        self::assertSame(['DISTINCT'], $plan['queryOptions']);
-        self::assertSame('app_', $plan['prefix']);
+        $template = (new QueryBuilder())->setPrefix('app_')->where('tenantId', 7)->orderByDesc('id')
+            ->limit(10)->forUpdate()->withTotalCount();
+        $count = (clone $template)->count('orders', 'total`count');
+        self::assertSame('SELECT COUNT(*) AS `total``count` FROM (SELECT  1 FROM `app_orders` WHERE  `tenantId` = ? ) AS `__mysqli_count` LIMIT 1',
+            $count->getLastPrepareQuery());
+        self::assertSame([7], $count->getLastBindParams());
+
+        $template->get('orders');
+        self::assertStringStartsWith('SELECT SQL_CALC_FOUND_ROWS * FROM `app_orders`', $template->getLastPrepareQuery());
+        self::assertMatchesRegularExpression('/ORDER BY id DESC\s+LIMIT 10 FOR UPDATE$/', $template->getLastPrepareQuery());
     }
 
-    public function testCountPlanningPreservesExplicitFieldsAndGrouping(): void
+    public function testCountPreservesGroupingAndExplicitProjection(): void
     {
-        $ordinary = SelectPlanner::countSource($this->state());
-        self::assertNull($ordinary['fields']);
-        self::assertSame('1', SelectPlanner::countDefaultColumns($ordinary));
-        foreach ([null, ['*'], ["COALESCE(status, 'x,y') AS label", 'tenantId']] as $fields) {
-            $group = "ROLLUP(COALESCE(status, 'x,y'), tenantId)";
-            $grouped = SelectPlanner::countSource($this->state(['fields' => $fields, 'groups' => [$group]]));
-            self::assertSame($fields, $grouped['fields']);
-            self::assertSame([$group], $grouped['groups']);
-            $distinct = SelectPlanner::countSource($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]));
-            self::assertSame($fields, $distinct['fields']);
-        }
-        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT ? AS id) AS `__mysqli_count` LIMIT 1',
-            SelectPlanner::countSql('SELECT ? AS id', '`total`'));
+        $count = (new QueryBuilder())->fields(['tenantId', new Expression('SUM(score + ?) AS total', [5])])
+            ->groupBy('tenantId')->having('total', 50, '>')->count('orders');
+        self::assertStringContainsString('SELECT  tenantId, SUM(score + ?) AS total FROM `orders`', $count->getLastPrepareQuery());
+        self::assertMatchesRegularExpression('/GROUP BY tenantId\s+HAVING/', $count->getLastPrepareQuery());
+        self::assertSame([5, 50], $count->getLastBindParams());
     }
 
     public function testAggregateExpressionsQuoteColumnsAndPreserveExpressionParameters(): void

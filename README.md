@@ -183,7 +183,9 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 预处理语句绑定到创建它的连接和服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
-连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看事务是否因连接丢失而失效。普通 SQL 错误不会直接清除事务状态；InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留事务状态；提交、回滚及 DDL 隐式提交以服务端响应为准。
+连接通过服务端 OK/EOF 数据包的 `SERVER_STATUS_IN_TRANS` 跟踪事务，支持 `BEGIN`、`START TRANSACTION`、事务接口以及 `autocommit=0` 下实际开始的事务。可以通过 `$client->mysqlClient()->inTransaction()` 查看最近确认且连接仍有效的事务状态，通过 `isTransactionLost()` 查看连接意外断开时，客户端最后确认的状态是否为事务进行中。该标记无法确定服务端最终提交或回滚的结果。
+
+普通 SQL 错误响应不携带事务状态，客户端会等下一条带状态的响应更新。比如创建唯一索引因重复值失败时，之前的写入可能已经被 DDL 隐式提交。如果在状态更新前断线，`isTransactionLost()` 仍可能返回 `true`。InnoDB 死锁错误 `1213` 会同步清除已自动回滚的事务状态，锁等待超时 `1205` 则保留最近确认的状态。
 
 事务期间断线或查询超时时，发现断线的操作会抛出原始连接或超时异常。后续查询、预处理、旧 Statement 执行、`connect()`、提交和回滚会抛出 `EasySwoole\Mysqli\Exception\TransactionLostException`。连接的 `close()` 清除事务丢失标记。
 
@@ -775,8 +777,8 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT，钩子内构建的子查询保留自己的 ORDER BY 和 LIMIT。
-- 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT。
+- 忽略外层 ORDER BY、LIMIT 和行锁。子查询和 UNION 分支保留各自的 ORDER BY、LIMIT 和绑定参数。外层投影、WHERE、JOIN 和 HAVING 的参数仍按 SQL 顺序绑定。
 - 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
 - COUNT 使用内层 `get()` 返回的构造器读取 SQL、参数和编译时的引号模式。COUNT 的 `raw()` 钩子沿用这个引号模式。
@@ -1239,7 +1241,7 @@ $builder->where('id', $id)->nowait()->get('orders');
 
 ## 协议错误与大参数
 
-收到格式错误或截断的协议数据时，抛出 `EasySwoole\Mysqli\Exception\ProtocolException` 并立即关闭连接，避免下一条查询读取遗留报文。非事务连接可在下一次查询时重新建立；事务内发生协议错误时，仍遵循上述事务丢失保护。
+收到格式错误或截断的协议数据时，抛出 `EasySwoole\Mysqli\Exception\ProtocolException` 并立即关闭连接，避免下一条查询读取遗留报文。事务外发生协议错误后，先显式调用 `connect()` 建立新连接，再执行查询。事务内发生协议错误时，仍遵循上述事务丢失保护。
 
 预处理参数采用分段编码与分包发送，避免将多个大字符串重复拼成整条执行报文。结果字段及行解码由 `Protocol\ResultDecoder` 负责；压缩接收缓冲区使用读取游标，减少逐行读取时的字符串复制。
 
@@ -1290,9 +1292,9 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
-| `SelectPlanner` | 规划 SELECT 语句头、COUNT 来源状态和聚合表达式。SELECT 头和后续子句共享 SQL 缓冲 |
+| `SelectPlanner` | 解析 SELECT 的表来源与投影，构建聚合表达式和外层 COUNT SQL |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
-| `QueryCompiler` | 构建写入语句头，按语句类型和绑定顺序协调子句编译，生成 SELECT 行锁及事务标记 |
+| `QueryCompiler` | 按 SQL 顺序编译子句并绑定参数。普通 SELECT 和 COUNT 共用查询主体，SELECT 再追加外层排序、分页和行锁 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
 | `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
 | `WriteCompiler` | 批量选项、写入字段过滤、列对齐和值绑定，以及重复键更新 |

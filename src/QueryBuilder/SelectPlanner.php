@@ -9,7 +9,6 @@ use EasySwoole\Mysqli\QueryBuilder;
 
 /**
  * @internal 无状态 SELECT 查询规划；公开构造器保留工厂及可重写方法的调用。
- * @phpstan-import-type State from PendingQuery
  */
 final class SelectPlanner
 {
@@ -48,17 +47,19 @@ final class SelectPlanner
         return ['sql' => $sql, 'params' => $query['params'], 'alias' => $alias];
     }
 
-    /** @param null|array{sql: string, params: array, alias: string} $fromSource */
-    public static function selectBuffer(
+    /**
+     * @param null|array{sql: string, params: array, alias: string} $fromSource
+     * @return array{SqlBuffer, ?string} FROM 子句及按 SQL 顺序绑定的参数，另带显式投影。
+     */
+    public static function selectBody(
         mixed $tableName,
         mixed $columns,
-        array $options,
         mixed $prefix,
         ?array $fromSource,
         array $indexHints,
-    ): SqlBuffer {
-        $select = new SqlBuffer('', tableName: $tableName);
-        $column = SelectCompiler::columns($columns, $select);
+    ): array {
+        $select = new SqlBuffer('');
+        $projection = $columns === null ? null : SelectCompiler::columns($columns, $select);
         $table = $tableName;
         if ($fromSource !== null) {
             if ($tableName !== null) {
@@ -76,39 +77,9 @@ final class SelectPlanner
             }
             $tableSql = TableReference::parse($table, $prefix);
         }
-        $select->sql = 'SELECT ' . QueryCompiler::modifierSql('SELECT', $options) . ' ' . $column . ' FROM ' . $tableSql
-            . TableReference::indexHints($indexHints);
+        $select->sql = ' FROM ' . $tableSql . TableReference::indexHints($indexHints);
         $select->tableName = $table;
-        return $select;
-    }
-
-    /**
-     * 转换写时复制的状态副本，供 COUNT 编译内层 SELECT。
-     * @param State $state
-     * @return State
-     */
-    public static function countSource(array $state): array
-    {
-        $state['ordering'] = [];
-        $state['limit'] = null;
-        $state['forUpdate'] = false;
-        $state['lockInShareMode'] = false;
-        $state['selectLockOption'] = '';
-        // 这些选项用于顶层 SELECT，不能带进计数派生表。
-        $state['queryOptions'] = array_values(array_diff(
-            $state['queryOptions'], ['SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY']
-        ));
-        return $state;
-    }
-
-    /** @param State $state */
-    public static function countDefaultColumns(array $state): string
-    {
-        if ($state['groups'] === [] && $state['havingConditions'] === [] && $state['unionBranches'] === []
-            && array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) === []) {
-            return '1';
-        }
-        return '*';
+        return [$select, $projection];
     }
 
     public static function countSql(string $sourceSql, string $quotedAlias): string

@@ -23,11 +23,6 @@ final class ExecutionContext
         $this->notify = \Closure::fromCallable($notify);
     }
 
-    public function remaining(): float
-    {
-        return $this->deadline->remaining();
-    }
-
     /** @internal 供协议入口复用本次操作的截止时间。 */
     public function deadline(): Deadline
     {

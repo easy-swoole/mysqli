@@ -578,36 +578,30 @@ class QueryBuilder
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
         $this->readyToPublish = null;
-        $buffer = $this->selectBuffer($this->pending, $tableName, $columns);
-        $this->pending['tableName'] = $buffer->tableName;
-        $scope = $this->countCompilation;
-        if (!$scope?->active) {
-            return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
-        }
-
-        // 钩子内的 SELECT 照常构建，另存可用于计数的版本。返回后才确定使用哪一条。
-        $countState = SelectPlanner::countSource($this->pending);
-        $countColumns = $columns ?? $countState['fields'] ?? SelectPlanner::countDefaultColumns($countState);
-        $buffer->countSource = $this->selectBuffer($countState, $tableName, $countColumns);
-        $query = $this->compileQuery($this->pending, $buffer, 'SELECT', $numRows ?? $this->pending['limit']);
-        $scope->sources[$query] = CompiledQuery::fromBuffer($buffer->countSource, $countState['queryOptions'], null, $query->quoteMode);
-        return $this->publishBuild($query);
+        return $this->publishBuild($this->compileSelect($tableName, $numRows, $columns));
     }
 
-    private function compileCountSelect(mixed $tableName, mixed $columns = null): CompiledQuery
-    {
-        $state = SelectPlanner::countSource($this->pending);
-        $columns ??= $state['fields'] ?? SelectPlanner::countDefaultColumns($state);
-        return $this->compileQuery($state, $this->selectBuffer($state, $tableName, $columns), 'SELECT', null);
-    }
-
-    /** @param State $state */
-    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null): SqlBuffer
-    {
-        return SelectPlanner::selectBuffer(
-            $tableName, $columns ?? $state['fields'] ?? '*', $state['queryOptions'], $this->prefix,
+    private function compileSelect(
+        mixed $tableName,
+        mixed $numRows = null,
+        mixed $columns = null,
+        bool $countOnly = false,
+    ): CompiledQuery {
+        $state = $this->pending;
+        [$buffer, $projection] = SelectPlanner::selectBody(
+            $tableName, $columns ?? $state['fields'], $this->prefix,
             $state['fromSource'], ['FORCE' => $state['forceIndexes'],
                 'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
+        );
+        if (!$countOnly) {
+            $this->pending['tableName'] = $buffer->tableName;
+        }
+
+        $scope = $this->countCompilation;
+        return (new QueryCompiler())->compileSelect(
+            $buffer, PendingQuery::parts($state), $projection, $state['queryOptions'],
+            $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes],
+            $countOnly, $scope?->active ? $scope : null,
         );
     }
 
@@ -653,7 +647,7 @@ class QueryBuilder
     private function countSelectResult(mixed $tableName, QueryBuilder|false|null $source): CompiledQuery
     {
         if (static::class === self::class || $source === false) {
-            return $this->compileCountSelect($tableName);
+            return $this->compileSelect($tableName, countOnly: true);
         }
 
         if ($source === $this) {
@@ -677,6 +671,7 @@ class QueryBuilder
         $this->countCompilation = $compilation;
         try {
             $source = $this->get($tableName);
+            // 让覆写的 SQL 和参数读取方法看到最终返回的计数来源。
             $original = $source->compiled;
             $source->compiled = $compilation->sources[$original] ?? $original;
             try {
@@ -1094,36 +1089,13 @@ class QueryBuilder
         $reference = TableReference::resolve($tableName, $this->prefix);
         $this->pending['tableName'] = $reference['name'];
         $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
-        return $this->compilePending($buffer, $statement, $numRows ?? $this->pending['limit'], $tableData, $batch, $fields);
-    }
-
-    private function compilePending(
-        SqlBuffer $buffer,
-        string $statement,
-        mixed $numRows,
-        mixed $tableData = null,
-        bool $batch = false,
-        ?array $fields = null
-    ): QueryBuilder {
-        return $this->publishBuild($this->compileQuery($this->pending, $buffer, $statement, $numRows, $tableData, $batch, $fields));
-    }
-
-    /** @param State $state */
-    private function compileQuery(
-        array $state,
-        SqlBuffer $buffer,
-        string $statement,
-        mixed $numRows,
-        mixed $tableData = null,
-        bool $batch = false,
-        ?array $fields = null
-    ): CompiledQuery {
-        $parts = PendingQuery::parts($state);
-        $operation = (new QueryCompiler())->compile(
-            $buffer, $parts, $statement, $numRows, $tableData, $fields ?? $state['fields'], $batch
+        $state = $this->pending;
+        (new QueryCompiler())->compile(
+            $buffer, PendingQuery::parts($state), $statement, $numRows ?? $state['limit'],
+            $tableData, $fields ?? $state['fields'], $batch
         );
-        return CompiledQuery::fromBuffer($buffer, $state['queryOptions'], $operation,
-            [$this->noBackslashEscapes, $this->ansiQuotes]);
+        return $this->publishBuild(CompiledQuery::fromBuffer($buffer, $state['queryOptions'], null,
+            [$this->noBackslashEscapes, $this->ansiQuotes]));
     }
 
     /** @param array{bool, bool}|null $quoteMode */

@@ -354,6 +354,32 @@ SQL;
         self::assertSame([['id' => 4]], $page['items']);
     }
 
+    public function testCountAndPaginationKeepBindingsInOrderAcrossLimitedOrderSources(): void
+    {
+        $template = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $this->orderByRaw('FIELD(id, ?, ?) DESC', [3, 2]);
+                return parent::get($tableName, $numRows, $columns);
+            }
+        };
+        $latest = (new QueryBuilder())->where('tenantId', 1)->orderByDesc('id')->get('qb_fix_orders', 1, ['id', 'score']);
+        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_archived_orders LIKE qb_fix_orders');
+        $this->client->rawQuery('INSERT INTO qb_fix_archived_orders SELECT * FROM qb_fix_orders WHERE tenantId = 2');
+        $backfill = (new QueryBuilder())->selectRaw('id, score + ? AS score', [100])->where('tenantId', 2)
+            ->orderByAsc('id')->get('qb_fix_archived_orders', 1);
+        $template->fromSub($latest, 's')->selectRaw('s.id, s.score + ? AS score', [5])
+            ->where('s.score', 10, '>')->union($backfill, true);
+        // UNION 的全局排序使用结果列名。
+        $count = (clone $template)->count(null);
+        self::assertSame([5, 1, 10, 100, 2], $count->getLastBindParams());
+        self::assertSame([['aggregate' => 2]], $this->client->query($count));
+
+        $page = $this->client->paginate($template, null, 1, 2);
+        self::assertSame(2, $page['total']);
+        self::assertSame([['id' => 3, 'score' => 130]], $page['items']);
+    }
+
     public function testGetOneUsesTheDefaultProjectionOfTheOrderBuilder(): void
     {
         $builder = new class extends QueryBuilder {

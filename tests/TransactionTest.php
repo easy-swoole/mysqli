@@ -286,6 +286,41 @@ final class TransactionTest extends TestCase
         }
     }
 
+    public function testFailedIndexCreationKeepsLastConfirmedStatusUntilTheNextResponse(): void
+    {
+        foreach ([true, false] as $readStatus) {
+            $writer = $this->newClient();
+            try {
+                $connection = $writer->mysqlClient();
+                $id = $writer->rawQuery('SELECT CONNECTION_ID() AS id')[0]['id'];
+                $connection->begin_transaction();
+                $writer->rawQuery("UPDATE `{$this->table}` SET value = 10");
+                try {
+                    $writer->rawQuery("CREATE UNIQUE INDEX unique_value ON `{$this->table}` (value)");
+                    self::fail('Expected duplicate values to prevent index creation');
+                } catch (Exception $error) {
+                    self::assertSame(1062, $error->getCode());
+                }
+
+                self::assertTrue($connection->inTransaction());
+                self::assertSame(10, $this->value($this->admin, 1));
+                if ($readStatus) {
+                    self::assertTrue($connection->ping());
+                    self::assertFalse($connection->inTransaction());
+                }
+                $this->admin->rawQuery("KILL CONNECTION {$id}");
+                try {
+                    $writer->rawQuery('SELECT 1');
+                    self::fail('Expected disconnected connection');
+                } catch (Exception) {
+                    self::assertSame(!$readStatus, $connection->isTransactionLost());
+                }
+            } finally {
+                $writer->close();
+            }
+        }
+    }
+
     public function testReadOnlyReadWriteAndConsistentSnapshotFlags(): void
     {
         $writer = $this->newClient();

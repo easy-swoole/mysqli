@@ -57,9 +57,9 @@ final class ClientExecutionContextTest extends TestCase
         $context = new ExecutionContext(1.0, static function (bool|array $result, float $startedAt) use (&$notifications): void {
             $notifications[] = [$result, $startedAt];
         });
-        $first = $context->remaining();
+        $first = $context->deadline()->remaining();
         usleep(2000);
-        self::assertLessThan($first, $context->remaining());
+        self::assertLessThan($first, $context->deadline()->remaining());
         self::assertSame([['id' => 1]], $context->buffered(static fn(): array => [['id' => 1]]));
         self::assertSame([['id' => 1]], $notifications[0][0]);
         self::assertGreaterThanOrEqual($before, $notifications[0][1]);
@@ -185,7 +185,7 @@ final class ClientExecutionContextTest extends TestCase
         $context = new ExecutionContext(0.001, static function (): void { self::fail('Cleanup alone must not notify'); });
         $context->ownStatement($statement);
         usleep(3000);
-        try { $context->remaining(); self::fail('Expected deadline expiry'); }
+        try { $context->deadline()->remaining(); self::fail('Expected deadline expiry'); }
         catch (TimeoutException) { self::assertTrue($connection->isConnected()); }
         $context->closeOwnedStatement();
         self::assertFalse($connection->isConnected());
