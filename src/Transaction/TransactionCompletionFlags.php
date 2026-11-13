@@ -50,4 +50,27 @@ enum TransactionCompletionFlags: int
     {
         return $this === self::Release || $this === self::NoChainRelease;
     }
+
+    /** @internal 返回事务成功后应用的会话释放策略。 */
+    public function releasePolicy(): ?bool
+    {
+        return match ($this) {
+            self::NoRelease, self::ChainNoRelease, self::NoChainNoRelease => null,
+            default => $this->releasesConnection(),
+        };
+    }
+
+    /** @internal 从原始 SQL 提取释放策略。 */
+    public static function sqlReleasePolicy(string $sql): ?bool
+    {
+        if (preg_match('/\A\s*(?:COMMIT|ROLLBACK)(?:\s+WORK)?(?:\s+AND\s+(?:NO\s+)?CHAIN)?'
+            . '(?:\s+(NO\s+RELEASE|RELEASE))?\s*;?\s*\z/i', $sql, $matches) !== 1) {
+            return null;
+        }
+        return match (strtoupper($matches[1] ?? '')) {
+            '' => false,
+            'RELEASE' => true,
+            default => null,
+        };
+    }
 }

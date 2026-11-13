@@ -65,7 +65,7 @@ class Client
     {
         $sql = $builder->getLastPrepareQuery();
         if ($this->isTableLock($builder)) {
-            return $this->executeText($sql, $timeout);
+            return $this->rawQuery($sql, $timeout);
         }
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
@@ -131,7 +131,12 @@ class Client
      */
     public function rawQuery(string $query,?float $timeout = null): bool|array
     {
-        return $this->executeText($query, $timeout);
+        $execution = $this->beginExecution($timeout);
+        return $execution->buffered(function () use ($execution, $query): bool|array {
+            $result = $this->connection()->query($query, $execution->remaining());
+            $this->captureMetadata();
+            return $result;
+        });
     }
 
     /**
@@ -204,16 +209,6 @@ class Client
     {
         $operation = $builder->getLastTransactionOp();
         return $operation === QueryBuilder::TS_OP_LOCK_TABLE || $operation === QueryBuilder::TS_OP_UNLOCK_TABLE;
-    }
-
-    private function executeText(string $query, ?float $timeout): bool|array
-    {
-        $execution = $this->beginExecution($timeout);
-        return $execution->buffered(function () use ($execution, $query): bool|array {
-            $result = $this->connection()->query($query, $execution->remaining());
-            $this->captureMetadata();
-            return $result;
-        });
     }
 
     /** 取出客户端持有的协议连接；连接和事务状态由协议层检查。 */

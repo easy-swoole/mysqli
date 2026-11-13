@@ -94,17 +94,20 @@ final class SelectPlanner
         $state['lockInShareMode'] = false;
         $state['selectLockOption'] = '';
         $state['queryOptions'] = array_values(array_diff($state['queryOptions'], ['SQL_CALC_FOUND_ROWS']));
-        // 显式投影可能包含聚合；HAVING、DISTINCT 和 UNION 也依赖原投影。
+        // 显式投影可能包含 HAVING 引用的字段或别名。DISTINCT 和 UNION 依赖原投影。
         if (($state['fields'] !== null && $state['fields'] !== ['*'])
-            || $state['havingConditions'] !== [] || $state['unionBranches'] !== []
+            || $state['unionBranches'] !== []
             || array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) !== []) {
             return $state;
         }
-        if ($state['groups'] === []) {
+        if ($state['groups'] !== []) {
+            // 分组计数默认只投影分组表达式；显式 * 可供 HAVING 引用其他字段。
+            if ($state['fields'] === null || $state['havingConditions'] === []) {
+                $state['fields'] = self::groupProjection($state['groups']) ?? $state['fields'];
+            }
+        } elseif ($state['havingConditions'] === []) {
             $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
-            return $state;
         }
-        $state['fields'] = self::groupProjection($state['groups']) ?? $state['fields'];
         return $state;
     }
 

@@ -341,11 +341,30 @@ final class TransactionTest extends TestCase
         }
     }
 
+    public function testSuccessfulPrepareConfirmsChainedTransactionBeforeDisconnect(): void
+    {
+        $writer = $this->newClient();
+        try {
+            $connection = $writer->mysqlClient();
+            $writer->rawQuery('SET SESSION completion_type = 0');
+            $id = $writer->rawQuery('SELECT CONNECTION_ID() AS id')[0]['id'];
+            $connection->begin_transaction();
+            self::assertTrue($connection->commit(TransactionCompletionFlags::Chain));
+            $statement = $writer->prepare('SELECT ? AS value');
+            $this->admin->rawQuery("KILL CONNECTION {$id}");
+            self::assertFalse($writer->ping());
+            self::assertTrue($connection->isTransactionLost());
+            $statement->close();
+        } finally {
+            $writer->close();
+        }
+    }
+
     public function testReleaseFlagsActuallyCloseServerSession(): void
     {
         foreach (['commit', 'rollback'] as $method) {
             foreach ([TransactionCompletionFlags::Release, TransactionCompletionFlags::NoChainRelease,
-                TransactionCompletionFlags::None, TransactionCompletionFlags::NoChain] as $flags) {
+                TransactionCompletionFlags::None, TransactionCompletionFlags::NoChain, TransactionCompletionFlags::Chain] as $flags) {
                 $writer = $this->newClient();
                 try {
                     if (!$flags->releasesConnection()) {
@@ -355,7 +374,14 @@ final class TransactionTest extends TestCase
                     $connection->begin_transaction();
                     $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
                     self::assertTrue($connection->{$method}($flags));
-                    if (!$flags->releasesConnection()) {
+                    if ($flags === TransactionCompletionFlags::Chain) {
+                        try {
+                            $writer->rawQuery('SELECT 1');
+                            self::fail('The next command must detect the closed server session');
+                        } catch (Exception $error) {
+                            self::assertStringContainsString('MySQL query failed', $error->getMessage());
+                        }
+                    } elseif (!$flags->releasesConnection()) {
                         self::assertFalse($writer->ping());
                     }
                     self::assertFalse($connection->isConnected());

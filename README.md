@@ -154,7 +154,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 - `TlsVersion` 位于 `EasySwoole\Mysqli` 命名空间，`Tls12` / `Tls13` 对应精确字符串 `'TLSv1.2'` / `'TLSv1.3'`。配置构造参数 `tlsVersions` 与设置方法均可混用枚举、字符串；默认值和读取方法的字符串数组返回格式不变。
 - 设置方法仍只保存列表，不立即校验版本名。读取方法将枚举转换为字符串，非字符串且非 `TlsVersion` 的成员会在读取时报错；空列表、非法字符串名在启用 TLS 构建连接选项时，通过 `TlsVersion::tryFrom()` 等校验报错。原字符串不增加大小写或空白归一化。
 - 只允许 TLS 1.2、TLS 1.3，不能降级到旧协议；实际可用版本取决于 Swoole/OpenSSL 编译能力及服务端配置。TLS 默认关闭，版本列表本身不会开启 TLS。
-- TLS 握手使用 `connect()` 的建连预算。
+- TLS 选项在握手时生成并校验一次，握手使用 `connect()` 的建连预算。
 
 ### 认证、查询与重连
 
@@ -209,7 +209,7 @@ $client->mysqlClient()->rollback(TransactionCompletionFlags::NoChainNoRelease);
 $client->mysqlClient()->commit(TransactionCompletionFlags::Release);
 ```
 
-CHAIN 可开始新事务。显式 `RELEASE` 成功后本地连接同步关闭。省略释放选项时，驱动只发送事务结束命令，由 MySQL 按当前会话的 `completion_type` 决定行为。如果服务端随后关闭会话，驱动在后续 I/O 发现断线时报告错误。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
+CHAIN 可开始新事务。显式 `RELEASE` 成功后本地连接同步关闭。省略释放选项时，驱动只发送事务结束命令，由 MySQL 按当前会话的 `completion_type` 决定行为。如果服务端随后关闭会话，驱动在后续 I/O 发现断线时报告错误。省略释放选项且事务结束已获确认后，如果下一条命令在收到服务端响应前断线，可以显式 `connect()` 建立新会话。新事务一旦有后续响应确认，包括成功准备语句的响应，断线仍按事务丢失处理。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
 
 文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 
@@ -657,6 +657,7 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回构造器，实际执行交给 `Client::query()`。
 - 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
+- 重复键赋值按 `$updateColumns` 的顺序执行。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。自定义表达式中的同名列用目标表名限定。
 - `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
 - 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
 - 按插入值更新的字段必须在过滤后保留。固定值或表达式更新列由 `$updateColumns` 指定。
@@ -765,7 +766,7 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。带 `HAVING` 的计数同样保留原投影，以便引用字段或别名。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
+- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。分组计数默认只选择分组表达式，可直接配合 `HAVING SUM(amount) > ?`。如果 HAVING 引用了其他投影字段或别名，用 `fields()` 指定相应列或表达式。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -1178,7 +1179,7 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 ```
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
-- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端通过文本协议发送。
+- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端通过 `rawQuery()` 走文本协议，子类覆写的 `rawQuery()` 同样会收到这些命令。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
 - 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
 - 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。
@@ -1259,7 +1260,8 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 - `Client`：公开查询 API、元数据及成功回调；对外超时参数继续使用秒数。
 - `Client\ExecutionContext`：一次执行的总超时预算、Client 自建 Statement 的清理及成功通知；手工准备的 Statement 仍由调用方管理。
 - `Connection`：命令调度、会话元数据和完整操作的并发保护。
-- `Protocol\Authenticator`：握手解析、能力协商、TLS 升级及认证；沿用 Connection 的错误和 OK 状态解析，共享连接 Deadline。
+- `Protocol\Authenticator`：解析握手、协商能力、发送 TLS 升级请求及完成认证，共享连接 Deadline。
+- `Protocol\TlsHandshake`：生成并校验 TLS 选项，完成握手和证书验证。
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
 - `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。

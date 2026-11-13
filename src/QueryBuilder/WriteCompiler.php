@@ -12,7 +12,8 @@ final class WriteCompiler
     /** @var array<string, string>|null */
     private ?array $batchColumns = null;
 
-    public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
+    /** 保留历史构造参数，写入值直接使用子查询引用。 */
+    public function __construct(private readonly SqlBuffer $buffer, ConditionCompiler $conditions) {}
 
     /** @return array{statement: 'INSERT'|'REPLACE', fields: ?array} */
     public static function batchOptions(mixed $options, ?array $selectedFields): array
@@ -128,7 +129,7 @@ final class WriteCompiler
     }
 
     /** @param array<string, string> $columns 以绑定顺序保存列名及其 SQL 引用。 */
-    private function appendPairs(array $tableData, array $columns, bool $isInsert): void
+    private function appendPairs(array $tableData, array $columns, bool $isInsert, string $readQualifier = '', bool $batchDuplicate = false): void
     {
         $separator = '';
         foreach ($columns as $column => $columnReference) {
@@ -144,9 +145,10 @@ final class WriteCompiler
                 continue;
             }
             if ($value instanceof QueryBuilder && $value->isSubQuery()) {
-                // 把子查询渲染器生成的尾部空格留给下一项分隔符。
-                $this->buffer->sql .= substr($this->conditions->pair('', $value), 0, -1);
-                $separator = ' , ';
+                $subquery = SelectPlanner::subqueryReference($value, derivedTable: false);
+                $this->buffer->sql .= '  ' . $subquery['sql'];
+                $this->buffer->bindAll($subquery['params']);
+                if (!$batchDuplicate) { $separator = ' , '; }
                 continue;
             }
             if (!is_array($value)) {
@@ -158,7 +160,7 @@ final class WriteCompiler
             $val = $value[$key];
             switch ($key) {
                 case '[I]':
-                    $this->buffer->sql .= $columnReference . $val;
+                    $this->buffer->sql .= $readQualifier . $columnReference . $val;
                     break;
                 case '[F]':
                     $this->buffer->sql .= $val[0];
@@ -168,7 +170,7 @@ final class WriteCompiler
                     }
                     break;
                 case '[N]':
-                    $this->buffer->sql .= '!' . ($val ?? $columnReference);
+                    $this->buffer->sql .= '!' . ($val ?? ($readQualifier . $columnReference));
                     break;
                 default:
                     throw new Exception("Wrong operation or value for column {$column} in table {$this->buffer->tableName}");
@@ -179,59 +181,50 @@ final class WriteCompiler
     public function appendDuplicate(mixed $tableData, mixed $updateColumns): void
     {
         if ($updateColumns === null || $updateColumns === []) { return; }
-        $explicit = [];
-        $references = $this->batchColumns ?? [];
+        $updates = [];
         foreach ($updateColumns as $key => $value) {
             if (is_int($key)) {
-                if (!is_string($value) || !isset($references[$value])) {
-                    $reference = TableReference::identifier($value);
-                    $references[$value] = $reference;
+                $column = $value;
+                if (!is_string($column)) {
+                    throw new \InvalidArgumentException('Implicit duplicate-update columns must be strings');
                 }
-                $updateColumns[$value] = '';
-                unset($updateColumns[$key]);
+                // 同一列的显式赋值优先，位置取该列首次出现处。
+                $updates[$column] ??= [true, null];
             } else {
-                $explicit[$key] = $value;
+                $updates[$key] = [false, $value];
             }
         }
+
         $columns = [];
-        foreach (array_keys($updateColumns) as $column) {
-            $columns[$column] = $references[$column] ?? TableReference::identifier($column);
-        }
-        if ($this->batchColumns === null) {
-            foreach ($columns as $column => $reference) {
-                if (!array_key_exists($column, $explicit) && !array_key_exists($column, $tableData)) {
-                    throw new \InvalidArgumentException('Implicit duplicate-update column must exist in the inserted row');
+        $values = [];
+        $incoming = [];
+        foreach ($updates as $column => [$implicit, $value]) {
+            $columns[$column] = $this->batchColumns[$column] ?? TableReference::identifier($column);
+            if (!$implicit) {
+                $values[$column] = $value;
+            } elseif ($this->batchColumns !== null) {
+                if (!isset($this->batchColumns[$column])) {
+                    throw new \InvalidArgumentException('Implicit duplicate-update column must exist in every batch row');
                 }
+                $incoming[] = $column;
+            } elseif (array_key_exists($column, $tableData)) {
+                $values[$column] = $tableData[$column];
+            } else {
+                throw new \InvalidArgumentException('Implicit duplicate-update column must exist in the inserted row');
             }
-            foreach ($explicit as $column => $value) { $tableData[$column] = $value; }
-            $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-            $this->appendPairs($tableData, $columns, false);
-            return;
         }
-        $incomingColumns = [];
-        foreach ($columns as $column => $reference) {
-            if (array_key_exists($column, $explicit)) { continue; }
-            if (!isset($this->batchColumns[$column])) {
-                throw new \InvalidArgumentException('Implicit duplicate-update column must exist in every batch row');
-            }
-            $incomingColumns[] = $column;
-        }
-        $alias = null;
-        if ($incomingColumns !== []) {
+
+        $readQualifier = '';
+        if ($incoming !== []) {
             $table = $this->buffer->baseTableName;
             $alias = $table !== null && strcasecmp($table, '__mysqli_new') === 0 ? '`__mysqli_new_row`' : '`__mysqli_new`';
             $this->buffer->sql .= ' AS ' . $alias;
+            $readQualifier = TableReference::identifier($table) . '.';
+            foreach ($incoming as $column) {
+                $values[$column] = new Expression($alias . '.' . $columns[$column]);
+            }
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-        $separator = '';
-        foreach ($columns as $column => $reference) {
-            $this->buffer->sql .= $separator;
-            if (array_key_exists($column, $explicit)) {
-                $this->appendPairs($explicit, [$column => $reference], false);
-            } else {
-                $this->buffer->sql .= $reference . ' = ' . $alias . '.' . $reference;
-            }
-            $separator = ', ';
-        }
+        $this->appendPairs($values, $columns, false, $readQualifier, $this->batchColumns !== null);
     }
 }

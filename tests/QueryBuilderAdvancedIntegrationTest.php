@@ -58,6 +58,16 @@ final class QueryBuilderAdvancedIntegrationTest extends TestCase
             ->get('qb_advanced', null, 'id,name,status')));
     }
 
+    public function testMixedUpsertEvaluatesAssignmentsInOrderAgainstTheTargetRow(): void
+    {
+        $builder = (new QueryBuilder())->upsert('qb_advanced', [
+            ['id' => 1, 'score' => 20, 'baseline' => 99, 'tenantId' => 99],
+        ], ['score', 'baseline' => new Expression('qb_advanced.score + ?', [1]), 'tenantId' => QueryBuilder::inc(1)]);
+        self::assertTrue($this->client->query($builder));
+        self::assertSame([['score' => 20, 'baseline' => 21, 'tenantId' => 2]],
+            $this->client->rawQuery('SELECT score, baseline, tenantId FROM qb_advanced WHERE id = 1'));
+    }
+
     public function testTypedAndLegacyWriteExpressionsKeepValueOrder(): void
     {
         $builder = (new QueryBuilder())->where('id', 1)->update('qb_advanced', [

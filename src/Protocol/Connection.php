@@ -67,7 +67,6 @@ final class Connection
         $deadline = $deadline->cappedBy($this->config->getMaxConnectTime());
         try {
             $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
-            if ($tls) { TlsOptions::fromConfig($this->config); }
             $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tls);
             $handshake = $this->stream->readPacket($deadline, 'handshake');
             $authenticator = new Authenticator(
@@ -163,6 +162,7 @@ final class Connection
 
             $this->consumeDefinitions($parameterCount, $deadline);
             $this->consumeDefinitions($columnCount, $deadline);
+            $this->state->confirmSession();
             return new Statement($this, $statementId, $sql, $parameterCount, $columnCount, $warningCount, $this->state->generation());
         });
     }
@@ -177,7 +177,7 @@ final class Connection
         return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
             $deadline = Deadline::after($timeout ?? $this->timeout);
             $this->writeStatementCommand($statement, $parameters, $deadline);
-            return $this->readResponse($deadline, true, $statement->getSql());
+            return $this->readResponse($deadline, true, $statement->getSql(), $statement->completionReleasesSession());
         });
     }
 
@@ -228,7 +228,7 @@ final class Connection
         $this->busy = true;
         try {
             $send();
-            $columns = $this->readResultHeader($deadline, $sql);
+            $columns = $this->readCommandHeader($deadline, $sql, $owner?->completionReleasesSession(), $owner === null);
             if ($columns === null) {
                 $this->busy = false;
                 return ResultStream::completedEmpty();
@@ -310,7 +310,7 @@ final class Connection
      */
     public function commit(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
-        return $this->query('COMMIT' . $flags->toSqlSuffix()) === true;
+        return $this->finishTransaction('COMMIT', $flags);
     }
 
     /**
@@ -318,7 +318,12 @@ final class Connection
      */
     public function rollback(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
-        return $this->query('ROLLBACK' . $flags->toSqlSuffix()) === true;
+        return $this->finishTransaction('ROLLBACK', $flags);
+    }
+
+    private function finishTransaction(string $sql, TransactionCompletionFlags $flags): bool
+    {
+        return $this->command(self::COM_QUERY, $sql . $flags->toSqlSuffix(), null, $flags) === true;
     }
 
     /**
@@ -369,15 +374,16 @@ final class Connection
     /**
      * 在共享超时预算内发送命令并读取响应。
      */
-    private function command(int $command, string $payload, ?float $timeout): array|bool
+    private function command(int $command, string $payload, ?float $timeout, ?TransactionCompletionFlags $completion = null): array|bool
     {
-        return $this->guard(function () use ($command, $payload, $timeout): array|bool {
+        return $this->guard(function () use ($command, $payload, $timeout, $completion): array|bool {
             if ($command === self::COM_QUERY) {
                 $this->assertSupportedSql($payload);
             }
             $deadline = Deadline::after($timeout ?? $this->timeout);
             $this->writeTextCommand($command, $payload, $deadline);
-            return $this->readResponse($deadline, false, $payload);
+            return $this->readResponse($deadline, false, $payload, $completion?->releasePolicy(),
+                $command === self::COM_QUERY && $completion === null);
         });
     }
 
@@ -421,9 +427,9 @@ final class Connection
     /**
      * 解析服务端响应，返回结果行或执行成功标志。
      */
-    private function readResponse(Deadline $deadline, bool $binary, string $sql): array|bool
+    private function readResponse(Deadline $deadline, bool $binary, string $sql, ?bool $release = null, bool $rawSql = false): array|bool
     {
-        $columns = $this->readResultHeader($deadline, $sql);
+        $columns = $this->readCommandHeader($deadline, $sql, $release, $rawSql);
         if ($columns === null) { return true; }
         $rows = [];
         while (($row = $this->readResultRow($deadline, $binary, $sql, $columns)) !== null) {
@@ -442,9 +448,6 @@ final class Connection
         $header = Codec::int1($packet, $headerOffset);
         if ($header === 0x00) {
             $this->parseOk($packet);
-            if ($this->releasesSession($sql)) {
-                $this->invalidateConnection(true);
-            }
             return null;
         }
         if ($header === 0xfb) {
@@ -475,11 +478,19 @@ final class Connection
         return $columns;
     }
 
-    /** 显式 RELEASE 成功后同步关闭本地会话。 */
-    private function releasesSession(string $sql): bool
+    /** 缓冲与流式命令共用成功响应后的事务处理。 */
+    private function readCommandHeader(Deadline $deadline, string $sql, ?bool $release, bool $rawSql): ?array
     {
-        return preg_match('/\A\s*(?:COMMIT|ROLLBACK)(?:\s+WORK)?(?:\s+AND\s+(?:NO\s+)?CHAIN)?'
-            . '\s+RELEASE\s*;?\s*\z/i', $sql) === 1;
+        $columns = $this->readResultHeader($deadline, $sql);
+        if ($columns === null) {
+            $release = $rawSql ? TransactionCompletionFlags::sqlReleasePolicy($sql) : $release;
+            if ($release === true) {
+                $this->invalidateConnection(true);
+            } elseif ($release === false) {
+                $this->state->transactionCompleted();
+            }
+        }
+        return $columns;
     }
 
     /** 只读取当前行，不缓存其他行；EOF 时同步事务状态。 */
@@ -580,9 +591,10 @@ final class Connection
         $message = substr($packet, $offset);
         $this->errno = $code;
         $this->error = $message;
-        $this->state->applyServerError($code);
         if ($code === PacketStream::ER_CLIENT_INTERACTION_TIMEOUT) {
             $this->invalidateConnection();
+        } else {
+            $this->state->applyServerError($code);
         }
         throw new Exception("{$context}: {$message}", $code);
     }

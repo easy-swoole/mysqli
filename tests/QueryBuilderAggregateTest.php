@@ -179,10 +179,10 @@ final class QueryBuilderAggregateTest extends TestCase
         self::assertStringNotContainsString('LOCK IN SHARE MODE', $builder->getLastPrepareQuery());
     }
 
-    public function testCountWithHavingPreservesImplicitProjection(): void
+    public function testGroupedCountWithAggregateHavingUsesGroupingProjection(): void
     {
         $builder = (new QueryBuilder())->where('tenantId', 7)->groupBy('status')->having('COUNT(*)', 2, '>')->count('orders');
-        self::assertMatchesRegularExpression('/FROM \(SELECT \* FROM `orders` WHERE `tenantId` = \? GROUP BY status HAVING COUNT\(\*\) > \?\)/', $this->sql($builder));
+        self::assertMatchesRegularExpression('/FROM \(SELECT status AS `__mysqli_group0` FROM `orders` WHERE `tenantId` = \? GROUP BY status HAVING COUNT\(\*\) > \?\)/', $this->sql($builder));
         self::assertSame([7, 2], $builder->getLastBindParams());
     }
 

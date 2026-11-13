@@ -761,9 +761,12 @@ final class ProtocolTest extends TestCase
             $peer->close();
         });
         $client = new class($config) extends Client {
+            public array $textCommands = [];
+
             public function rawQuery(string $query, ?float $timeout = null): bool|array
             {
-                throw new \LogicException('Builder execution must not dispatch to rawQuery()');
+                $this->textCommands[] = $query;
+                return parent::rawQuery($query, $timeout);
             }
         };
         $client->connect();
@@ -778,6 +781,7 @@ final class ProtocolTest extends TestCase
             }
             self::assertTrue($client->query($builder));
         }
+        self::assertSame(['LOCK TABLES `users` READ', 'UNLOCK TABLES'], $client->textCommands);
         self::assertSame([true, true], $notified);
         $client->close();
         $this->assertServerCompleted($completed);

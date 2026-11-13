@@ -55,7 +55,18 @@ final class QueryBuilderUpsertTest extends TestCase
             ['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b'],
         ]);
         self::assertSame([1, 'a', 2, 'b', true], $q->getLastBindParams());
-        self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `status` = ?, `name` = `__mysqli_new`.`name`', $q->getLastPrepareQuery());
+        self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `name` = `__mysqli_new`.`name`, `status` = ?', $q->getLastPrepareQuery());
+    }
+
+    public function testMixedUpsertQualifiesOnlyGeneratedCurrentColumnReferences(): void
+    {
+        $builder = (new QueryBuilder())->upsert('app.`__mysqli_new`', [
+            ['id' => 1, 'hits' => 3, 'stock' => 4, 'enabled' => true],
+        ], ['id', 'hits' => QueryBuilder::inc(1), 'stock' => QueryBuilder::dec(2), 'enabled' => QueryBuilder::not()]);
+        self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `id` = `__mysqli_new_row`.`id`, '
+            . '`hits` = `__mysqli_new`.`hits` + 1, `stock` = `__mysqli_new`.`stock` - 2, '
+            . '`enabled` = !`__mysqli_new`.`enabled`', $builder->getLastPrepareQuery());
+        self::assertSame([1, 3, 4, true], $builder->getLastBindParams());
     }
 
     public function testSingleRowImplicitUpdateKeepsExistingSqlAndBindings(): void

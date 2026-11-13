@@ -68,7 +68,7 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['aggregate'=>6]],$this->client->query($builder));
         $builder->fields(['tenantId'])->distinct()->orderByDesc('tenantId')->limit(1)->count('qb_fix_orders');
         self::assertSame([['aggregate'=>2]],$this->client->query($builder));
-        $builder->fields('tenantId')->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
+        $builder->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>1]],$this->client->query($builder));
         $builder->groupBy('1')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>4]],$this->client->query($builder));
@@ -91,10 +91,10 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_rollup')));
     }
 
-    public function testGroupedHavingCanUseColumnsFromTheOriginalProjection(): void
+    public function testGroupedHavingCanUseColumnsFromAnExplicitStarProjection(): void
     {
         $this->client->rawQuery("SET SESSION sql_mode = ''");
-        $template = (new QueryBuilder())->groupBy('tenantId')->having('id', 0, '>');
+        $template = (new QueryBuilder())->fields('*')->groupBy('tenantId')->having('id', 0, '>');
         $rows = $this->client->query((clone $template)->get('qb_fix_orders'));
         self::assertCount(2, $rows);
         self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_orders')));
