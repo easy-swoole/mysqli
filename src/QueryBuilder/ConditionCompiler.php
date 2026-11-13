@@ -2,14 +2,13 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\ConditionValue;
 use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\Exception\Exception;
 
 /**
  * @internal 编译 WHERE、HAVING、JOIN 条件值及嵌套条件。
- * @phpstan-type ConditionNode array{0: string, 1: mixed, 2: string, 3: mixed}|array{group: array, concat: string}|array{exists: QueryBuilder, operator: string, concat: string}|array{column: array{string, string, string}, concat: string}|array{expression: Expression, concat: string}
+ * @phpstan-type ConditionNode array{0: string, 1: mixed, 2: string, 3: mixed}|array{group: array, concat: string}|array{exists: Expression, operator: string, concat: string}|array{column: array{string, string, string}, concat: string}|array{expression: Expression, concat: string}
  */
 final class ConditionCompiler
 {
@@ -24,11 +23,6 @@ final class ConditionCompiler
         if (!is_object($value)) {
             $this->buffer->bind($value);
             return ' ' . $operator . ' ? ';
-        }
-        if ($value instanceof QueryBuilder) {
-            $subQuery = SelectPlanner::subqueryReference($value, derivedTable: false);
-            $this->buffer->bindAll($subQuery['params']);
-            return ' ' . $operator . ' ' . $subQuery['sql'] . ' ';
         }
         $type = get_class($value);
         throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");

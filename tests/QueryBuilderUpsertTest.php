@@ -246,31 +246,23 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([null, 1], $builder->getLastBindParams());
     }
 
-    public function testFailedUpsertRestoresPreviousDuplicateUpdateSettings(): void
+    public function testUpsertUsesItsOwnUpdateColumnsAndCurrentFieldFilter(): void
     {
-        foreach ([null, ['name' => 'previous']] as $previous) {
-            $builder = (new QueryBuilder())->fields('id');
-            if ($previous !== null) {
-                $builder->onDuplicate($previous);
-            }
+        $builder = (new QueryBuilder())->fields(['id', 'name'])->onDuplicate(['name' => 'previous']);
+        $builder->upsert('users', [
+            ['id' => 1, 'name' => 'Alice', 'unused' => 10],
+            ['name' => null, 'id' => 2, 'unused' => 20],
+        ], ['name', 'status' => 'active']);
 
-            try {
-                $builder->upsert('users', [['name' => 'input']], ['name' => 'failed']);
-                self::fail('Expected filtering to reject the row');
-            } catch (\InvalidArgumentException $error) {
-                self::assertStringContainsString('No writable columns', $error->getMessage());
-            }
+        self::assertStringContainsString('(`id`, `name`)', $builder->getLastPrepareQuery());
+        self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `name` = `__mysqli_new`.`name`, `status` = ?',
+            $builder->getLastPrepareQuery());
+        self::assertSame([1, 'Alice', 2, null, 'active'], $builder->getLastBindParams());
+        self::assertNull($builder->getField());
 
-            $builder->insert('users', ['id' => 1]);
-            $sql = 'INSERT  INTO `users` (`id`)  VALUES (?)';
-            if ($previous === null) {
-                self::assertSame($sql, $builder->getLastPrepareQuery());
-                self::assertSame([1], $builder->getLastBindParams());
-            } else {
-                self::assertSame($sql . ' ON DUPLICATE KEY UPDATE `name` = ?', $builder->getLastPrepareQuery());
-                self::assertSame([1, 'previous'], $builder->getLastBindParams());
-            }
-        }
+        $builder->insert('users', ['id' => 3, 'status' => 'new']);
+        self::assertSame('INSERT  INTO `users` (`id`, `status`)  VALUES (?, ?)', $builder->getLastPrepareQuery());
+        self::assertSame([3, 'new'], $builder->getLastBindParams());
     }
 
     public function testWriteWhitelistCannotTurnAProvidedRowIntoAnEmptyWrite(): void

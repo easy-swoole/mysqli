@@ -58,7 +58,7 @@ composer test:integration
 
 `NativeTypeCompletenessTest` 检查源码声明的全部属性、方法参数与返回值，包括私有方法。构造和析构方法按 PHP 要求不声明返回类型，引擎生成的枚举属性不参与检查。灵活的旧接口输入和数据库值保留 `mixed`，数组结构与回调签名另以 PHPDoc 描述。
 
-`QueryBuilderStateTest` 覆盖原始条件、列比较和条件组设置后的克隆隔离，子类构造及克隆钩子，重置与调试结果的发布时机，完成结果的复制，FROM/UNION 快照，以及 IN/EXISTS/JOIN 的延迟读取。这些行为断言也已在重构前的源码上验证。
+`QueryBuilderStateTest` 覆盖原始条件、列比较和条件组设置后的克隆隔离，子类构造及克隆钩子，重置与调试结果的发布时机，完成结果的复制，以及 FROM、UNION、IN、EXISTS 和 JOIN 的子查询快照。
 
 `SelectPlannerTest`、`AuthenticatorTest` 和 `ClientExecutionContextTest` 覆盖子类方法分派、来源快照、能力与认证检查、共享执行截止时间、原异常传播、finally 清理的异常优先级、自建语句清理和观察回调时机。已有的模拟服务端与真实数据库测试继续验证拆分后的完整调用路径。
 

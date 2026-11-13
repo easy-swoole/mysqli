@@ -200,7 +200,7 @@ final class QueryCompiler
         }
 
         if ($statement === 'INSERT' || $statement === 'REPLACE') {
-            if ($parts->joins !== [] || $parts->joinConditions !== [] || $parts->where !== []
+            if ($parts->joins !== [] || $parts->where !== []
                 || $parts->ordering !== [] || $numRows !== null) {
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
             }

@@ -104,6 +104,43 @@ SQL;
         }
     }
 
+    public function testMysqlRejectsMixedIndexHintsInEitherCallOrder(): void
+    {
+        foreach ([true, false] as $forceFirst) {
+            $builder = new QueryBuilder();
+            if ($forceFirst) {
+                $builder->forceIndex('PRIMARY')->useIndex('PRIMARY');
+            } else {
+                $builder->useIndex('PRIMARY')->forceIndex('PRIMARY');
+            }
+            $builder->get('qb_fix_orders', null, 'id');
+            self::assertStringContainsString('FORCE INDEX (`PRIMARY`) USE INDEX (`PRIMARY`)', $builder->getLastPrepareQuery());
+            try {
+                $this->client->query($builder);
+                self::fail('Expected MySQL to reject mixed index hints');
+            } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                self::assertSame(1221, $error->getCode());
+            }
+        }
+    }
+
+    public function testDuplicateUpdateKeepsTheConfiguredSubquerySnapshot(): void
+    {
+        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_rates (id INT PRIMARY KEY, score INT)');
+        $this->client->rawQuery('INSERT INTO qb_fix_rates VALUES (1, 51), (2, 72)');
+        $rate = QueryBuilder::subQuery()->where('id', 1)->get('qb_fix_rates', null, 'score');
+        $builder = (new QueryBuilder())->onDuplicate(['score' => $rate, 'status' => 'adjusted']);
+        $rate->where('id', 2)->get('qb_fix_rates', null, 'score');
+        $builder->insert('qb_fix_orders', [
+            'id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0,
+        ]);
+
+        self::assertSame([1, 1, 'Alice', 'paid', 0, 1, 'adjusted'], $builder->getLastBindParams());
+        self::assertTrue($this->client->query($builder));
+        self::assertSame([['score' => 51, 'status' => 'adjusted']],
+            $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 1'));
+    }
+
     public function testDistinctRollupCountKeepsTheOriginalProjection(): void
     {
         $this->client->rawQuery("SET SESSION sql_mode = ''");
@@ -378,6 +415,24 @@ SQL;
         $page = $this->client->paginate($template, null, 1, 2);
         self::assertSame(2, $page['total']);
         self::assertSame([['id' => 3, 'score' => 130]], $page['items']);
+    }
+
+    public function testJoinedAndConditionSubqueriesRetainTheirValuesInPagination(): void
+    {
+        $users = QueryBuilder::subQuery('u')->where('tenantId', 1)->get('qb_fix_users', null, ['id', 'tenantId']);
+        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_order_queue (order_id INT, queue_id INT)');
+        $this->client->rawQuery('INSERT INTO qb_fix_order_queue VALUES (1, 10), (3, 20)');
+        $eligible = QueryBuilder::subQuery()->where('queue_id', 10)->get('qb_fix_order_queue', null, 'order_id');
+        $template = (new QueryBuilder())->join($users, 'u.id = o.id')
+            ->joinOn('u', 'u.tenantId', 'o.tenantId')->whereIn('o.id', $eligible)
+            ->fields(['o.id AS order_id', 'u.id AS user_id'])->orderByAsc('o.id');
+
+        $users->where('tenantId', 2)->get('qb_fix_users', null, ['id', 'tenantId']);
+        $eligible->where('queue_id', 20)->get('qb_fix_order_queue', null, 'order_id');
+
+        $page = $this->client->paginate($template, 'qb_fix_orders o', 1);
+        self::assertSame(1, $page['total']);
+        self::assertSame([['order_id' => 1, 'user_id' => 1]], $page['items']);
     }
 
     public function testGetOneUsesTheDefaultProjectionOfTheOrderBuilder(): void

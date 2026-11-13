@@ -4,11 +4,10 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Expression;
-use EasySwoole\Mysqli\QueryBuilder;
 
 /**
  * @internal 编译 JOIN、GROUP、UNION、ORDER 及 LIMIT 子句。
- * @phpstan-type JoinNode array{0: string, 1: mixed, 2: mixed, 3: string|null}
+ * @phpstan-type JoinNode array{0: string, 1: string, 2: mixed, 3: string, 4: array<array-key, mixed>}
  * @phpstan-type UnionNode array{0: string|null, 1: array<array-key, mixed>, 2: mixed, 3: bool}
  * @phpstan-type OrderNode array{field: string|Expression, direction: string, params: array<array-key, mixed>}
  * @phpstan-import-type ConditionNode from ConditionCompiler
@@ -19,30 +18,13 @@ final class SelectCompiler
 
     /**
      * @param array<array-key, JoinNode>|null $joins
-     * @param array<array-key, array<array-key, ConditionNode>>|null $joinConditions
+     * @param array<int, array<array-key, ConditionNode>>|null $joinConditions
      */
     public function appendJoins(mixed $joins, mixed $joinConditions): void
     {
-        $matched = [];
-        foreach ($joins ?? [] as $data) {
-            [$joinType, $joinTable, $joinCondition, $conditionKey] = $data;
-            if ($joinTable instanceof QueryBuilder) {
-                $source = SelectPlanner::subqueryReference($joinTable, derivedTable: true);
-                $conditionKey = $source['alias'];
-                $joinStr = '  ' . $source['sql'];
-                $this->buffer->bindAll($source['params']);
-            } elseif (is_object($joinTable)) {
-                $joinStr = $this->conditions->pair('', $joinTable);
-            } else {
-                $joinStr = $joinTable;
-            }
-            $extra = $conditionKey === null ? [] : ($joinConditions[$conditionKey] ?? []);
-            if ($extra !== []) {
-                if (isset($matched[$conditionKey])) {
-                    throw new \InvalidArgumentException('Ambiguous JOIN condition target: ' . $conditionKey);
-                }
-                $matched[$conditionKey] = true;
-            }
+        foreach ($joins ?? [] as $index => [$joinType, $joinStr, $joinCondition, , $parameters]) {
+            $this->buffer->bindAll($parameters);
+            $extra = $joinConditions[$index] ?? [];
             $using = is_string($joinCondition) && preg_match('/\A\s*USING\s*\(/i', $joinCondition) === 1;
             if ($joinType === JoinType::Natural->value) {
                 if (!is_string($joinCondition) || trim($joinCondition) !== '' || $extra !== []) {
@@ -67,10 +49,6 @@ final class SelectCompiler
             if ($extra !== []) {
                 $this->conditions->appendOn($extra);
             }
-        }
-        $unmatched = array_diff_key($joinConditions ?? [], $matched);
-        if ($unmatched !== []) {
-            throw new \InvalidArgumentException('JOIN condition target was not joined: ' . array_key_first($unmatched));
         }
     }
 

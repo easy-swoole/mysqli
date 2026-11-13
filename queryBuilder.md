@@ -193,7 +193,7 @@ $rows = $client->query($builder);
 ```
 
 索引名支持字符串或数组，自动加反引号；不要传逗号分隔的 SQL 片段。
-同类提示重复调用时覆盖，传 `[]` 清除该类提示；非空的 `USE` 和 `FORCE` 设置互相覆盖，`IGNORE` 可搭配使用。
+同一张表的 `USE INDEX` 和 `FORCE INDEX` 任选其一，同时设置时由 MySQL 报错。重复调用同类提示会替换其索引列表，传 `[]` 清除该类提示。`IGNORE INDEX` 可搭配使用。
 提示仅作用于 SELECT 主表，不作用于 JOIN 表或写入目标。
 `useIndex([])` 表示清除设置，不生成 MySQL 的 `USE INDEX ()`。
 已有表名 SQL 片段中包含索引提示时，不要再为该表叠加这些方法。
@@ -290,9 +290,9 @@ $builder->join('users', '', JoinType::Natural)->fields(['id'])->get('orders');
 - 默认仍为原字符串 `''`；既有大小写和首尾空白处理不变，例如 `' left outer '` 仍可用。固定类型字符串通过枚举的 `tryFrom()` 校验；无效类型在追加 JOIN 前报错。
 - 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
-- 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。普通表名应用表前缀，数据库限定的表名保留原数据库和表名。
+- 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。使用表前缀时先调用 `setPrefix()`，再添加 JOIN。数据库限定的表名保留原数据库和表名。
 - JOIN 的结果列由调用方用 `fields()` 显式指定。多个表返回同名列时，请分别起别名，例如 `o.id AS order_id` 和 `u.id AS user_id`。如果使用 `*` 或 `表别名.*`，列由 MySQL 展开，构造器不会推断列名或替同名列生成别名。
-- JOIN 子查询使用带别名的 `QueryBuilder::subQuery($alias)`。构建外层语句时，读取已构建的子查询 SQL、别名和参数。IN、EXISTS 和写入值中的子查询使用无别名的 `QueryBuilder::subQuery()`。
+- JOIN 子查询使用带别名的 `QueryBuilder::subQuery($alias)`。先构建子查询，再调用 `join()` 保存它的 SQL、别名和参数。IN、EXISTS 和写入值中的子查询使用无别名的 `QueryBuilder::subQuery()`。
 
 ### `Expression` / `rawExpression(string $sql, array $parameters = [])`
 
@@ -420,7 +420,7 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 // LEFT JOIN users u on (u.id=o.userId) AND `u`.`tenantId` = `o`.`tenantId`
 ```
 
-- 给已有 JOIN 的 ON 部分追加字段比较，不创建 JOIN，也不把右字段当值绑定；参数中的两个字段遵循 `whereColumn()` 的引用规则。
+- 先调用对应的 `join()`，再追加 ON 字段比较。两个字段遵循 `whereColumn()` 的引用规则。
 - `$table` 与 `join()` 中的表名、别名写法保持一致；JOIN 子查询使用其别名定位。表前缀由构造器沿用现有规则处理，不手动重复添加。
 - `joinOrOn($table, $first, $second, $operator = '=')` 追加 OR。需要与常量值比较时使用 `joinWhere()`；需要括号时使用下面的 ON 分组。
 - 仅适用于 ON JOIN；初始条件为 `USING(...)` 的 JOIN 不能再追加 `joinOn()`、`joinWhere()` 或 ON 分组，否则会报错。需要追加条件时从 `join()` 开始就使用 ON 条件。
@@ -495,9 +495,9 @@ $builder->onDuplicate([
 
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回 Builder，实际执行交给 `Client::query()`。
 - 字段列表 `['name']` 表示引用 MySQL 已计算的插入值，插入表达式只求值一次。单行和批量的隐式更新均使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。
-- 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
+- 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。显式值为子查询时，先用无别名的 `QueryBuilder::subQuery()` 构建，再传给 `onDuplicate()` 保存其 SQL 和参数。
 - 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。混用隐式列和自定义表达式时，用实际目标表名限定表达式读取的目标列，例如 `orders.baseline`。插入行别名也包含该列时，未限定的 `baseline` 会导致 MySQL 报列名歧义。构造器原样使用 `Expression` 和 `func()` 的 SQL。
-- `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
+- `upsert()` 要求非空行数据和非空更新列。本次重复键更新直接通过 `$updateColumns` 指定。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
 - 按插入值更新的字段必须在过滤后保留。重复键更新仅用于 INSERT，与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
@@ -523,7 +523,7 @@ $builder->get('`archive`.`order`');
 ```
 
 - `fields()` 接受字符串、字段数组和 Expression；字符串中的表达式、空白和别名原样保留。它也用于 INSERT/UPDATE 的字段白名单，读取表达式与写入白名单不要混用。
-- `setPrefix()` 保留到显式更改；`reset()` 不清除表前缀。普通表名、已有反引号的表名及其别名均可使用；数据库限定表名不添加前缀。
+- 先调用 `setPrefix()`，再组装查询及 JOIN。前缀保留到显式更改，`reset()` 保留该设置。普通表名、已加反引号的表名及其别名均可使用。数据库限定表名按原数据库和表名引用。
 - 表名、字段表达式及原始 FROM 片段仍来自可信代码；表名前缀处理不是任意 SQL 的安全过滤器。需要带参数的派生表时使用 `fromSub()`。
 
 ### `update($tableName, $tableData, $numRows = null)`：限定字段名
@@ -689,6 +689,8 @@ $builder->where('col2', '%keyword%', 'LIKE')->get('getTable');
 $builder->where('col1', 2)->orWhere('col2', 'str')->get('getTable');
 ```
 
+`ALL`、`DISTINCT` 和 `DISTINCTROW` 任选其一。`distinct(false)` 清除 DISTINCT，混用互斥选项时构建会报错。
+
 ### 关联查询（JOIN）
 ```php
 use EasySwoole\Mysqli\QueryBuilder;
@@ -839,7 +841,7 @@ $builder->join('users u', 'u.id=o.userId', 'LEFT')
 
 - 追加 ON 条件时，`join()` 的初始条件会整体加括号。字符串与 `Expression` 使用相同分组。
 - NULL 判断使用 `'IS'` 或 `'IS NOT'`，不使用默认的 `'='`；无需在运算符前手动添加空格。
-- 第一个参数使用对应 `join()` 的完整表名与别名字符串，例如 `users u`。JOIN 子查询传其别名。构建时，找不到对应 JOIN 或定位到多个 JOIN 会抛出 `InvalidArgumentException`。
+- 先调用对应的 `join()`。追加条件时，第一个参数传相同的表名与别名字符串，例如 `users u`。JOIN 子查询传其别名。目标不存在或不唯一时抛出 `InvalidArgumentException`。
 - 条件位于 JOIN 的 ON 部分。LEFT JOIN 中将条件移到 WHERE 可能改变保留行范围。
 - 仅适用于 ON JOIN；初始条件为 `USING(...)` 时不能追加 `joinWhere()`、`joinOrWhere()`、`joinOn()` 或 ON 分组，需要追加条件时从 `join()` 开始使用 ON 条件。
 - 混用 AND/OR 时仍遵循 SQL 优先级，需确认完整 ON 表达式的含义。
@@ -974,7 +976,7 @@ $builder->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('ord
 ```
 
 - `selectForUpdate()` 和 `lockInShareMode()` 的 `$isLock` 接受布尔值，默认 `true`。`Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。
-- 显式枚举 `Default` 会清除已设置的等待策略；兼容旧调用，省略 `$option`、传 `null` 或字符串 `''` 不覆盖已有策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
+- 传入 `LockWaitPolicy::Default` 或空字符串 `''` 会清除已设置的等待策略。省略 `$option` 或传入 `null` 时沿用已配置的等待策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
 - 已知策略字符串继续接受，并按大小写无关及去除首尾空白的结果映射，例如 `' nowait '` 输出 NOWAIT。未知字符串尾部按旧接口原样保留，例如已有的 `OF ...` 片段；只能来自可信代码，是否能执行由目标服务端决定，不代表支持了新的数据库方言。
 - 方法仅构建 SQL，不开启事务或立即申请锁；在同一客户端连接的业务事务中执行。SELECT 锁标记和等待策略在构建完成或 `reset()` 后清除。
 
@@ -1118,7 +1120,7 @@ try {
 }
 ```
 
-- 参数数量、参数编码和所属会话校验与 `execute()` 一致。完整读取后 Statement 仍可再次执行，不自动释放；调用方最终负责 `close()`。
+- 参数数量、参数编码和所属会话校验与 `execute()` 一致。完整读取后 Statement 仍可再次执行。手工 `prepare()` 的语句用完后显式 `close()`。同一连接上开启其他结果流前，先关闭已用完的语句。如果 Statement 自己正在提供结果流，先读完或关闭结果流，再关闭 Statement。
 - Prepare 是此前独立操作；这里的超时覆盖本次 Execute 与逐行消费。连接断开或流提前停止后，旧 Statement 不再可复用，需要重新 Prepare；事务丢失保护优先适用。
 - 通过 Client 创建的 Statement 在完整 EOF 后更新该 Client 的元数据；直接调用 Statement 不触发 Client 的 `onQuery()`，与手工 `execute()` 的回调范围一致。
 

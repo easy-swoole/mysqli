@@ -318,7 +318,7 @@ final class QueryBuilderStateTest extends TestCase
         }
     }
 
-    public function testFromSubAndUnionSnapshotWhileInAndExistsReadTheirSourceAtBuildTime(): void
+    public function testFromSubUnionInAndExistsCaptureBuiltQueriesWhenAttached(): void
     {
         $sub = QueryBuilder::subQuery()->where('state', 'initial')->get('items', null, 'id');
         $branch = (new QueryBuilder())->where('state', 'branch_initial')->get('archive', null, 'id');
@@ -335,34 +335,34 @@ final class QueryBuilderStateTest extends TestCase
         $exists->get('items');
         self::assertSame(['initial'], $from->getLastBindParams());
         self::assertSame(['branch_initial'], $union->getLastBindParams());
-        self::assertSame(['later', 'later'], $in->getLastBindParams());
-        self::assertSame(['later', 'later'], $exists->getLastBindParams());
+        self::assertSame(['initial', 'initial'], $in->getLastBindParams());
+        self::assertSame(['initial', 'initial'], $exists->getLastBindParams());
         $completed = [$this->buildResult($from), $this->buildResult($union), $this->buildResult($in), $this->buildResult($exists)];
         $sub->raw('SELECT ? AS id', ['future']);
         $branch->raw('SELECT ? AS id', ['branch_future']);
         self::assertSame($completed, [$this->buildResult($from), $this->buildResult($union), $this->buildResult($in), $this->buildResult($exists)]);
     }
 
-    public function testCloningDoesNotTurnDelayedSubqueryReferencesIntoDeepSnapshots(): void
+    public function testCloningKeepsAttachedConditionSubquerySnapshots(): void
     {
         $sub = QueryBuilder::subQuery()->where('state', 'first')->get('items', null, 'id');
         $original = (new QueryBuilder())->whereIn('id', $sub)->whereExists($sub);
         $fork = clone $original;
         $sub->where('state', 'second')->get('items', null, 'id');
-        self::assertSame(['second', 'second'], $fork->get('items')->getLastBindParams());
+        self::assertSame(['first', 'first'], $fork->get('items')->getLastBindParams());
         $sub->where('state', 'third')->get('items', null, 'id');
-        self::assertSame(['third', 'third'], $original->get('items')->getLastBindParams());
-        self::assertSame(['second', 'second'], $fork->getLastBindParams());
+        self::assertSame(['first', 'first'], $original->get('items')->getLastBindParams());
+        self::assertSame(['first', 'first'], $fork->getLastBindParams());
     }
 
-    public function testJoinSubqueriesRemainDelayedAcrossOuterClones(): void
+    public function testJoinSubquerySnapshotsAreSharedAcrossOuterClones(): void
     {
         $sub = QueryBuilder::subQuery('u')->where('state', 'first')->get('users', null, 'id');
         $original = (new QueryBuilder())->join($sub, 'u.id=r.userId')->joinWhereGroup('u', static fn(QueryBuilder $q) => $q->where('u.enabled', true));
         $fork = clone $original;
         $sub->where('state', 'second')->get('users', null, 'id');
-        self::assertSame(['second', true], $fork->get('records r')->getLastBindParams());
+        self::assertSame(['first', true], $fork->get('records r')->getLastBindParams());
         $sub->where('state', 'third')->get('users', null, 'id');
-        self::assertSame(['third', true], $original->get('records r')->getLastBindParams());
+        self::assertSame(['first', true], $original->get('records r')->getLastBindParams());
     }
 }

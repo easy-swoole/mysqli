@@ -152,20 +152,26 @@ final class QueryBuilderConditionsTest extends TestCase
         self::assertSame([1, 7, 'active', 'active', 'staff', 7], $builder->getLastBindParams());
     }
 
-    public function testUnmatchedJoinConditionsFailBeforePublishingAWrite(): void
+    public function testOnConditionsRequireAnAlreadyRegisteredJoin(): void
     {
         $builder = (new QueryBuilder())->get('previous');
         $previous = $builder->getLastPrepareQuery();
-        $builder->join('users u', 'u.id=o.userId')->joinWhere('u', 'u.active', true);
-        try {
-            $builder->delete('orders o');
-            self::fail('Expected the unmatched ON condition to be rejected');
-        } catch (\InvalidArgumentException $error) {
-            self::assertStringContainsString('JOIN condition target was not joined: u', $error->getMessage());
-            self::assertSame($previous, $builder->getLastPrepareQuery());
+        foreach ([
+            static fn(QueryBuilder $q) => $q->joinWhere('users u', 'u.active', true),
+            static fn(QueryBuilder $q) => $q->joinOn('users u', 'u.id', 'o.userId'),
+            static fn(QueryBuilder $q) => $q->joinWhereGroup('users u', static fn(QueryBuilder $group) => $group->where('u.active', true)),
+        ] as $append) {
+            try {
+                $append($builder);
+                self::fail('Expected ON conditions to require an existing JOIN');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('JOIN condition target was not joined: users u', $error->getMessage());
+                self::assertSame($previous, $builder->getLastPrepareQuery());
+            }
         }
-        $builder->reset()->joinOn('users u', 'u.id', 'o.userId')->join('users u', 'u.active=1')->get('orders o');
+        $builder->join('users u', 'u.active=1')->joinOn('users u', 'u.id', 'o.userId')->get('orders o');
         self::assertStringContainsString('AND `u`.`id` = `o`.`userId`', $builder->getLastPrepareQuery());
+        self::assertSame([], $builder->getLastBindParams());
     }
 
     public function testSubqueryReferencesRequireAnAliasOnlyForDerivedTables(): void

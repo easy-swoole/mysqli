@@ -9,7 +9,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
  * 使用数组保持 PHP 克隆隔离，无需子类调用 parent::__clone()。
  * @phpstan-type State array{
  *   transactionOp: ?int, joins: list<array>, whereConditions: list<array>,
- *   unionBranches: list<array>, joinConditions: array<array-key, array>, havingConditions: list<array>,
+ *   unionBranches: list<array>, joinConditions: array<int, array>, havingConditions: list<array>,
  *   ordering: array<array-key, array>, groups: list<mixed>, queryOptions: list<string>,
  *   updateColumns: ?array, tableName: mixed,
  *   forUpdate: bool, lockInShareMode: bool, selectLockOption: string|false,

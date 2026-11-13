@@ -182,9 +182,9 @@ final class QueryBuilderTest extends TestCase
         self::assertSame('SELECT * FROM app_items i USE INDEX (`idx_user`, `PRIMARY`) IGNORE INDEX (`idx_status`)', $this->normalizedSql($this->builder));
         $this->builder->get('items');
         self::assertSame('SELECT * FROM `app_items`', $this->normalizedSql($this->builder));
-        $this->builder->forceIndex('old')->useIndex('new')->get('items');
+        $this->builder->forceIndex('old')->forceIndex([])->useIndex('new')->get('items');
         self::assertSame('SELECT * FROM `app_items` USE INDEX (`new`)', $this->normalizedSql($this->builder));
-        $this->builder->useIndex('old')->forceIndex('new')->ignoreIndex('skip')->get('items');
+        $this->builder->useIndex('old')->useIndex([])->forceIndex('new')->ignoreIndex('skip')->get('items');
         self::assertSame('SELECT * FROM `app_items` FORCE INDEX (`new`) IGNORE INDEX (`skip`)', $this->normalizedSql($this->builder));
         $this->builder->useIndex('x')->ignoreIndex('y')->useIndex([])->ignoreIndex([])->get('items');
         self::assertSame('SELECT * FROM `app_items`', $this->normalizedSql($this->builder));
@@ -241,7 +241,7 @@ final class QueryBuilderTest extends TestCase
     public function testExplicitRawMarkerAndSingleArgumentConditions(): void
     {
         foreach ([false, true] as $explicit) {
-            $q = new QueryBuilder();
+            $q = (new QueryBuilder())->join('users b', 'b.id = a.id', 'LEFT');
             if ($explicit) {
                 $q->where('a.id = b.id', ConditionValue::Raw)->orWhere('a.id > 0', ConditionValue::Raw)
                     ->having('COUNT(*) > 0', ConditionValue::Raw)->orHaving('COUNT(*) = 0', ConditionValue::Raw)
@@ -252,7 +252,7 @@ final class QueryBuilderTest extends TestCase
                     ->having('COUNT(*) > 0')->orHaving('COUNT(*) = 0')
                     ->joinWhere('users b', 'b.enabled = 1')->joinOrWhere('users b', 'b.enabled = 2');
             }
-            $q->join('users b', 'b.id = a.id', 'LEFT')->get('orders a');
+            $q->get('orders a');
             self::assertSame('SELECT * FROM orders a LEFT JOIN users b on (b.id = a.id) AND b.enabled = 1 OR b.enabled = 2 WHERE a.id = b.id OR a.id > 0 HAVING COUNT(*) > 0 OR COUNT(*) = 0', $this->normalizedSql($q));
             self::assertSame([], $q->getLastBindParams());
         }
@@ -615,6 +615,8 @@ final class QueryBuilderTest extends TestCase
         foreach ([
             static fn(QueryBuilder $q) => $q->distinct()->insert('users', ['name' => 'a']),
             static fn(QueryBuilder $q) => $q->setQueryOption('LOW_PRIORITY')->get('users'),
+            static fn(QueryBuilder $q) => $q->setQueryOption('ALL')->distinct()->get('users'),
+            static fn(QueryBuilder $q) => $q->distinct()->setQueryOption('ALL')->get('users'),
             static fn(QueryBuilder $q) => $q->setQueryOption('IGNORE')->replace('users', ['name' => 'a']),
             static fn(QueryBuilder $q) => $q->setQueryOption(['HIGH_PRIORITY', 'LOW_PRIORITY'])->insert('users', ['name' => 'a']),
         ] as $build) {

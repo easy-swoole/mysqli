@@ -82,13 +82,13 @@ class QueryBuilder
     /** 对所选列的组合去重，仅影响下一次构建的查询。 */
     public function distinct(bool $isDistinct = true): QueryBuilder
     {
-        $removeOption = $isDistinct ? 'ALL' : 'DISTINCT';
-        $this->pending['queryOptions'] = array_values(array_filter(
-            $this->pending['queryOptions'],
-            static fn($option) => $option !== $removeOption
-        ));
         if ($isDistinct) {
             $this->setQueryOption('DISTINCT');
+        } else {
+            $this->pending['queryOptions'] = array_values(array_filter(
+                $this->pending['queryOptions'],
+                static fn(string $option): bool => $option !== 'DISTINCT'
+            ));
         }
         return $this;
     }
@@ -97,9 +97,6 @@ class QueryBuilder
     public function forceIndex(string|array $indexes): QueryBuilder
     {
         $this->pending['forceIndexes'] = TableReference::normalizeIndexes($indexes);
-        if ($this->pending['forceIndexes'] !== []) {
-            $this->pending['useIndexes'] = [];
-        }
         return $this;
     }
 
@@ -107,9 +104,6 @@ class QueryBuilder
     public function useIndex(string|array $indexes): QueryBuilder
     {
         $this->pending['useIndexes'] = TableReference::normalizeIndexes($indexes);
-        if ($this->pending['useIndexes'] !== []) {
-            $this->pending['forceIndexes'] = [];
-        }
         return $this;
     }
 
@@ -169,7 +163,7 @@ class QueryBuilder
         if (count($this->pending['whereConditions']) == 0) {
             $cond = '';
         }
-        $this->pending['whereConditions'][] = [$cond, $whereProp, $operator, $whereValue];
+        $this->pending['whereConditions'][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
         return $this;
     }
 
@@ -185,7 +179,6 @@ class QueryBuilder
         if ($values === []) {
             return $this->where('0 = 1', ConditionValue::Raw, '=', $cond);
         }
-        $this->validateConditionSubquery($values);
         return $this->where($column, $values, 'IN', $cond);
     }
 
@@ -195,7 +188,6 @@ class QueryBuilder
         if ($values === []) {
             return $this->where('1 = 1', ConditionValue::Raw, '=', $cond);
         }
-        $this->validateConditionSubquery($values);
         return $this->where($column, $values, 'NOT IN', $cond);
     }
 
@@ -307,7 +299,7 @@ class QueryBuilder
         if (count($this->pending['havingConditions']) == 0) {
             $cond = '';
         }
-        $this->pending['havingConditions'][] = [$cond, $havingProp, $operator, $havingValue];
+        $this->pending['havingConditions'][] = [$cond, $havingProp, $operator, $this->snapshotSubqueryValue($havingValue)];
         return $this;
     }
 
@@ -351,14 +343,21 @@ class QueryBuilder
         if (JoinType::tryFrom($joinType) === null && $joinType !== 'OUTER') {
             throw new Exception('Wrong JOIN type: ' . $joinType);
         }
-        $conditionKey = null;
-        if ($joinTable instanceof Expression) {
+        $parameters = [];
+        if ($joinTable instanceof QueryBuilder) {
+            $source = SelectPlanner::subqueryReference($joinTable, derivedTable: true);
+            $conditionKey = $source['alias'];
+            $joinTable = '  ' . $source['sql'];
+            $parameters = $source['params'];
+        } elseif ($joinTable instanceof Expression) {
             $conditionKey = $joinTable->getSql();
-        } elseif (!is_object($joinTable)) {
+            $parameters = $joinTable->getParameters();
+            $joinTable = '  ' . $conditionKey . ' ';
+        } else {
             $conditionKey = (string)$joinTable;
             $joinTable = TableReference::resolve($joinTable, $this->prefix, quoteBare: false)['sql'];
         }
-        $this->pending['joins'][] = [$joinType, $joinTable, $joinCondition, $conditionKey];
+        $this->pending['joins'][] = [$joinType, $joinTable, $joinCondition, $conditionKey, $parameters];
         return $this;
     }
 
@@ -367,7 +366,8 @@ class QueryBuilder
     {
         $operator = $this->comparisonOperator($operator);
         $cond = $this->conditionConjunction($cond, false);
-        $this->pending['joinConditions'][(string)$whereJoin][] = [$cond, $whereProp, $operator, $whereValue];
+        $index = $this->joinIndex((string)$whereJoin);
+        $this->pending['joinConditions'][$index][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
         return $this;
     }
 
@@ -379,9 +379,10 @@ class QueryBuilder
 
     public function joinOn(string $table, string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $conditions = $this->pending['joinConditions'][$table] ?? [];
+        $index = $this->joinIndex($table);
+        $conditions = $this->pending['joinConditions'][$index] ?? [];
         $this->addColumnCondition($conditions, $first, $second, $operator, $cond, true);
-        $this->pending['joinConditions'][$table] = $conditions;
+        $this->pending['joinConditions'][$index] = $conditions;
         return $this;
     }
 
@@ -446,11 +447,9 @@ class QueryBuilder
             throw new \TypeError('FOR UPDATE flag must be a boolean');
         }
         if ($isLock) {
-            $hasOption = $option !== null && $option !== '';
-            $lockOption = $hasOption ? $this->lockWaitOption($option) : null;
             $this->setQueryOption(['FOR UPDATE']);
-            if ($hasOption) {
-                $this->pending['selectLockOption'] = $lockOption;
+            if ($option !== null) {
+                $this->pending['selectLockOption'] = $this->lockWaitOption($option);
             }
         } else {
             $this->pending['forUpdate'] = false;
@@ -781,15 +780,7 @@ class QueryBuilder
     public function upsert(mixed $tableName, array $rows, array $updateColumns): QueryBuilder
     {
         if ($updateColumns === []) { throw new \InvalidArgumentException('Upsert requires update columns'); }
-        $previousUpdateColumns = $this->pending['updateColumns'];
-        try {
-            $this->onDuplicate($updateColumns);
-            return $this->insertAll($tableName, $rows);
-        } catch (\Throwable $error) {
-            // 批量写入失败时恢复调用前的设置，避免影响下一次插入。
-            $this->pending['updateColumns'] = $previousUpdateColumns;
-            throw $error;
-        }
+        return $this->compileWrite('INSERT', $tableName, $rows, batch: true, updateColumns: $updateColumns);
     }
 
     /** REPLACE插入 */
@@ -804,7 +795,8 @@ class QueryBuilder
         if ($updateColumns !== null && !is_array($updateColumns)) {
             throw new \TypeError('Duplicate update columns must be an array or null');
         }
-        $this->pending['updateColumns'] = $updateColumns;
+        $this->pending['updateColumns'] = $updateColumns === null
+            ? null : array_map($this->snapshotSubqueryValue(...), $updateColumns);
         return $this;
     }
 
@@ -1016,23 +1008,39 @@ class QueryBuilder
         return $this;
     }
 
-    private function validateConditionSubquery(array|QueryBuilder $value): void
+    private function snapshotSubqueryValue(mixed $value): mixed
     {
-        if ($value instanceof QueryBuilder && (!$value->isSubQuery() || $value->getLastPrepareQuery() === null)) {
-            throw new \InvalidArgumentException('Use a built QueryBuilder::subQuery() for condition subqueries');
+        if ($value instanceof QueryBuilder) {
+            $subquery = SelectPlanner::subqueryReference($value, derivedTable: false);
+            return new Expression($subquery['sql'], $subquery['params']);
         }
+        return $value;
     }
 
     private function addExistsCondition(QueryBuilder $subquery, string $operator, ConditionConjunction|string $cond): QueryBuilder
     {
-        $this->validateConditionSubquery($subquery);
-        $alias = $subquery->getSubQuery()['alias'];
-        if ($alias !== null && $alias !== '') {
-            throw new \InvalidArgumentException('EXISTS subqueries must not have an alias');
-        }
         $cond = $this->conditionConjunction($cond, false);
-        $this->pending['whereConditions'][] = ['exists' => $subquery, 'operator' => $operator, 'concat' => $this->pending['whereConditions'] === [] ? '' : $cond];
+        $this->pending['whereConditions'][] = [
+            'exists' => $this->snapshotSubqueryValue($subquery),
+            'operator' => $operator,
+            'concat' => $this->pending['whereConditions'] === [] ? '' : $cond,
+        ];
         return $this;
+    }
+
+    private function joinIndex(string $table): int
+    {
+        $index = null;
+        foreach ($this->pending['joins'] as $position => $join) {
+            if ($join[3] !== $table) {
+                continue;
+            }
+            if ($index !== null) {
+                throw new \InvalidArgumentException('Ambiguous JOIN condition target: ' . $table);
+            }
+            $index = $position;
+        }
+        return $index ?? throw new \InvalidArgumentException('JOIN condition target was not joined: ' . $table);
     }
 
     private function addWhereGroup(callable $callback, string $concat): QueryBuilder
@@ -1042,9 +1050,10 @@ class QueryBuilder
 
     private function addJoinGroup(string $table, callable $callback, string $concat): QueryBuilder
     {
-        $conditions = $this->pending['joinConditions'][$table] ?? [];
+        $index = $this->joinIndex($table);
+        $conditions = $this->pending['joinConditions'][$index] ?? [];
         $this->addConditionGroup($conditions, $callback, $concat, 'whereConditions', 'ON', true);
-        $this->pending['joinConditions'][$table] = $conditions;
+        $this->pending['joinConditions'][$index] = $conditions;
         return $this;
     }
 
@@ -1077,6 +1086,7 @@ class QueryBuilder
         mixed $numRows = null,
         bool $batch = false,
         ?array $fields = null,
+        ?array $updateColumns = null,
     ): QueryBuilder {
         if ($this->isSubQuery) {
             $operation = $statement === 'INSERT' || $statement === 'REPLACE' ? 'INSERT or REPLACE' : $statement;
@@ -1090,6 +1100,7 @@ class QueryBuilder
         $this->pending['tableName'] = $reference['name'];
         $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
         $state = $this->pending;
+        $state['updateColumns'] = $updateColumns ?? $state['updateColumns'];
         (new QueryCompiler())->compile(
             $buffer, PendingQuery::parts($state), $statement, $numRows ?? $state['limit'],
             $tableData, $fields ?? $state['fields'], $batch

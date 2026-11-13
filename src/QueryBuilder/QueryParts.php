@@ -13,7 +13,7 @@ final class QueryParts
 {
     /**
      * @param array<array-key, JoinNode> $joins
-     * @param array<array-key, array<array-key, ConditionNode>> $joinConditions
+     * @param array<int, array<array-key, ConditionNode>> $joinConditions
      * @param array<array-key, ConditionNode> $where
      * @param array<array-key, mixed> $groups
      * @param array<array-key, ConditionNode> $having

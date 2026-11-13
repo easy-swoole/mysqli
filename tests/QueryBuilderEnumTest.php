@@ -314,14 +314,18 @@ final class QueryBuilderEnumTest extends TestCase
             $this->buildResult((new QueryBuilder())->selectForUpdate(true, LockWaitPolicy::SkipLocked)->get('orders')));
     }
 
-    public function testDefaultLockPolicyClearsOldPolicyButLegacyEmptyStringKeepsIt(): void
+    public function testExplicitDefaultLockPolicyClearsTheConfiguredWaitPolicy(): void
     {
-        $default = (new QueryBuilder())->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('orders');
-        self::assertSame($this->buildResult((new QueryBuilder())->forUpdate()->get('orders')), $this->buildResult($default));
-        $legacyEmpty = (new QueryBuilder())->skipLocked()->selectForUpdate(true, '')->get('orders');
-        self::assertSame($this->buildResult((new QueryBuilder())->skipLocked()->get('orders')), $this->buildResult($legacyEmpty));
-        $clearedDirectly = (new QueryBuilder())->skipLocked()->setSelectLockOption(LockWaitPolicy::Default)->get('orders');
-        self::assertSame($this->buildResult($default), $this->buildResult($clearedDirectly));
+        $default = $this->buildResult((new QueryBuilder())->forUpdate()->get('orders'));
+        foreach ([LockWaitPolicy::Default, ''] as $option) {
+            $combined = (new QueryBuilder())->skipLocked()->selectForUpdate(true, $option)->get('orders');
+            self::assertSame($default, $this->buildResult($combined));
+            $separate = (new QueryBuilder())->nowait()->setSelectLockOption($option)->get('orders');
+            self::assertSame($default, $this->buildResult($separate));
+        }
+
+        $configured = (new QueryBuilder())->setSelectLockOption(LockWaitPolicy::SkipLocked)->forUpdate()->get('orders');
+        self::assertSame($this->buildResult((new QueryBuilder())->skipLocked()->get('orders')), $this->buildResult($configured));
     }
 
     public function testLockStringsNormalizeKnownPoliciesAndPreserveLegacyRawSuffixes(): void
