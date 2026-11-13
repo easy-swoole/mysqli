@@ -28,6 +28,12 @@ final class ExecutionContext
         return $this->deadline->remaining();
     }
 
+    /** @internal 供协议入口复用本次操作的截止时间。 */
+    public function deadline(): Deadline
+    {
+        return $this->deadline;
+    }
+
     public function ownStatement(Statement $statement): Statement
     {
         return $this->statement = $statement;
@@ -56,7 +62,7 @@ final class ExecutionContext
     {
         $statement = $this->statement;
         $this->statement = null;
-        $statement?->close($this->deadline->remainingOrZero());
+        $statement?->closeWithDeadline($this->deadline);
     }
 
     /** 已有执行异常时尝试释放语句，保留原始异常。 */

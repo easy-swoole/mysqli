@@ -7,7 +7,6 @@ namespace EasySwoole\Mysqli\Protocol;
 use EasySwoole\Mysqli\Config;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Exception\TimeoutException;
-use EasySwoole\Mysqli\TlsMode;
 use Swoole\Coroutine\Client as SocketClient;
 use Swoole\Coroutine\Socket;
 
@@ -17,7 +16,13 @@ final class TlsHandshake
     /** @param callable(float, int, string): Exception $ioFailure */
     public static function enable(Socket $socket, SocketClient $client, Config $config, Deadline $deadline, callable $ioFailure): void
     {
-        $options = TlsOptions::fromConfig($config);
+        [$options, $expectedName] = TlsOptions::handshakeConfiguration($config, respectDisabledMode: false);
+        self::enableWithOptions($socket, $client, $options, $deadline, $ioFailure, $expectedName);
+    }
+
+    /** @internal 使用连接开始时确定的 TLS 配置。 */
+    public static function enableWithOptions(Socket $socket, SocketClient $client, array $options, Deadline $deadline, callable $ioFailure, ?string $expectedName = null): void
+    {
         // SWOOLE_51_COMPAT：5.1 在握手时才创建 SSL_CTX，且仅在开启验证时加载 CA。
         // 因此先保存配置，再由 Client::enableSSL() 初始化上下文并提供原生握手错误码。
         // 此处移除 open_ssl 是 enableSSL() 的调用要求，在 6.2 中也不能单独删除。
@@ -63,10 +68,10 @@ final class TlsHandshake
             if ($verifyAfterHandshake && $certificate === null) {
                 $certificate = self::verifyCertificate($socket, $client);
             }
-            if ($config->getTlsMode() === TlsMode::VerifyIdentity) {
+            if ($expectedName !== null) {
                 $certificate ??= $client->getPeerCert();
                 if ($certificate === false) { throw new Exception('TLS peer certificate is unavailable'); }
-                CertificateIdentity::verify($certificate, $config->getTlsServerName() !== '' ? $config->getTlsServerName() : $config->getHost());
+                CertificateIdentity::verify($certificate, $expectedName);
             }
             $deadline->remaining();
         } finally {

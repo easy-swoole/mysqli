@@ -13,8 +13,30 @@ final class TlsOptions
 {
     public static function fromConfig(Config $config): array
     {
+        return self::forHandshake($config, $config->getTlsMode(), self::expectedName($config));
+    }
+
+    /** @internal 为一次握手固定模式、SNI 选项和证书身份。 */
+    public static function handshakeConfiguration(Config $config, bool $respectDisabledMode = true): array
+    {
         $mode = $config->getTlsMode();
-        $name = $config->getTlsServerName() !== '' ? $config->getTlsServerName() : $config->getHost();
+        if ($respectDisabledMode && $mode === TlsMode::Disabled) {
+            return [null, null];
+        }
+        $name = self::expectedName($config);
+        return [self::forHandshake($config, $mode, $name), $mode === TlsMode::VerifyIdentity ? $name : null];
+    }
+
+    /** @internal 返回 SNI 和证书校验共用的预期身份。 */
+    private static function expectedName(Config $config): string
+    {
+        $name = $config->getTlsServerName();
+        return $name === '' ? $config->getHost() : $name;
+    }
+
+    /** @internal 使用本次连接确定的模式和身份生成选项。 */
+    private static function forHandshake(Config $config, TlsMode $mode, string $name): array
+    {
         if (str_contains($name, "\0") || preg_match('/\s/', $name)) {
             throw new \InvalidArgumentException('TLS server name must not contain NUL bytes or whitespace');
         }

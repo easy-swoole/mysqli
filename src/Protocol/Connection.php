@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Config;
-use EasySwoole\Mysqli\TlsMode;
 use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
 use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Exception\Exception;
@@ -66,8 +65,8 @@ final class Connection
         $this->connect_errno = 0;
         $deadline = $deadline->cappedBy($this->config->getMaxConnectTime());
         try {
-            $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
-            $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tls);
+            [$tlsOptions, $expectedName] = TlsOptions::handshakeConfiguration($this->config);
+            $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tlsOptions !== null);
             $handshake = $this->stream->readPacket($deadline, 'handshake');
             $authenticator = new Authenticator(
                 $this->config,
@@ -75,7 +74,7 @@ final class Connection
                 function (string $packet, string $context): void { $this->throwIfError($packet, $context); },
                 function (string $packet): void { $this->parseOk($packet); },
             );
-            $authenticator->authenticate($handshake, $deadline);
+            $authenticator->authenticateWithOptions($handshake, $deadline, $tlsOptions, $expectedName);
             $charset = $this->config->getCharset();
             if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
                 throw new \InvalidArgumentException('Invalid MySQL charset');
@@ -127,10 +126,21 @@ final class Connection
         return $this->command(self::COM_QUERY, $sql, $timeout);
     }
 
+    /** @internal 使用调用方的查询截止时间。 */
+    public function queryWithDeadline(string $sql, Deadline $deadline): array|bool
+    {
+        return $this->command(self::COM_QUERY, $sql, $deadline);
+    }
+
     /** 按行读取文本协议结果；结果流关闭前独占连接。 */
     public function iterate(string $sql, ?float $timeout = null): ResultStream
     {
-        $deadline = Deadline::after($timeout ?? $this->timeout);
+        return $this->iterateWithDeadline($sql, Deadline::after($timeout ?? $this->timeout));
+    }
+
+    /** @internal 使用调用方的查询截止时间。 */
+    public function iterateWithDeadline(string $sql, Deadline $deadline): ResultStream
+    {
         return $this->startStream(function () use ($sql, $deadline): void {
             $this->assertSupportedSql($sql);
             $this->writeTextCommand(self::COM_QUERY, $sql, $deadline);
@@ -142,9 +152,15 @@ final class Connection
      */
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
+        return $this->prepareWithDeadline($sql, $timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function prepareWithDeadline(string $sql, Deadline|float|null $timeout): Statement
+    {
         return $this->guard(function () use ($sql, $timeout): Statement {
             $this->assertSupportedSql($sql);
-            $deadline = Deadline::after($timeout ?? $this->timeout);
+            $deadline = $this->resolveDeadline($timeout);
             $this->requireConnected();
             $this->stream->beginCommand();
             $this->stream->writePacket(chr(self::COM_STMT_PREPARE) . $sql, $deadline, 'prepare');
@@ -172,10 +188,16 @@ final class Connection
      */
     public function executeStatement(Statement $statement, array $parameters, ?float $timeout): array|bool
     {
+        return $this->executeWithDeadline($statement, $parameters, $timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function executeWithDeadline(Statement $statement, array $parameters, Deadline|float|null $timeout): array|bool
+    {
         $this->assertParameterCount($statement, $parameters);
 
         return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
-            $deadline = Deadline::after($timeout ?? $this->timeout);
+            $deadline = $this->resolveDeadline($timeout);
             $this->writeStatementCommand($statement, $parameters, $deadline);
             return $this->readResponse($deadline, true, $statement->getSql(), $statement->completionReleasesSession());
         });
@@ -184,8 +206,14 @@ final class Connection
     /** 按行读取预处理结果，沿用语句会话校验及单次操作超时预算。 */
     public function iterateStatement(Statement $statement, array $parameters, ?float $timeout): ResultStream
     {
+        return $this->iterateStatementWithDeadline($statement, $parameters, $timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function iterateStatementWithDeadline(Statement $statement, array $parameters, Deadline|float|null $timeout): ResultStream
+    {
         $this->assertParameterCount($statement, $parameters);
-        $deadline = Deadline::after($timeout ?? $this->timeout);
+        $deadline = $this->resolveDeadline($timeout);
         return $this->startStream(function () use ($statement, $parameters, $deadline): void {
             $this->writeStatementCommand($statement, $parameters, $deadline);
         }, $deadline, true, $statement->getSql(), $statement);
@@ -235,18 +263,14 @@ final class Connection
             }
             // 关闭回调持有预处理语句，避免读取期间因语句销毁而发送关闭命令。
             return new ResultStream(
-                function () use ($columns, $deadline, $binary, $sql): ?array {
-                    try {
-                        return $this->readResultRow($deadline, $binary, $sql, $columns);
-                    } catch (\Throwable $error) {
-                        $this->handleOperationFailure($error);
-                        throw $error;
-                    }
-                },
+                fn(): ?array => $this->readResultRow($deadline, $binary, $sql, $columns),
                 function (bool $complete, int $rows) use ($owner): void {
                     try {
-                        if (!$complete) { $this->invalidateConnection(); }
-                        else { $this->affected_rows = $rows; }
+                        if ($complete) {
+                            $this->affected_rows = $rows;
+                        } elseif ($this->state->isConnected()) {
+                            $this->invalidateConnection();
+                        }
                     } finally {
                         $this->busy = false;
                     }
@@ -275,17 +299,24 @@ final class Connection
      */
     public function closeStatement(int $statementId, ?int $generation = null, ?float $timeout = null): void
     {
+        $this->closeStatementWithDeadline($statementId, $generation, $timeout);
+    }
+
+    /** @internal 截止时间耗尽时断开会话，以释放服务端语句。 */
+    public function closeStatementWithDeadline(int $statementId, ?int $generation, Deadline|float|null $timeout): void
+    {
         // 已失效的语句不得将自身 ID 发送到其他服务端会话。
         if (!$this->isConnected() || ($generation !== null && $generation !== $this->state->generation())) {
             return;
         }
         $this->guard(function () use ($statementId, $timeout): void {
-            if ($timeout !== null && $timeout <= 0) {
+            $remaining = $timeout instanceof Deadline ? $timeout->remainingOrZero() : $timeout;
+            if ($remaining !== null && $remaining <= 0) {
                 $this->invalidateConnection();
                 return;
             }
             $this->stream->beginCommand();
-            $this->stream->writePacket(chr(self::COM_STMT_CLOSE) . pack('V', $statementId), Deadline::after($timeout ?? $this->timeout), 'close statement');
+            $this->stream->writePacket(chr(self::COM_STMT_CLOSE) . pack('V', $statementId), $this->resolveDeadline($timeout), 'close statement');
         });
     }
 
@@ -374,17 +405,22 @@ final class Connection
     /**
      * 在共享超时预算内发送命令并读取响应。
      */
-    private function command(int $command, string $payload, ?float $timeout, ?TransactionCompletionFlags $completion = null): array|bool
+    private function command(int $command, string $payload, Deadline|float|null $timeout, ?TransactionCompletionFlags $completion = null): array|bool
     {
         return $this->guard(function () use ($command, $payload, $timeout, $completion): array|bool {
             if ($command === self::COM_QUERY) {
                 $this->assertSupportedSql($payload);
             }
-            $deadline = Deadline::after($timeout ?? $this->timeout);
+            $deadline = $this->resolveDeadline($timeout);
             $this->writeTextCommand($command, $payload, $deadline);
             return $this->readResponse($deadline, false, $payload, $completion?->releasePolicy(),
                 $command === self::COM_QUERY && $completion === null);
         });
+    }
+
+    private function resolveDeadline(Deadline|float|null $timeout): Deadline
+    {
+        return $timeout instanceof Deadline ? $timeout : Deadline::after($timeout ?? $this->timeout);
     }
 
     /** 缓冲和流式查询共用文本命令的发包顺序。 */

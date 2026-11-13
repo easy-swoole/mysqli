@@ -33,13 +33,24 @@ final class Statement
      */
     public function execute(array $parameters = [], ?float $timeout = null): array|bool
     {
+        return $this->executeWithin($parameters, $timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function executeWithDeadline(array $parameters, Deadline $deadline): array|bool
+    {
+        return $this->executeWithin($parameters, $deadline);
+    }
+
+    private function executeWithin(array $parameters, Deadline|float|null $timeout): array|bool
+    {
         if ($this->closed) {
             throw new \LogicException('The prepared statement is closed');
         }
         if ($this->beforeExecute !== null) {
             ($this->beforeExecute)();
         }
-        $result = $this->connection->executeStatement($this, $parameters, $timeout);
+        $result = $this->connection->executeWithDeadline($this, $parameters, $timeout);
         if ($this->afterExecute !== null) {
             ($this->afterExecute)($result);
         }
@@ -52,11 +63,22 @@ final class Statement
      */
     public function iterate(array $parameters = [], ?float $timeout = null): ResultStream
     {
+        return $this->iterateWithin($parameters, $timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function iterateWithDeadline(array $parameters, Deadline $deadline): ResultStream
+    {
+        return $this->iterateWithin($parameters, $deadline);
+    }
+
+    private function iterateWithin(array $parameters, Deadline|float|null $timeout): ResultStream
+    {
         if ($this->closed) {
             throw new \LogicException('The prepared statement is closed');
         }
         if ($this->beforeExecute !== null) { ($this->beforeExecute)(); }
-        $stream = $this->connection->iterateStatement($this, $parameters, $timeout);
+        $stream = $this->connection->iterateStatementWithDeadline($this, $parameters, $timeout);
         if ($this->afterExecute !== null) {
             $afterExecute = $this->afterExecute;
             $stream->onComplete(static fn() => $afterExecute(true));
@@ -79,8 +101,19 @@ final class Statement
      */
     public function close(?float $timeout = null): void
     {
+        $this->closeWithin($timeout);
+    }
+
+    /** @internal 沿用当前操作的绝对截止时间。 */
+    public function closeWithDeadline(Deadline $deadline): void
+    {
+        $this->closeWithin($deadline);
+    }
+
+    private function closeWithin(Deadline|float|null $timeout): void
+    {
         if (!$this->closed) {
-            $this->connection->closeStatement($this->id, $this->generation, $timeout);
+            $this->connection->closeStatementWithDeadline($this->id, $this->generation, $timeout);
             $this->closed = true;
         }
     }

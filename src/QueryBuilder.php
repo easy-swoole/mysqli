@@ -37,6 +37,7 @@ class QueryBuilder
     /** @var State 写时复制状态；克隆对象不会共享可变状态对象。 */
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
+    private bool $countOnSnapshot = false;
     private ?CompiledQuery $readyToPublish = null;
     // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
     private ?CompiledQuery $lastBuilt = null;
@@ -586,13 +587,32 @@ class QueryBuilder
     {
         // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
         $quotedAlias = TableReference::identifier($alias);
-        $source = clone $this;
-        $source->pending = SelectPlanner::countSource($source->pending);
-        $source->get($tableName);
-        $sql = SelectPlanner::countSql($source->getLastPrepareQuery(), $quotedAlias);
+        $source = $this->countOnSnapshot ? $this : clone $this;
+        $this->countOnSnapshot = false;
+        [$sql, $parameters] = $source->compileCountSource($tableName, $quotedAlias);
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
-        return $this->raw($sql, $source->getLastBindParams());
+        return $this->raw($sql, $parameters);
+    }
+
+    /** @internal 从模板创建计数查询，仅触发一次克隆。 */
+    public function countQuery(?string $table, string $alias): QueryBuilder
+    {
+        $source = clone $this;
+        $source->countOnSnapshot = true;
+        try {
+            return $source->count($table, $alias);
+        } finally {
+            $source->countOnSnapshot = false;
+        }
+    }
+
+    /** @return array{string, array} */
+    private function compileCountSource(mixed $table, string $quotedAlias): array
+    {
+        $this->pending = SelectPlanner::countSource($this->pending);
+        $this->get($table);
+        return [SelectPlanner::countSql($this->getLastPrepareQuery(), $quotedAlias), $this->getLastBindParams()];
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */

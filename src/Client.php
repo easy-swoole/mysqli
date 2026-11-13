@@ -70,8 +70,8 @@ class Client
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {
-            $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
-            return $statement->execute($parameters, $execution->remaining());
+            $statement = $execution->ownStatement($this->prepareForExecution($sql, $execution->deadline()));
+            return $statement->executeWithDeadline($parameters, $execution->deadline());
         });
     }
 
@@ -87,9 +87,9 @@ class Client
         $execution = $this->beginExecution($timeout);
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
-        $statement = $execution->ownStatement($this->prepare($sql, $execution->remaining()));
+        $statement = $execution->ownStatement($this->prepareForExecution($sql, $execution->deadline()));
         try {
-            $stream = $statement->iterate($parameters, $execution->remaining());
+            $stream = $statement->iterateWithDeadline($parameters, $execution->deadline());
         } catch (\Throwable $error) {
             $execution->discardOwnedStatement();
             throw $error;
@@ -101,7 +101,7 @@ class Client
     public function rawIterate(string $query, ?float $timeout = null): ResultStream
     {
         $execution = $this->beginExecution($timeout);
-        return $this->connection()->iterate($query, $execution->remaining())->onComplete(function () use ($execution): void {
+        return $this->connection()->iterateWithDeadline($query, $execution->deadline())->onComplete(function () use ($execution): void {
             $this->captureMetadata();
             $execution->complete(true);
         });
@@ -115,10 +115,9 @@ class Client
     {
         $offset = \EasySwoole\Mysqli\QueryBuilder\Pagination::offset($perPage, $page);
         $deadline = $this->queryDeadline($timeout);
-        $counter = clone $query;
         $data = clone $query;
         // 两条语句先构建完，避免查询回调或协程切换改变分页条件。
-        $countQuery = $counter->count($table, '__mysqli_total');
+        $countQuery = $query->countQuery($table, '__mysqli_total');
         $dataQuery = $data->limit($offset, $perPage)->get($table);
         $counts = $this->query($countQuery, $deadline->remaining());
         $items = $this->query($dataQuery, $deadline->remaining());
@@ -133,7 +132,7 @@ class Client
     {
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $query): bool|array {
-            $result = $this->connection()->query($query, $execution->remaining());
+            $result = $this->connection()->queryWithDeadline($query, $execution->deadline());
             $this->captureMetadata();
             return $result;
         });
@@ -144,8 +143,20 @@ class Client
      */
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
-        $deadline = $this->queryDeadline($timeout);
-        return $this->connection()->prepare($sql, $deadline->remaining())->setExecutionCallbacks(
+        return $this->prepareWithDeadline($sql, $this->queryDeadline($timeout));
+    }
+
+    private function prepareForExecution(string $sql, Deadline $deadline): Statement
+    {
+        // 子类通过原有的秒数参数接收本次预算。
+        return get_class($this) === self::class
+            ? $this->prepareWithDeadline($sql, $deadline)
+            : $this->prepare($sql, $deadline->remaining());
+    }
+
+    private function prepareWithDeadline(string $sql, Deadline $deadline): Statement
+    {
+        return $this->connection()->prepareWithDeadline($sql, $deadline)->setExecutionCallbacks(
             fn() => $this->resetMetadata(),
             fn() => $this->captureMetadata(),
         );

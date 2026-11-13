@@ -53,26 +53,48 @@ final class WriteCompiler
      */
     public static function normalizeBatch(mixed $rows, ?array $fields = null): array
     {
+        $rows = self::batchRows($rows, $fields);
+        $columns = self::batchReferences($rows->current());
+        return ['columns' => $columns, 'rows' => iterator_to_array(self::alignedRows($rows, $columns), false)];
+    }
+
+    private static function batchRows(mixed $rows, ?array $fields): \Generator
+    {
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        $columns = [];
-        $normalized = [];
+        $allowed = $fields === null ? null : array_filter(array_fill_keys(array_filter($fields, 'is_string'), true), 'is_string', ARRAY_FILTER_USE_KEY);
         foreach ($rows as $row) {
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
             }
-            $row = self::filterRow($row, $fields);
-            if ($columns === []) {
-                foreach (array_keys($row) as $column) {
-                    $columns[$column] = TableReference::identifier($column);
+            if ($allowed !== null) {
+                $row = array_intersect_key($row, $allowed);
+                if ($row === []) {
+                    throw new \InvalidArgumentException('No writable columns remain after field filtering');
                 }
-            } elseif (count($row) !== count($columns) || array_diff_key($columns, $row) !== []) {
+            }
+            yield $row;
+        }
+    }
+
+    private static function batchReferences(array $row): array
+    {
+        $columns = [];
+        foreach ($row as $column => $_) {
+            $columns[$column] = TableReference::identifier($column);
+        }
+        return $columns;
+    }
+
+    private static function alignedRows(\Generator $rows, array $columns): \Generator
+    {
+        foreach ($rows as $row) {
+            if (count($row) !== count($columns) || array_diff_key($columns, $row) !== []) {
                 throw new \InvalidArgumentException('All batch rows must contain exactly the same columns');
             }
-            $normalized[] = $row;
+            yield $row;
         }
-        return ['columns' => $columns, 'rows' => $normalized];
     }
 
     /** 返回过滤后的单行，供单行重复键更新读取。 */
@@ -81,12 +103,12 @@ final class WriteCompiler
         $this->batchColumns = null;
         $first = array_key_first($tableData);
         if ($isInsert && ($batch || (is_int($first) && is_array($tableData[$first])))) {
-            $batchData = self::normalizeBatch($tableData, $fields);
-            $columns = $batchData['columns'];
+            $rows = self::batchRows($tableData, $fields);
+            $columns = self::batchReferences($rows->current());
             $this->batchColumns = $columns;
             $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
             $separator = '';
-            foreach ($batchData['rows'] as $row) {
+            foreach (self::alignedRows($rows, $columns) as $row) {
                 $this->buffer->sql .= $separator . '(';
                 $this->appendPairs($row, $columns, true);
                 $this->buffer->sql .= ')';

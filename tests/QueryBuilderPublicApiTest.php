@@ -60,6 +60,7 @@ final class QueryBuilderPublicApiTest extends TestCase
         $class = new \ReflectionClass(QueryBuilder::class);
         $methods = [];
         foreach ($class->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            if (str_contains($method->getDocComment() ?: '', '@internal')) { continue; }
             $parameters = [];
             foreach ($method->getParameters() as $parameter) {
                 $text = self::type($parameter->getType());

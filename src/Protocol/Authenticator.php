@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Protocol;
 
 use EasySwoole\Mysqli\Config;
-use EasySwoole\Mysqli\TlsMode;
 use EasySwoole\Mysqli\Exception\Exception;
 
 /** @internal 负责握手、TLS 升级和认证；会话状态及错误元数据仍由 Connection 接管。 */
@@ -39,6 +38,13 @@ final class Authenticator
      * 解析握手信息并发送认证请求。
      */
     public function authenticate(string $handshake, Deadline $deadline): void
+    {
+        [$options, $expectedName] = TlsOptions::handshakeConfiguration($this->config);
+        $this->authenticateWithOptions($handshake, $deadline, $options, $expectedName);
+    }
+
+    /** @internal 握手和身份校验沿用建连入口确定的配置。 */
+    public function authenticateWithOptions(string $handshake, Deadline $deadline, ?array $tlsOptions, ?string $expectedName): void
     {
         $offset = 0;
         $protocol = Codec::int1($handshake, $offset);
@@ -85,7 +91,7 @@ final class Authenticator
             }
             $capabilities |= self::CLIENT_COMPRESS;
         }
-        $tls = $this->config->getTlsMode() !== TlsMode::Disabled;
+        $tls = $tlsOptions !== null;
         if ($tls) {
             if (($serverCapabilities & self::CLIENT_SSL) === 0) {
                 throw new Exception('MySQL server does not support TLS; plaintext fallback is disabled');
@@ -101,7 +107,7 @@ final class Authenticator
             . str_repeat("\0", 23);
         if ($tls) {
             $this->stream->writePacket($header, $deadline, 'TLS request');
-            $this->stream->enableTls($this->config, $deadline);
+            $this->stream->enableTlsWithOptions($tlsOptions, $deadline, $expectedName);
         }
         $payload = $header . $this->config->getUser() . "\0"
             . chr(strlen($token)) . $token;

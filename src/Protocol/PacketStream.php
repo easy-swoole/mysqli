@@ -61,13 +61,21 @@ final class PacketStream
     /** 将已连接的 TCP 流升级为 TLS；调用前必须已发送 MySQL SSLRequest。 */
     public function enableTls(Config $config, Deadline $deadline): void
     {
+        [$options, $expectedName] = TlsOptions::handshakeConfiguration($config, respectDisabledMode: false);
+        $this->enableTlsWithOptions($options, $deadline, $expectedName);
+    }
+
+    /** @internal 升级连接时使用建连入口生成的选项。 */
+    public function enableTlsWithOptions(array $options, Deadline $deadline, ?string $expectedName): void
+    {
         $socket = $this->socket;
         $client = $this->tlsClient;
         if ($socket === null || $client === null) {
             throw new \LogicException('TLS transport was not initialized');
         }
-        TlsHandshake::enable($socket, $client, $config, $deadline,
-            fn(float $timeout, int $code, string $message): Exception => $this->ioException('TLS handshake', $timeout, $code, $message));
+        TlsHandshake::enableWithOptions($socket, $client, $options, $deadline,
+            fn(float $timeout, int $code, string $message): Exception => $this->ioException('TLS handshake', $timeout, $code, $message),
+            $expectedName);
         $this->tlsEnabled = true;
     }
 
