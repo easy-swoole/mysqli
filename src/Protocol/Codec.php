@@ -97,10 +97,15 @@ final class Codec
      */
     public static function int8(string $data, int &$offset): int|string
     {
-        $bytes = substr($data, $offset, 8);
-        if (strlen($bytes) !== 8) {
+        if ($offset < 0 || strlen($data) - $offset < 8) {
             throw new ProtocolException('Malformed MySQL unsigned 64-bit integer');
         }
+        if (PHP_INT_SIZE === 8) {
+            $value = unpack('P', $data, $offset)[1];
+            $offset += 8;
+            return $value >= 0 ? $value : sprintf('%u', $value);
+        }
+        $bytes = substr($data, $offset, 8);
         $offset += 8;
         $value = 0;
         for ($i = 7; $i >= 0; $i--) {

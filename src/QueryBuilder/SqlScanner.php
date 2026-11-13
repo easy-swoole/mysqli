@@ -4,43 +4,25 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal 按原始字符串偏移查找引号和注释之外的指定字符。 */
+/** @internal 按原始字符串偏移查找引号之外的指定字符。 */
 final class SqlScanner
 {
-    /** @return \Generator<int, string> */
-    public static function tokens(
-        string $sql,
-        string $tokens,
-        bool $noBackslashEscapes,
-        bool $skipLineComments = false,
-    ): \Generator {
-        yield from self::tokensForMode($sql, $tokens, $noBackslashEscapes, false, $skipLineComments);
-    }
-
     /** @return \Generator<int, string> */
     public static function tokensForMode(
         string $sql,
         string $tokens,
         bool $noBackslashEscapes,
         bool $ansiQuotes,
-        bool $skipLineComments = false,
     ): \Generator {
-        $special = $tokens . "'\"`/" . ($skipLineComments ? '-#' : '');
+        $special = $tokens . "'\"`";
         $length = strlen($sql);
         for ($offset = 0; $offset < $length; $offset++) {
             $offset += strcspn($sql, $special, $offset);
             if ($offset === $length) { break; }
             $character = $sql[$offset];
-            $next = $sql[$offset + 1] ?? null;
             if ($character === "'" || $character === '"' || $character === '`') {
                 $stringQuote = $character === "'" || ($character === '"' && !$ansiQuotes);
                 $offset = self::quoteEnd($sql, $offset, $character, $stringQuote && !$noBackslashEscapes);
-            } elseif ($character === '/' && $next === '*') {
-                $end = strpos($sql, '*/', $offset + 2);
-                $offset = $end === false ? $length : $end + 1;
-            } elseif ($skipLineComments && ($character === '#' || ($character === '-' && $next === '-'
-                && in_array($sql[$offset + 2] ?? null, [' ', "\t"], true)))) {
-                $offset += strcspn($sql, "\r\n", $offset);
             } elseif (str_contains($tokens, $character)) {
                 yield $offset => $character;
             }

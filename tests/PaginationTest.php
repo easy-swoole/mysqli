@@ -150,6 +150,86 @@ final class PaginationTest extends TestCase
         self::assertStringNotContainsString('status', $client->queries[1][0]);
     }
 
+    public function testCountAndGetOverridesShareThePaginationCountClone(): void
+    {
+        $template = new class extends QueryBuilder {
+            public static int $resets = 0;
+            public static int $activeInstances = 0;
+            public static int $clones = 0;
+            public static int $destructs = 0;
+            public static array $beforePublication = [];
+            private int $builds = 0;
+            private int $scope = 0;
+            private int $scopeAlias;
+            private bool $counting = false;
+
+            public function __construct()
+            {
+                parent::__construct();
+                self::$activeInstances++;
+                $this->scopeAlias =& $this->scope;
+            }
+
+            public function __clone(): void
+            {
+                self::$activeInstances++;
+                self::$clones++;
+                // 重新关联副本的两个属性，避免与原实例共用同一个引用。
+                $scope = $this->scope;
+                unset($this->scope, $this->scopeAlias);
+                $this->scope = $scope + 6;
+                $this->scopeAlias =& $this->scope;
+            }
+
+            public function __destruct()
+            {
+                self::$destructs++;
+                self::$activeInstances--;
+            }
+
+            public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
+            {
+                $this->counting = true;
+                return parent::count($tableName, $alias);
+            }
+
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $this->builds++;
+                $this->scope++;
+                $this->where('scope', $this->scopeAlias);
+                if ($this->counting) {
+                    $this->where('active', true);
+                }
+                return parent::get($tableName, $numRows, $columns);
+            }
+
+            public function raw(mixed $sql, mixed $param = []): QueryBuilder
+            {
+                self::$beforePublication[] = [
+                    $this->builds, $this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(),
+                ];
+                return parent::raw($sql, $param);
+            }
+
+            public function reset(): QueryBuilder
+            {
+                self::$resets++;
+                return parent::reset();
+            }
+        };
+        $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
+        $client->paginate($template, 'orders');
+
+        self::assertSame([7, true], $client->queries[0][1]);
+        self::assertSame([7], $client->queries[1][1]);
+        self::assertSame(2, $template::$resets);
+        self::assertSame([[1, null, [], null]], $template::$beforePublication);
+        self::assertSame(2, $template::$clones);
+        self::assertSame(2, $template::$destructs);
+        self::assertSame(1, $template::$activeInstances);
+    }
+
     private function client(array $results, ?\Closure $afterFirstQuery = null): Client
     {
         return new class($results, $afterFirstQuery) extends Client {

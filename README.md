@@ -209,7 +209,7 @@ $client->mysqlClient()->rollback(TransactionCompletionFlags::NoChainNoRelease);
 $client->mysqlClient()->commit(TransactionCompletionFlags::Release);
 ```
 
-CHAIN 可开始新事务。显式 `RELEASE` 成功后本地连接同步关闭。省略释放选项时，驱动只发送事务结束命令，由 MySQL 按当前会话的 `completion_type` 决定行为。如果服务端随后关闭会话，驱动在后续 I/O 发现断线时报告错误。省略释放选项且事务结束已获确认后，如果下一条命令在收到服务端响应前断线，可以显式 `connect()` 建立新会话。新事务一旦有后续响应确认，包括成功准备语句的响应，断线仍按事务丢失处理。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
+CHAIN 可开始新事务。通过事务枚举显式指定 `RELEASE` 时，成功后本地连接同步关闭。省略释放选项时，驱动只发送事务结束命令，由 MySQL 按当前会话的 `completion_type` 决定行为。原始 SQL 和预处理语句由 MySQL 执行释放，驱动在后续 I/O 发现断线时报告错误。事务状态以服务端最近一次确认的状态为准。若服务端已报告链式事务处于活动状态，断线会标记事务丢失，需先显式 `close()` 再 `connect()`。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
 
 文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 
@@ -232,10 +232,11 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 ```
 
 - 在独立副本上先构建 COUNT 和当前页语句，再依次执行。两条语句的 SQL 和参数在首次查询前确定。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
+- JOIN 分页在查询模板上用 `fields()` 显式选列。同名列分别起别名，确保 `items` 能按列名取到各自的值。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。子类定制内层 SELECT 的构建或结果读取时，内层也直接从原模板克隆。只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。子类同时覆写 `count()` 和 `get()` 时，两者在同一个计数副本上执行，内层 SELECT 不再克隆。发布 COUNT 的 `raw()` 可以读到 `get()` 对子类属性的修改。驱动在发布前恢复内层构建前的 SQL 和参数状态，只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -318,7 +319,7 @@ try {
 
 本项目以生产应用中常见的普通 SQL、预处理查询和应用层事务为主要使用方式；在这类项目中，存储过程的使用相对较少，因此客户端暂不支持存储过程调用及多结果集。
 
-`rawQuery()`、`query()`、`prepare()` 及协议连接入口会在发送调用 SQL 前拒绝 `CALL`，抛出 `EasySwoole\Mysqli\Exception\UnsupportedOperationException`。判断支持大小写、前导空白、普通注释及 MySQL 可执行注释；拒绝后原连接仍可继续使用。多结果及分号多语句能力保持关闭。
+`rawQuery()`、`query()`、`prepare()`、流式查询及协议连接入口会在发送前拒绝以 `CALL` 开头的语句，抛出 `EasySwoole\Mysqli\Exception\UnsupportedOperationException`。检测从首个非空白字符开始，忽略 `CALL` 的大小写。调用时请直接传入 SQL，省略前导注释。拒绝后原连接仍可继续使用。多结果及分号多语句能力保持关闭。
 
 此限制仅针对本客户端调用存储过程，不修改服务端配置，也不影响其他客户端。`CREATE PROCEDURE`、`DROP PROCEDURE` 等管理语句及普通 SELECT 中的存储函数不在 CALL 限制范围内。
 
@@ -437,9 +438,9 @@ $builder->groupBy('userId')->having('COUNT(*)', ['>=' => 5], ComparisonOperator:
 use EasySwoole\Mysqli\QueryBuilder\JoinType;
 
 $builder->join(joinTable: 'users u', joinCondition: 'u.id=o.userId', joinType: JoinType::Left)
-    ->get('orders o');
-$builder->join('users', '', JoinType::Natural)->get('orders');
-// SELECT * FROM `orders` NATURAL JOIN users
+    ->fields(['o.id AS order_id', 'u.id AS user_id'])->get('orders o');
+$builder->join('users', '', JoinType::Natural)->fields(['id'])->get('orders');
+// SELECT id FROM `orders` NATURAL JOIN users
 ```
 
 | `JoinType` | 对应原字符串 |
@@ -454,6 +455,7 @@ $builder->join('users', '', JoinType::Natural)->get('orders');
 - 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
 - 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。普通表名应用表前缀，数据库限定的表名保留原数据库和表名。
+- JOIN 的结果列由调用方用 `fields()` 显式指定。多个表返回同名列时，请分别起别名，例如 `o.id AS order_id` 和 `u.id AS user_id`。如果使用 `*` 或 `表别名.*`，列由 MySQL 展开，构造器不会推断列名或替同名列生成别名。
 - JOIN 子查询使用带别名的 `QueryBuilder::subQuery($alias)`。构建外层语句时，读取已构建的子查询 SQL、别名和参数。IN、EXISTS 和写入值中的子查询使用无别名的 `QueryBuilder::subQuery()`。
 
 ### `Expression` / `rawExpression(string $sql, array $parameters = [])`
@@ -485,8 +487,8 @@ $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status 
 ```
 
 - 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
-- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
-- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
+- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号和反引号中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
+- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
 - 会话开启 `ANSI_QUOTES` 时，用 `$builder->ansiQuotes()` 让字段列表、分组列表和调试 SQL 将双引号视为标识符引用。该设置默认关闭，可与 `noBackslashEscapes()` 独立使用。调试 SQL 沿用构建时的设置。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
@@ -657,11 +659,10 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 ```
 
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回构造器，实际执行交给 `Client::query()`。
-- 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
+- 字段列表 `['name']` 表示引用 MySQL 已计算的插入值，插入表达式只求值一次。单行和批量的隐式更新均使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
-- 重复键赋值按 `$updateColumns` 的顺序执行。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。自定义表达式中的同名列用目标表名限定。
+- 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。自定义表达式中的同名列用目标表名限定。
 - `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
-- 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
 - 按插入值更新的字段必须在过滤后保留。固定值或表达式更新列由 `$updateColumns` 指定。
 - 重复键更新仅用于 INSERT。与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
@@ -761,16 +762,18 @@ $builder->where('paid.total', 100, '>')->getFromSub($totals, 'paid');
 ### `count($tableName, $alias = 'aggregate')`
 
 ```php
-$template = (new QueryBuilder())->where('status', 'paid')->groupBy('userId');
+$template = (new QueryBuilder())->where('status', 'paid')->fields('userId')->groupBy('userId');
 $counter = (clone $template)->count('orders', 'total');
 $total = $client->query($counter)[0]['total'];
 ```
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。分组计数默认只选择分组表达式，可直接配合 `HAVING SUM(amount) > ?`。如果 HAVING 引用了其他投影字段或别名，用 `fields()` 指定相应列或表达式。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在未设置 `fields()` 时使用常量作为内层投影。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
-- JOIN 显式列出字段时，计数派生表为这些列分配独立名称，支持 `a.id, b.id` 这类同名投影。DISTINCT、UNION 或 HAVING 需要保留投影且通配列会展开出同名字段时，用 `fields()` 显式列出需要的字段。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用模板中的选项。
+- 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
+- COUNT 使用内层 `get()` 返回的构造器读取 SQL、参数和编译时的引号模式。COUNT 的 `raw()` 钩子沿用这个引号模式。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
 
@@ -821,7 +824,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 ```
 
 - `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
-- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看；执行使用预处理 SQL 和绑定参数。多语句和 CALL 限制同样适用。
+- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。执行使用预处理 SQL 和绑定参数。字段列表拆分和调试 SQL 生成均按无注释的 SQL 处理。多语句和直接 CALL 限制同样适用。
 
 
 ### `forceIndex($indexes)`
@@ -1289,7 +1292,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `WriteCompiler` | 批量选项、写入字段过滤、列对齐和值绑定，以及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
-| `SqlList` | 在引号、块注释和嵌套表达式之外解析选择列表 |
+| `SqlList` | 在引号和嵌套表达式之外解析选择列表 |
 | `SqlScanner` | 为列表拆分和调试 SQL 共用引号边界识别 |
 | `Pagination` | 分页参数校验与大整数总数、末页计算 |
 | `ExpressionFactory` | 保持 now/inc/dec/not/func 的既有表达式格式 |

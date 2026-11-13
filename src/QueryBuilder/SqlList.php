@@ -2,7 +2,7 @@
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal 解析 SQL 列表时，不拆分已引用文本、块注释或嵌套表达式。 */
+/** @internal 解析 SQL 列表时，不拆分已引用文本或嵌套表达式。 */
 final class SqlList
 {
     /** 原样包裹 SQL。 */

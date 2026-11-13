@@ -4,11 +4,8 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Protocol;
 
-use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
-
 final class Statement
 {
-    private readonly ?bool $releaseOnCompletion;
     private bool $closed = false;
     private mixed $beforeExecute = null;
     private mixed $afterExecute = null;
@@ -24,9 +21,7 @@ final class Statement
         private readonly int $columnCount,
         private readonly int $warningCount,
         private readonly int $generation = 0,
-    ) {
-        $this->releaseOnCompletion = TransactionCompletionFlags::sqlReleasePolicy($this->sql);
-    }
+    ) {}
 
     /**
      * 绑定参数并执行预处理语句。
@@ -135,8 +130,6 @@ final class Statement
      * 获取预处理语句的原始 SQL。
      */
     public function getSql(): string { return $this->sql; }
-    /** @internal 在准备语句时确定事务结束语义，执行时直接复用。 */
-    public function completionReleasesSession(): ?bool { return $this->releaseOnCompletion; }
 
     /**
      * 获取语句需要的参数数量。

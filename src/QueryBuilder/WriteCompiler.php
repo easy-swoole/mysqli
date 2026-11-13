@@ -9,11 +9,7 @@ use EasySwoole\Mysqli\Exception\Exception;
 /** @internal 处理批量选项、写入字段过滤、赋值及重复键更新。 */
 final class WriteCompiler
 {
-    /** @var array<string, string>|null 供独立调用 appendData() 和 appendDuplicate() 时使用。 */
-    private ?array $batchColumns = null;
-
-    /** 保留历史构造参数，写入值直接使用子查询引用。 */
-    public function __construct(private readonly SqlBuffer $buffer, ?ConditionCompiler $conditions) {}
+    public function __construct(private readonly SqlBuffer $buffer) {}
 
     /** @return array{statement: 'INSERT'|'REPLACE', fields: ?array} */
     public static function batchOptions(mixed $options, ?array $selectedFields): array
@@ -47,16 +43,6 @@ final class WriteCompiler
         return ['statement' => $options['replace'] ? 'REPLACE' : 'INSERT', 'fields' => $fields];
     }
 
-    /**
-     * 保留过滤后的行，字段引用按首行的键顺序生成一次。
-     * @return array{columns: non-empty-array<string, string>, rows: non-empty-list<non-empty-array<string, mixed>>}
-     */
-    public static function normalizeBatch(mixed $rows, ?array $fields = null): array
-    {
-        [$columns, $rows] = self::prepareBatch($rows, $fields);
-        return ['columns' => $columns, 'rows' => iterator_to_array($rows, false)];
-    }
-
     /** @return array{array<string, string>, \Generator} */
     private static function prepareBatch(mixed $rows, ?array $fields): array
     {
@@ -70,18 +56,12 @@ final class WriteCompiler
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        $allowed = $fields === null ? null : array_filter(array_fill_keys(array_filter($fields, 'is_string'), true), 'is_string', ARRAY_FILTER_USE_KEY);
+        $allowed = self::fieldKeys($fields);
         foreach ($rows as $row) {
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
             }
-            if ($allowed !== null) {
-                $row = array_intersect_key($row, $allowed);
-                if ($row === []) {
-                    throw new \InvalidArgumentException('No writable columns remain after field filtering');
-                }
-            }
-            yield $row;
+            yield self::filterRow($row, $allowed);
         }
     }
 
@@ -96,7 +76,10 @@ final class WriteCompiler
 
     private static function alignedRows(\Generator $rows, array $columns): \Generator
     {
-        foreach ($rows as $row) {
+        // prepareBatch() 已用当前首行生成列映射。
+        yield $rows->current();
+        for ($rows->next(); $rows->valid(); $rows->next()) {
+            $row = $rows->current();
             if (count($row) !== count($columns) || array_diff_key($columns, $row) !== []) {
                 throw new \InvalidArgumentException('All batch rows must contain exactly the same columns');
             }
@@ -104,27 +87,17 @@ final class WriteCompiler
         }
     }
 
-    /** 返回过滤后的单行，供单行重复键更新读取。 */
-    public function appendData(array $tableData, bool $isInsert, ?array $fields, bool $batch = false): array
+    public function appendUpdate(array $tableData, ?array $fields): void
     {
-        $this->batchColumns = null;
-        if ($isInsert && self::isBatch($tableData, $batch)) {
-            $this->batchColumns = $this->appendBatch($tableData, $fields);
-            return [];
-        }
-        return $this->appendRow($tableData, $isInsert, $fields);
+        $this->appendRow($tableData, false, $fields);
     }
 
-    /** 插入和重复键更新在同一次编译中直接共享行或列映射。 */
+    /** 单行和批量插入共用已写入的列映射。 */
     public function appendInsert(array $tableData, ?array $fields, bool $batch, ?array $updateColumns): void
     {
-        if (self::isBatch($tableData, $batch)) {
-            $columns = $this->appendBatch($tableData, $fields);
-            $this->appendDuplicateAssignments([], $updateColumns, $columns);
-        } else {
-            $row = $this->appendRow($tableData, true, $fields);
-            $this->appendDuplicateAssignments($row, $updateColumns, null);
-        }
+        $batch = self::isBatch($tableData, $batch);
+        $columns = $batch ? $this->appendBatch($tableData, $fields) : $this->appendRow($tableData, true, $fields);
+        $this->appendDuplicateAssignments($columns, $updateColumns, $batch);
     }
 
     private static function isBatch(array $tableData, bool $batch): bool
@@ -150,7 +123,7 @@ final class WriteCompiler
 
     private function appendRow(array $tableData, bool $isInsert, ?array $fields): array
     {
-        $tableData = self::filterRow($tableData, $fields);
+        $tableData = self::filterRow($tableData, self::fieldKeys($fields));
         if (!$isInsert && $tableData === []) {
             throw new \InvalidArgumentException('UPDATE requires at least one assignment');
         }
@@ -169,15 +142,29 @@ final class WriteCompiler
         }
         $this->appendPairs($tableData, $columns, $isInsert);
         if ($isInsert) { $this->buffer->sql .= ')'; }
-        return $tableData;
+        return $columns;
     }
 
-    private static function filterRow(array $row, ?array $fields): array
+    private static function fieldKeys(?array $fields): ?array
     {
-        if ($fields === null || $row === []) {
+        if ($fields === null) {
+            return null;
+        }
+        $keys = [];
+        foreach ($fields as $field) {
+            if (is_string($field)) {
+                $keys[$field] = true;
+            }
+        }
+        return array_filter($keys, 'is_string', ARRAY_FILTER_USE_KEY);
+    }
+
+    private static function filterRow(array $row, ?array $allowed): array
+    {
+        if ($allowed === null || $row === []) {
             return $row;
         }
-        $filtered = array_filter($row, static fn($column) => in_array($column, $fields, true), ARRAY_FILTER_USE_KEY);
+        $filtered = array_intersect_key($row, $allowed);
         if ($filtered === []) {
             throw new \InvalidArgumentException('No writable columns remain after field filtering');
         }
@@ -234,45 +221,36 @@ final class WriteCompiler
         }
     }
 
-    public function appendDuplicate(mixed $tableData, mixed $updateColumns): void
-    {
-        $this->appendDuplicateAssignments($tableData, $updateColumns, $this->batchColumns);
-    }
-
-    private function appendDuplicateAssignments(mixed $tableData, mixed $updateColumns, ?array $batchColumns): void
+    private function appendDuplicateAssignments(array $insertColumns, ?array $updateColumns, bool $batch): void
     {
         if ($updateColumns === null || $updateColumns === []) { return; }
         $updates = [];
         foreach ($updateColumns as $key => $value) {
-            if (is_int($key)) {
-                $column = $value;
-                if (!is_string($column)) {
-                    throw new \InvalidArgumentException('Implicit duplicate-update columns must be strings');
-                }
-                // 同一列的显式赋值优先，位置取该列首次出现处。
-                $updates[$column] ??= [true, null];
-            } else {
-                $updates[$key] = [false, $value];
+            $implicit = is_int($key);
+            $column = $implicit ? $value : $key;
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Implicit duplicate-update columns must be strings');
             }
+            $name = strtolower($column);
+            if (isset($updates[$name])) {
+                throw new \InvalidArgumentException("Duplicate update assignment for column {$column}");
+            }
+            $updates[$name] = [$column, $implicit, $value];
         }
 
         $columns = [];
         $values = [];
         $incoming = [];
-        foreach ($updates as $column => [$implicit, $value]) {
-            $columns[$column] = $batchColumns[$column] ?? TableReference::identifier($column);
+        foreach ($updates as [$column, $implicit, $value]) {
+            $columns[$column] = $insertColumns[$column] ?? TableReference::identifier($column);
             if (!$implicit) {
                 $values[$column] = $value;
-            } elseif ($batchColumns !== null) {
-                if (!isset($batchColumns[$column])) {
-                    throw new \InvalidArgumentException('Implicit duplicate-update column must exist in every batch row');
-                }
-                $incoming[] = $column;
-            } elseif (array_key_exists($column, $tableData)) {
-                $values[$column] = $tableData[$column];
-            } else {
+                continue;
+            }
+            if (!isset($insertColumns[$column])) {
                 throw new \InvalidArgumentException('Implicit duplicate-update column must exist in the inserted row');
             }
+            $incoming[] = $column;
         }
 
         $readQualifier = '';
@@ -281,11 +259,12 @@ final class WriteCompiler
             $alias = $table !== null && strcasecmp($table, '__mysqli_new') === 0 ? '`__mysqli_new_row`' : '`__mysqli_new`';
             $this->buffer->sql .= ' AS ' . $alias;
             $readQualifier = TableReference::identifier($table) . '.';
+            // 引用 MySQL 已计算的插入值，避免重复求值。
             foreach ($incoming as $column) {
                 $values[$column] = new Expression($alias . '.' . $columns[$column]);
             }
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-        $this->appendPairs($values, $columns, false, $readQualifier, $batchColumns !== null);
+        $this->appendPairs($values, $columns, false, $readQualifier, $batch);
     }
 }

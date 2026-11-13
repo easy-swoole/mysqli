@@ -65,10 +65,10 @@ CONCAT('x\', 'y') AS label, id
 SQL;
         $builder = (new QueryBuilder())->noBackslashEscapes()->fields($fields)->where('id', 1)->getColumn('qb_fix_orders');
         self::assertSame([['label' => 'x\\y']], $this->client->query($builder));
-        $group = <<<'SQL'
-CONCAT('x\', 'y'), tenantId
+        $expression = <<<'SQL'
+CONCAT('x\', 'y')
 SQL;
-        $builder->groupBy($group)->count('qb_fix_orders');
+        $builder->fields([$expression . ' AS label', 'tenantId'])->groupBy($expression . ', tenantId')->count('qb_fix_orders');
         self::assertSame([['aggregate' => 2]], $this->client->query($builder));
     }
 
@@ -86,13 +86,13 @@ SQL;
         self::assertSame([['name'=>'Bobby']],$this->client->query((new QueryBuilder())->where('id',2)->get('qb_fix_orders',null,'name')));
     }
 
-    public function testCountsHandleJoinDuplicateNamesDistinctGroupsAndUnion(): void
+    public function testCountsHandlePlainJoinDistinctGroupsAndUnion(): void
     {
         $builder=(new QueryBuilder())->join('qb_fix_users u','u.tenantId=o.tenantId','INNER')->count('qb_fix_orders o');
         self::assertSame([['aggregate'=>6]],$this->client->query($builder));
         $builder->fields(['tenantId'])->distinct()->orderByDesc('tenantId')->limit(1)->count('qb_fix_orders');
         self::assertSame([['aggregate'=>2]],$this->client->query($builder));
-        $builder->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
+        $builder->fields(['tenantId'])->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>1]],$this->client->query($builder));
         $builder->groupBy('1')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>4]],$this->client->query($builder));
@@ -115,30 +115,216 @@ SQL;
         self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_rollup')));
     }
 
-    public function testCountAndPaginationAcceptJoinColumnsWithTheSameName(): void
+    public function testCountAndPaginationPreserveExplicitAliasesForJoinColumns(): void
     {
         $table = 'qb_fix_orders o';
         $template = (new QueryBuilder())->join('qb_fix_users u', 'u.tenantId=o.tenantId')
-            ->fields('o.id, u.id')->selectRaw('? AS marker', [42])->where('o.tenantId', 1);
+            ->fields(['o.id AS order_id', 'u.id AS user_id'])->selectRaw('? AS marker', [42])->where('o.tenantId', 1);
         $count = (clone $template)->count($table);
         self::assertSame([42, 1], $count->getLastBindParams());
         self::assertSame([['aggregate' => 4]], $this->client->query($count));
         $page = $this->client->paginate($template->orderByAsc('o.id')->orderByAsc('u.id'), $table, 2);
         self::assertSame(4, $page['total']);
         self::assertCount(2, $page['items']);
+        self::assertSame(['order_id' => 1, 'user_id' => 1, 'marker' => 42], $page['items'][0]);
 
         $distinct = (new QueryBuilder())->join('qb_fix_users u', 'u.tenantId=o.tenantId')
-            ->fields(['o.tenantId', 'u.tenantId'])->distinct()->count($table);
+            ->fields(['o.tenantId AS order_tenant', 'u.tenantId AS user_tenant'])->distinct()->count($table);
         self::assertSame([['aggregate' => 2]], $this->client->query($distinct));
     }
 
     public function testGroupedHavingCanUseColumnsFromAnExplicitStarProjection(): void
     {
         $this->client->rawQuery("SET SESSION sql_mode = ''");
-        $template = (new QueryBuilder())->fields('*')->groupBy('tenantId')->having('id', 0, '>');
-        $rows = $this->client->query((clone $template)->get('qb_fix_orders'));
+        foreach ([false, true] as $explicitStar) {
+            $template = (new QueryBuilder())->groupBy('tenantId')->having('id', 0, '>');
+            if ($explicitStar) {
+                $template->fields('*');
+            }
+            $rows = $this->client->query((clone $template)->get('qb_fix_orders'));
+            self::assertCount(2, $rows);
+            self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_orders')));
+        }
+    }
+
+    public function testGroupedCountWithRawAggregateHavingAndExplicitJoinColumns(): void
+    {
+        $table = 'qb_fix_orders o';
+        foreach ([
+            ['SUM(o.score) > ?', [50]],
+            ['SUM(o.score) > 50', []],
+            ['(SUM(o.score) > ?)', [50]],
+            ['(( SUM(o.score) > 50 ))', []],
+            ['SUM(COALESCE(o.score, 0)) > ?', [50]],
+            ['SUM(o.score) > ? AND COUNT(*) > ?', [50, 0]],
+            ['SUM(o.score) BETWEEN ? AND ?', [50, 150]],
+            ['SUM(o.score) IN (?, ?)', [60, 70]],
+            ['COALESCE(SUM(o.score), 0) > ?', [50]],
+            ['COALESCE(SUM(o.score), 0) NOT BETWEEN ? AND ? OR COUNT(*) IN (?, ?)', [0, 50, 1, 2]],
+            ["SUM(COALESCE(NULLIF(o.score, LENGTH(')')), 0)) > ? AND (COUNT(*) > ? OR FALSE)", [50, 0]],
+        ] as [$having, $parameters]) {
+            $builder = (new QueryBuilder())->join('qb_fix_users u', 'u.tenantId=o.tenantId')
+                ->fields(['o.tenantId AS order_tenant', 'u.tenantId AS user_tenant'])
+                ->groupBy('o.tenantId, u.tenantId')->havingRaw($having, $parameters);
+            self::assertCount(2, $this->client->query((clone $builder)->get($table)), $having);
+            self::assertSame([['aggregate' => 2]], $this->client->query((clone $builder)->count($table)), $having);
+            $page = $this->client->paginate($builder->orderByAsc('o.tenantId'), $table, 1);
+            self::assertSame(2, $page['total']);
+            self::assertCount(1, $page['items']);
+        }
+    }
+
+    public function testCountPreservesPositionalGroupingAcrossEquivalentSyntax(): void
+    {
+        $this->client->rawQuery("SET SESSION sql_mode = ''");
+        foreach (['1', '(1)', '+1', '(+ (1))'] as $position) {
+            $template = (new QueryBuilder())->groupBy($position);
+            $rows = $this->client->query((clone $template)->get('qb_fix_orders'));
+            self::assertCount(4, $rows);
+            self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_orders')));
+        }
+    }
+
+    public function testCountAndPaginationPreserveDistinctProjectionAliases(): void
+    {
+        $table = 'qb_fix_orders';
+        $template = (new QueryBuilder())->fields(['tenantId', 'tenantId AS tenant_copy'])->distinct();
+        $rows = $this->client->query((clone $template)->get($table));
         self::assertCount(2, $rows);
-        self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_orders')));
+        self::assertSame([['aggregate' => 2]], $this->client->query((clone $template)->count($table)));
+        $page = $this->client->paginate($template->orderByAsc('tenantId'), $table, 1);
+        self::assertSame(2, $page['total']);
+        self::assertCount(1, $page['items']);
+    }
+
+    public function testCountUsesTheBuilderReturnedByTheInnerGet(): void
+    {
+        $template = new class extends QueryBuilder {
+            public static ?self $inner = null;
+            public static array $resets = [];
+
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $query = clone $this;
+                if ($numRows === null && $this->getField() === ['o.id AS order_id, u.id AS user_id']) {
+                    self::$inner ??= $query;
+                }
+                return $query->where('o.tenantId', 1)->build($tableName, $numRows, $columns);
+            }
+
+            public function build(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                return parent::get($tableName, $numRows, $columns);
+            }
+
+            public function reset(): QueryBuilder
+            {
+                self::$resets[] = $this;
+                return parent::reset();
+            }
+        };
+        $table = 'qb_fix_orders o';
+        $template->fields('o.id AS order_id, u.id AS user_id')->join('qb_fix_users u', 'u.tenantId = o.tenantId');
+        $count = (clone $template)->count($table);
+        self::assertSame([1], $count->getLastBindParams());
+        self::assertSame([['aggregate' => 4]], $this->client->query($count));
+        $template::$inner = null;
+        try {
+            $page = $this->client->paginate($template->orderByAsc('o.id'), $table, 1);
+            self::assertSame(4, $page['total']);
+            self::assertCount(1, $page['items']);
+            $inner = $template::$inner;
+            self::assertNotNull($inner);
+            self::assertNotContains($inner, $template::$resets);
+            $inner->build($table, 1, 'o.id');
+            self::assertSame($inner, $template::$resets[array_key_last($template::$resets)]);
+            self::assertSame([['id' => 1]], $this->client->query($inner->orderByAsc('o.id')->build($table, 1, 'o.id')));
+        } finally {
+            $template::$inner = null;
+            $template::$resets = [];
+        }
+    }
+
+    public function testCountUsesOverriddenSqlGetterWhenItTrimsWhitespace(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function getLastPrepareQuery(): ?string
+            {
+                $sql = parent::getLastPrepareQuery();
+                return $sql === null ? null : trim($sql);
+            }
+        };
+        $builder->fields(['o.id AS order_id', 'u.id AS user_id'])->join('qb_fix_users u', 'u.tenantId = o.tenantId')
+            ->where('o.tenantId', 1)->count('qb_fix_orders o');
+        self::assertSame([1], $builder->getLastBindParams());
+        self::assertSame([['aggregate' => 4]], $this->client->query($builder));
+    }
+
+    public function testCountUsesTheProjectionReturnedByAnOverriddenSqlGetter(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function getLastPrepareQuery(): ?string
+            {
+                $sql = parent::getLastPrepareQuery();
+                return $sql !== null && str_starts_with($sql, 'SELECT  ')
+                    ? "SELECT source.order_id FROM ($sql) AS source"
+                    : $sql;
+            }
+        };
+        $builder->fields(['o.id AS order_id', 'u.id AS user_id'])
+            ->join('qb_fix_users u', 'u.tenantId = o.tenantId')->where('o.tenantId', 1)->count('qb_fix_orders o');
+        self::assertSame([1], $builder->getLastBindParams());
+        self::assertSame([['aggregate' => 4]], $this->client->query($builder));
+    }
+
+    public function testCountDebugSqlUsesTheQuoteModeFromItsInnerSelect(): void
+    {
+        $this->client->rawQuery("SET SESSION sql_mode = 'ANSI_QUOTES'");
+        $builder = new class extends QueryBuilder {
+            public array $diagnostics = [];
+
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $this->ansiQuotes()->selectRaw('1 AS "label?' . chr(92) . '"')->where('id', 2);
+                return parent::get($tableName, $numRows, $columns);
+            }
+
+            public function raw(mixed $sql, mixed $param = []): QueryBuilder
+            {
+                parent::raw('SELECT ? AS diagnostic', [5]);
+                $this->diagnostics[] = $this->getLastQuery();
+                return parent::raw(str_replace('SELECT COUNT(*)', 'SELECT  COUNT(*)', $sql) . ';', $param);
+            }
+        };
+        $builder->count('qb_fix_orders');
+        self::assertSame([['aggregate' => 1]], $this->client->query($builder));
+        self::assertStringContainsString('`id` = 2', $builder->getLastQuery());
+        self::assertStringContainsString('"label?' . chr(92) . '"', $builder->getLastQuery());
+        self::assertStringEndsWith(';', $builder->getLastQuery());
+        self::assertSame(['SELECT 5 AS diagnostic'], $builder->diagnostics);
+    }
+
+    public function testCountAndPaginationKeepTopLevelSelectOptionsOutOfTheCountSource(): void
+    {
+        $table = 'qb_fix_orders';
+        foreach ([['SQL_BUFFER_RESULT'], ['HIGH_PRIORITY'], ['SQL_BUFFER_RESULT', 'HIGH_PRIORITY']] as $options) {
+            $template = (new QueryBuilder())->fields('tenantId')->distinct()->setQueryOption($options)
+                ->where('score', 10, '>=')->orderByAsc('tenantId');
+            $count = (clone $template)->count($table);
+            self::assertSame([10], $count->getLastBindParams());
+            self::assertSame([['aggregate' => 2]], $this->client->query($count));
+            $page = $this->client->paginate($template, $table, 1, 2);
+            self::assertSame(2, $page['total']);
+            self::assertSame([['tenantId' => 2]], $page['items']);
+            foreach ($options as $option) {
+                self::assertStringNotContainsString($option, $count->getLastPrepareQuery());
+                self::assertContains($option, $template->getQueryOptions());
+            }
+            $data = (clone $template)->get($table);
+            foreach ($options as $option) {
+                self::assertStringContainsString($option, $data->getLastPrepareQuery());
+            }
+        }
     }
 
     public function testPaginationReturnsCountWithZeroSessionSelectLimit(): void

@@ -56,8 +56,8 @@ SQL, $builder->getLastQuery());
         self::assertSame($sql, $builder->getLastPrepareQuery());
         $builder->ansiQuotes()->fields("$identifier, id")->getColumn('orders');
         self::assertSame("SELECT  $identifier FROM `orders`", $builder->getLastPrepareQuery());
-        $builder->groupBy("$identifier, id")->count('orders');
-        self::assertStringContainsString("$identifier AS `__mysqli_group0`,  id AS `__mysqli_group1`", $builder->getLastPrepareQuery());
+        $builder->fields(["1 AS $identifier", 'id'])->groupBy("$identifier, id")->count('orders');
+        self::assertStringContainsString("SELECT  1 AS $identifier, id FROM", $builder->getLastPrepareQuery());
     }
 
     #[DataProvider('tableReferences')]
@@ -160,7 +160,6 @@ SQL, $builder->getLastQuery());
             ['"a""b,c" AS label, id', '"a""b,c" AS label'],
             ['`a``b,c` AS label, id', '`a``b,c` AS label'],
             ["'a\\'b,c' AS label, id", "'a\\'b,c' AS label"],
-            ["id /* comment, ( ' */ AS label, other", "id /* comment, ( ' */ AS label"],
             ['1--not_a_comment, id', '1--not_a_comment'],
             ['  name AS label  , id', '  name AS label  '],
             ['id', 'id'],

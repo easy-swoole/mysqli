@@ -103,7 +103,7 @@ final class QueryCompiler
                 || $parts->ordering !== [] || $numRows !== null) {
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
             }
-            (new WriteCompiler($buffer, null))->appendInsert($tableData, $fields, $batch, $parts->updateColumns);
+            (new WriteCompiler($buffer))->appendInsert($tableData, $fields, $batch, $parts->updateColumns);
             return null;
         }
 
@@ -118,12 +118,9 @@ final class QueryCompiler
 
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
-        if (!$isSelect || $parts->joins === []) {
-            $buffer->projection = null;
-        }
         $select->appendJoins($parts->joins, $parts->joinConditions);
         if ($statement === 'UPDATE') {
-            (new WriteCompiler($buffer, null))->appendData($tableData, false, $fields);
+            (new WriteCompiler($buffer))->appendUpdate($tableData, $fields);
         }
         $conditions->append('WHERE', $parts->where);
         if ($isSelect) {

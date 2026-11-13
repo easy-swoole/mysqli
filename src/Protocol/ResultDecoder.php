@@ -112,28 +112,22 @@ final class ResultDecoder
      */
     private static function unpackInteger(string $packet, int &$offset, int $bytes, bool $unsigned): int|string
     {
-        Codec::requireBytes($packet, $offset, $bytes);
-        $raw = substr($packet, $offset, $bytes);
-        $offset += $bytes;
-        if ($bytes === 1) {
-            $value = ord($raw);
-            return !$unsigned && $value >= 128 ? $value - 256 : $value;
+        if ($bytes < 8) {
+            $value = match ($bytes) {
+                1 => Codec::int1($packet, $offset),
+                2 => Codec::int2($packet, $offset),
+                4 => Codec::int4($packet, $offset),
+            };
+            $sign = 1 << ($bytes * 8 - 1);
+            return !$unsigned && $value >= $sign ? $value - ($sign << 1) : $value;
         }
-        if ($bytes === 2) {
-            $value = unpack('v', $raw)[1];
-            return !$unsigned && $value >= 0x8000 ? $value - 0x10000 : $value;
+        if ($unsigned) {
+            return Codec::int8($packet, $offset);
         }
-        if ($bytes === 4) {
-            $value = unpack('V', $raw)[1];
-            return !$unsigned && $value >= 0x80000000 ? $value - 0x100000000 : $value;
-        }
-        $value = unpack('P', $raw)[1];
-        if (!$unsigned || $value >= 0) {
-            return $value;
-        }
-        // PHP 将该位模式保存为有符号整数；%u 将原始位模式转换为
-        // 十进制文本，无需经过浮点数。
-        return sprintf('%u', $value);
+        Codec::requireBytes($packet, $offset, 8);
+        $value = unpack('P', $packet, $offset)[1];
+        $offset += 8;
+        return $value;
     }
 
     /**

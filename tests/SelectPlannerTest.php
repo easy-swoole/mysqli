@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\{Expression, QueryBuilder};
-use EasySwoole\Mysqli\QueryBuilder\{SelectPlan, SelectPlanner};
+use EasySwoole\Mysqli\QueryBuilder\{SelectPlanner, SqlBuffer};
 use PHPUnit\Framework\TestCase;
 
 final class SelectPlannerTest extends TestCase
@@ -41,13 +41,13 @@ final class SelectPlannerTest extends TestCase
 
     public function testSelectHeaderRetainsExactSpacingPrefixMetadataAndIndexHints(): void
     {
-        $plan = SelectPlanner::selectHead('`orders` o', ['id', new Expression('? AS marker', [7])], ['DISTINCT'], 'app_', null,
+        $plan = SelectPlanner::selectBuffer('`orders` o', ['id', new Expression('? AS marker', [7])], ['DISTINCT'], 'app_', null,
             ['FORCE' => ['idx`name'], 'USE' => [], 'IGNORE' => ['idx_state']]);
-        self::assertInstanceOf(SelectPlan::class, $plan);
+        self::assertInstanceOf(SqlBuffer::class, $plan);
         self::assertSame('SELECT DISTINCT id, ? AS marker FROM `app_orders` o FORCE INDEX (`idx``name`) IGNORE INDEX (`idx_state`)', $plan->sql);
         self::assertSame([7], $plan->parameters);
         self::assertSame('`app_orders` o', $plan->tableName);
-        $plain = SelectPlanner::selectHead('orders', '*', [], 'app_', null, ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
+        $plain = SelectPlanner::selectBuffer('orders', '*', [], 'app_', null, ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
         self::assertSame('SELECT  * FROM `app_orders`', $plain->sql);
         self::assertSame('app_orders', $plain->tableName);
     }
@@ -55,14 +55,14 @@ final class SelectPlannerTest extends TestCase
     public function testFromSourceParametersFollowSelectedExpressionsWithoutApplyingOuterPrefix(): void
     {
         $source = SelectPlanner::fromSub('SELECT ? AS id', [2], 's');
-        $plan = SelectPlanner::selectHead(null, [new Expression('? AS marker', [1]), 's.id'], [], 'outer_', $source,
+        $plan = SelectPlanner::selectBuffer(null, [new Expression('? AS marker', [1]), 's.id'], [], 'outer_', $source,
             ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
         self::assertSame('SELECT  ? AS marker, s.id FROM (SELECT ? AS id) AS `s`', $plan->sql);
         self::assertSame([1, 2], $plan->parameters);
         self::assertSame('s', $plan->tableName);
         foreach ([['users', []], [null, ['FORCE' => ['idx']]]] as [$table, $hints]) {
             $error = null;
-            try { SelectPlanner::selectHead($table, '*', [], '', $source, $hints); }
+            try { SelectPlanner::selectBuffer($table, '*', [], '', $source, $hints); }
             catch (\InvalidArgumentException $caught) { $error = $caught; }
             self::assertNotNull($error);
         }
@@ -75,7 +75,7 @@ final class SelectPlannerTest extends TestCase
         $state = $this->state(['fields' => [$projection], 'groups' => ['userId'], 'unionBranches' => [$branch],
             'ordering' => [['field' => new Expression('FIELD(id, ?)', [99])]], 'limit' => 10,
             'forUpdate' => true, 'lockInShareMode' => true, 'selectLockOption' => 'NOWAIT',
-            'queryOptions' => ['DISTINCT', 'SQL_CALC_FOUND_ROWS'], 'whereConditions' => [['', 'tenantId', '=', 7]]]);
+            'queryOptions' => ['DISTINCT', 'SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY'], 'whereConditions' => [['', 'tenantId', '=', 7]]]);
         $before = $state;
         $plan = SelectPlanner::countSource($state);
         self::assertSame($before, $state);
@@ -93,16 +93,15 @@ final class SelectPlannerTest extends TestCase
         self::assertSame('app_', $plan['prefix']);
     }
 
-    public function testCountPlanningPreservesPositionalGroupingAndAssignsNamesToCompoundGroups(): void
+    public function testCountPlanningPreservesExplicitFieldsAndGrouping(): void
     {
         $ordinary = SelectPlanner::countSource($this->state());
-        self::assertSame('1 AS `__mysqli_row`', $ordinary['fields'][0]->getSql());
-        $grouped = SelectPlanner::countSource($this->state(['groups' => ["COALESCE(status, 'x,y'), tenantId"]]));
-        self::assertSame(["COALESCE(status, 'x,y') AS `__mysqli_group0`", ' tenantId AS `__mysqli_group1`'],
-            array_map(static fn(Expression $field): string => $field->getSql(), $grouped['fields']));
-        foreach ([null, ['*']] as $fields) {
-            $ordinal = SelectPlanner::countSource($this->state(['fields' => $fields, 'groups' => ['status, 1']]));
-            self::assertSame($fields, $ordinal['fields']);
+        self::assertSame(['1'], $ordinary['fields']);
+        foreach ([null, ['*'], ["COALESCE(status, 'x,y') AS label", 'tenantId']] as $fields) {
+            $group = "ROLLUP(COALESCE(status, 'x,y'), tenantId)";
+            $grouped = SelectPlanner::countSource($this->state(['fields' => $fields, 'groups' => [$group]]));
+            self::assertSame($fields, $grouped['fields']);
+            self::assertSame([$group], $grouped['groups']);
             $distinct = SelectPlanner::countSource($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]));
             self::assertSame($fields, $distinct['fields']);
         }

@@ -29,6 +29,20 @@ final class QueryBuilderAdvancedIntegrationTest extends TestCase
 
     protected function tearDown(): void { $this->client?->close(); }
 
+    public function testSingleRowDuplicateUpdateUsesTheEvaluatedInsertValue(): void
+    {
+        $this->client->rawQuery('SET @mysqli_evaluations = 0');
+        $builder = (new QueryBuilder())->onDuplicate(['score', 'baseline' => QueryBuilder::inc(2)])->insert('qb_advanced', [
+            'id' => 1, 'score' => new Expression('(@mysqli_evaluations := @mysqli_evaluations + ?)', [1]),
+            'baseline' => 99,
+        ]);
+        self::assertSame([1, 1, 99], $builder->getLastBindParams());
+        self::assertTrue($this->client->query($builder));
+        self::assertSame([['score' => 1, 'baseline' => 7, 'evaluations' => 1]], $this->client->rawQuery(
+            'SELECT score, baseline, CAST(@mysqli_evaluations AS SIGNED) AS evaluations FROM qb_advanced WHERE id = 1'
+        ));
+    }
+
     public function testBatchUpsertUsesEachRowsIncomingValueAndPreservesNull(): void
     {
         $builder = (new QueryBuilder())->upsert('qb_advanced', [

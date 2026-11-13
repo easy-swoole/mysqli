@@ -23,7 +23,7 @@ final class SqlFormatter
         $index = 0;
         $start = 0;
         $result = '';
-        foreach (SqlScanner::tokensForMode($str, '?', $noBackslashEscapes, $ansiQuotes, skipLineComments: true) as $offset => $_) {
+        foreach (SqlScanner::tokensForMode($str, '?', $noBackslashEscapes, $ansiQuotes) as $offset => $_) {
             if (!array_key_exists($index, $vals)) { break; }
             $result .= substr($str, $start, $offset - $start) . self::literal($vals[$index++], $noBackslashEscapes);
             $start = $offset + 1;

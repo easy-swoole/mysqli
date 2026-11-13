@@ -341,7 +341,7 @@ final class TransactionTest extends TestCase
         }
     }
 
-    public function testSuccessfulPrepareConfirmsChainedTransactionBeforeDisconnect(): void
+    public function testChainedTransactionIsTrackedBeforeAnotherCommand(): void
     {
         $writer = $this->newClient();
         try {
@@ -350,11 +350,10 @@ final class TransactionTest extends TestCase
             $id = $writer->rawQuery('SELECT CONNECTION_ID() AS id')[0]['id'];
             $connection->begin_transaction();
             self::assertTrue($connection->commit(TransactionCompletionFlags::Chain));
-            $statement = $writer->prepare('SELECT ? AS value');
+            self::assertTrue($connection->inTransaction());
             $this->admin->rawQuery("KILL CONNECTION {$id}");
             self::assertFalse($writer->ping());
             self::assertTrue($connection->isTransactionLost());
-            $statement->close();
         } finally {
             $writer->close();
         }
@@ -374,22 +373,19 @@ final class TransactionTest extends TestCase
                     $connection->begin_transaction();
                     $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
                     self::assertTrue($connection->{$method}($flags));
-                    if ($flags === TransactionCompletionFlags::Chain) {
-                        try {
-                            $writer->rawQuery('SELECT 1');
-                            self::fail('The next command must detect the closed server session');
-                        } catch (Exception $error) {
-                            self::assertStringContainsString('MySQL query failed', $error->getMessage());
-                        }
-                    } elseif (!$flags->releasesConnection()) {
+                    if (!$flags->releasesConnection()) {
                         self::assertFalse($writer->ping());
                     }
                     self::assertFalse($connection->isConnected());
                     self::assertFalse($connection->inTransaction());
                     self::assertFalse($writer->ping());
-                    self::assertFalse($connection->isTransactionLost());
+                    // MySQL 先报告已开始链式事务，再按会话设置释放连接。
+                    self::assertSame($flags === TransactionCompletionFlags::Chain, $connection->isTransactionLost());
                     self::assertSame($method === 'commit' ? 30 : 0, $this->value($this->admin, 2));
                     $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
+                    if ($connection->isTransactionLost()) {
+                        $writer->close();
+                    }
                     $writer->connect();
                     self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
                 } finally {

@@ -48,20 +48,14 @@ final class SessionStateTest extends TestCase
         self::assertSame(2, $state->generation());
     }
 
-    public function testChainedTransactionLossDependsOnSubsequentServerResponse(): void
+    public function testConfirmedChainedTransactionIsLostWithoutAnotherResponse(): void
     {
-        foreach ([false, true] as $sessionConfirmed) {
-            $state = new SessionState();
-            $state->established();
-            $state->applyServerStatus(3);
-            $state->transactionCompleted();
-            self::assertTrue($state->inTransaction());
-            if ($sessionConfirmed) {
-                $state->applyServerStatus(3);
-            }
-            $state->disconnected();
-            self::assertSame($sessionConfirmed, $state->isTransactionLost());
-        }
+        $state = new SessionState();
+        $state->established();
+        $state->applyServerStatus(3);
+        self::assertTrue($state->inTransaction());
+        $state->disconnected();
+        self::assertTrue($state->isTransactionLost());
     }
 
     #[DataProvider('serverErrors')]

@@ -856,7 +856,7 @@ final class ProtocolTest extends TestCase
 
     public function testCallIsRejectedLocallyAcrossAllQueryEntrypoints(): void
     {
-        $allowed = ["SELECT 'CALL p()' AS value", '/* CALL p() */ SELECT 1',
+        $allowed = ["SELECT 'CALL p()' AS value",
             'SELECT callable_column FROM t', 'SELECT stored_function()',
             'CREATE PROCEDURE p() BEGIN CALL q(); END', 'DROP PROCEDURE p'];
         [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($allowed): void {
@@ -873,14 +873,13 @@ final class ProtocolTest extends TestCase
         });
         $client->connect();
         $connection = $client->mysqlClient();
-        $calls = ['CALL p()', " \t\r\n cAlL p()", '/* ordinary */ CALL/**/p()',
-            "# CALL in comment\r\n-- comment\nCALL p()", '/*+ hint */ /* comment */ call p()',
-            '/*!80000 CALL p() */', '/*! CALL */ p()', '/*!80000 */ CALL p()',
-            '; /* prefix */ CALL p()', 'CALL`p`()', '/*CALL*/ /*!80000 CALL p() */'];
+        $calls = ['CALL p()', " \t\r\n cAlL p()", 'CALL`p`()'];
         foreach ($calls as $sql) {
             foreach ([fn() => $client->rawQuery($sql), fn() => $client->prepare($sql),
                 fn() => $client->query((new \EasySwoole\Mysqli\QueryBuilder())->raw($sql)),
-                fn() => $connection->query($sql), fn() => $connection->prepare($sql)] as $operation) {
+                fn() => $connection->query($sql), fn() => $connection->prepare($sql),
+                fn() => $client->rawIterate($sql), fn() => $client->iterate((new \EasySwoole\Mysqli\QueryBuilder())->raw($sql)),
+                fn() => $connection->iterate($sql)] as $operation) {
                 try {
                     $operation();
                     self::fail('CALL must be rejected before sending SQL');

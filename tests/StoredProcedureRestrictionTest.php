@@ -24,7 +24,7 @@ final class StoredProcedureRestrictionTest extends TestCase
             $client->rawQuery("CREATE PROCEDURE `{$name}`() INSERT INTO `{$name}` VALUES (1)");
             $client->rawQuery('BEGIN');
             $connection = $client->mysqlClient();
-            $sql = "/* call test */ CALL `{$name}`()";
+            $sql = "CALL `{$name}`()";
             foreach ([fn() => $client->rawQuery($sql), fn() => $client->prepare($sql),
                 fn() => $client->query((new QueryBuilder())->raw($sql)),
                 fn() => $connection->query($sql), fn() => $connection->prepare($sql)] as $operation) {

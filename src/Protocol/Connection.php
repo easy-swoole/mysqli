@@ -75,12 +75,9 @@ final class Connection
                 function (string $packet): void { $this->parseOk($packet); },
             );
             $authenticator->authenticateWithOptions($handshake, $deadline, $tlsOptions, $expectedName);
-            $charset = $this->config->getCharset();
-            if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
-                throw new \InvalidArgumentException('Invalid MySQL charset');
-            }
+            $charsetSql = self::charsetSql($this->config->getCharset());
             $this->stream->beginCommand();
-            $this->stream->writePacket(chr(self::COM_QUERY) . "SET NAMES {$charset}", $deadline, 'charset');
+            $this->stream->writePacket(chr(self::COM_QUERY) . $charsetSql, $deadline, 'charset');
             $this->readResponse($deadline, false, 'SET NAMES');
             $this->state->established();
             $this->timeout = $this->config->getTimeout();
@@ -178,7 +175,6 @@ final class Connection
 
             $this->consumeDefinitions($parameterCount, $deadline);
             $this->consumeDefinitions($columnCount, $deadline);
-            $this->state->confirmSession();
             return new Statement($this, $statementId, $sql, $parameterCount, $columnCount, $warningCount, $this->state->generation());
         });
     }
@@ -199,7 +195,7 @@ final class Connection
         return $this->guard(function () use ($statement, $parameters, $timeout): array|bool {
             $deadline = $this->resolveDeadline($timeout);
             $this->writeStatementCommand($statement, $parameters, $deadline);
-            return $this->readResponse($deadline, true, $statement->getSql(), $statement->completionReleasesSession());
+            return $this->readResponse($deadline, true, $statement->getSql());
         });
     }
 
@@ -252,7 +248,7 @@ final class Connection
     {
         return $this->guard(function () use ($send, $deadline, $binary, $sql, $owner): ResultStream {
             $send();
-            $columns = $this->readCommandHeader($deadline, $sql, $owner?->completionReleasesSession(), $owner === null);
+            $columns = $this->readResultHeader($deadline, $sql);
             if ($columns === null) {
                 return ResultStream::completedEmpty();
             }
@@ -363,10 +359,15 @@ final class Connection
     public function set_charset(string $charset): bool
     {
         $timeout = func_get_args()[1] ?? null;
+        return $this->query(self::charsetSql($charset), $timeout) === true;
+    }
+
+    private static function charsetSql(string $charset): string
+    {
         if (!preg_match('/^[a-zA-Z0-9_]+$/', $charset)) {
             throw new \InvalidArgumentException('Invalid MySQL charset');
         }
-        return $this->query("SET NAMES {$charset}", $timeout) === true;
+        return "SET NAMES {$charset}";
     }
 
     /**
@@ -404,8 +405,11 @@ final class Connection
             }
             $deadline = $this->resolveDeadline($timeout);
             $this->writeTextCommand($command, $payload, $deadline);
-            return $this->readResponse($deadline, false, $payload, $completion?->releasePolicy(),
-                $command === self::COM_QUERY && $completion === null);
+            $result = $this->readResponse($deadline, false, $payload);
+            if ($completion?->releasesConnection()) {
+                $this->invalidateConnection(true);
+            }
+            return $result;
         });
     }
 
@@ -423,30 +427,10 @@ final class Connection
         $this->stream->writePacket(chr($command) . $payload, $deadline, 'query');
     }
 
-    /**
-     * 拒绝 CALL 调用，跳过前导注释并识别 MySQL 可执行注释中的调用。
-     */
+    /** 拒绝以 CALL 开头的语句。 */
     private function assertSupportedSql(string $sql): void
     {
-        while (true) {
-            $sql = preg_replace('/\A[\x00-\x20;]+/', '', $sql);
-            if (str_starts_with($sql, '#') || (str_starts_with($sql, '--')
-                && (strlen($sql) === 2 || ord($sql[2]) <= 32))) {
-                $length = strcspn($sql, "\r\n");
-                $sql = substr($sql, $length);
-                continue;
-            }
-            if (str_starts_with($sql, '/*')) {
-                $end = strpos($sql, '*/', 2);
-                if ($end === false) { return; } // 未闭合注释由服务端按 SQL 语法报错。
-                $body = ($sql[2] ?? '') === '!'
-                    ? preg_replace('/\A[0-9]{5,6}/', '', substr($sql, 3, $end - 3)) : '';
-                $sql = $body . ' ' . substr($sql, $end + 2);
-                continue;
-            }
-            break;
-        }
-        if (preg_match('/\ACALL(?![a-zA-Z0-9_$\x80-\xff])/i', $sql)) {
+        if (preg_match('/\A[\x09-\x0d ]*CALL(?![a-zA-Z0-9_$\x80-\xff])/i', $sql)) {
             throw new UnsupportedOperationException('Stored procedure calls (CALL) are not supported by this client');
         }
     }
@@ -454,9 +438,9 @@ final class Connection
     /**
      * 解析服务端响应，返回结果行或执行成功标志。
      */
-    private function readResponse(Deadline $deadline, bool $binary, string $sql, ?bool $release = null, bool $rawSql = false): array|bool
+    private function readResponse(Deadline $deadline, bool $binary, string $sql): array|bool
     {
-        $columns = $this->readCommandHeader($deadline, $sql, $release, $rawSql);
+        $columns = $this->readResultHeader($deadline, $sql);
         if ($columns === null) { return true; }
         $rows = [];
         while (($row = $this->readResultRow($deadline, $binary, $sql, $columns)) !== null) {
@@ -502,21 +486,6 @@ final class Connection
             $this->parseOk($terminator);
         }
 
-        return $columns;
-    }
-
-    /** 缓冲与流式命令共用成功响应后的事务处理。 */
-    private function readCommandHeader(Deadline $deadline, string $sql, ?bool $release, bool $rawSql): ?array
-    {
-        $columns = $this->readResultHeader($deadline, $sql);
-        if ($columns === null) {
-            $release = $rawSql ? TransactionCompletionFlags::sqlReleasePolicy($sql) : $release;
-            if ($release === true) {
-                $this->invalidateConnection(true);
-            } elseif ($release === false) {
-                $this->state->transactionCompleted();
-            }
-        }
         return $columns;
     }
 

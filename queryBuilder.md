@@ -274,9 +274,9 @@ $builder->groupBy('userId')->having('COUNT(*)', ['>=' => 5], ComparisonOperator:
 use EasySwoole\Mysqli\QueryBuilder\JoinType;
 
 $builder->join(joinTable: 'users u', joinCondition: 'u.id=o.userId', joinType: JoinType::Left)
-    ->get('orders o');
-$builder->join('users', '', JoinType::Natural)->get('orders');
-// SELECT * FROM `orders` NATURAL JOIN users
+    ->fields(['o.id AS order_id', 'u.id AS user_id'])->get('orders o');
+$builder->join('users', '', JoinType::Natural)->fields(['id'])->get('orders');
+// SELECT id FROM `orders` NATURAL JOIN users
 ```
 
 | `JoinType` | 对应原字符串 |
@@ -291,6 +291,7 @@ $builder->join('users', '', JoinType::Natural)->get('orders');
 - 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
 - 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。普通表名应用表前缀，数据库限定的表名保留原数据库和表名。
+- JOIN 的结果列由调用方用 `fields()` 显式指定。多个表返回同名列时，请分别起别名，例如 `o.id AS order_id` 和 `u.id AS user_id`。如果使用 `*` 或 `表别名.*`，列由 MySQL 展开，构造器不会推断列名或替同名列生成别名。
 - JOIN 子查询使用带别名的 `QueryBuilder::subQuery($alias)`。构建外层语句时，读取已构建的子查询 SQL、别名和参数。IN、EXISTS 和写入值中的子查询使用无别名的 `QueryBuilder::subQuery()`。
 
 ### `Expression` / `rawExpression(string $sql, array $parameters = [])`
@@ -322,8 +323,8 @@ $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status 
 ```
 
 - 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
-- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
-- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
+- 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号和反引号中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
+- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
 - 会话开启 `ANSI_QUOTES` 时，用 `$builder->ansiQuotes()` 让字段列表、分组列表和调试 SQL 将双引号视为标识符引用。该设置默认关闭，可与 `noBackslashEscapes()` 独立使用。调试 SQL 沿用构建时的设置。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
@@ -488,11 +489,10 @@ $builder->upsert('users', $rows, ['name', 'status' => 'synced']);
 ```
 
 - 由表的 PRIMARY KEY / UNIQUE 约束决定是否冲突；方法不创建唯一索引，也不额外查询是否存在。`upsert()` 与其他构建方法一样返回 Builder，实际执行交给 `Client::query()`。
-- 字段列表 `['name']` 表示按每一行实际插入的新值更新；它使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。批量 `onDuplicate(['name'])->insertAll()` 同样有此要求。
+- 字段列表 `['name']` 表示引用 MySQL 已计算的插入值，插入表达式只求值一次。单行和批量的隐式更新均使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。
-- 重复键赋值按 `$updateColumns` 的顺序执行。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。自定义表达式中的同名列用目标表名限定。
+- 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。自定义表达式中的同名列用目标表名限定。
 - `upsert()` 要求非空行数据和非空更新列。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。
-- 旧的单行 `onDuplicate(...)->insert()` 继续保持原有构建方式；只有批量的隐式更新改为引用每行新值，不再把二维数组误读成 NULL。
 - 按插入值更新的字段必须在过滤后保留。重复键更新仅用于 INSERT，与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
@@ -553,17 +553,19 @@ $builder->where('paid.total', 100, '>')->getFromSub($totals, 'paid');
 ### `count($tableName, $alias = 'aggregate')`
 
 ```php
-$template = (new QueryBuilder())->where('status', 'paid')->groupBy('userId');
+$template = (new QueryBuilder())->where('status', 'paid')->fields('userId')->groupBy('userId');
 $counter = (clone $template)->count('orders', 'total');
 $total = $client->query($counter)[0]['total'];
 ```
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。分组计数默认只选择分组表达式，可直接配合 `HAVING SUM(amount) > ?`。如果 HAVING 引用了其他投影字段或别名，用 `fields()` 指定相应列或表达式。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在未设置 `fields()` 时使用常量作为内层投影。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用模板中的选项。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
-- 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
+- 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
+- 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
 
 ### `aggregate($tableName, $function, $column, $alias = 'aggregate')` / `sum()` / `avg()` / `min()` / `max()`
 
@@ -613,7 +615,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 ```
 
 - `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
-- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。多语句和 CALL 限制同样适用。
+- 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。字段列表拆分和调试 SQL 生成均按无注释的 SQL 处理。多语句和直接 CALL 限制同样适用。
 
 
 ### `setQueryOption($options)`：语句选项
@@ -1051,6 +1053,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 ```
 
 - 在独立副本上先构建 COUNT 和当前页语句，再依次执行。两条语句的 SQL 和参数在首次查询前确定。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
+- JOIN 分页在查询模板上用 `fields()` 显式选列。同名列分别起别名，确保 `items` 能按列名取到各自的值。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。

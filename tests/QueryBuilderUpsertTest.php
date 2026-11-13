@@ -6,7 +6,6 @@ namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Expression;
-use EasySwoole\Mysqli\QueryBuilder\WriteCompiler;
 use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderUpsertTest extends TestCase
@@ -58,6 +57,29 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertStringEndsWith('ON DUPLICATE KEY UPDATE `name` = `__mysqli_new`.`name`, `status` = ?', $q->getLastPrepareQuery());
     }
 
+    public function testDuplicateUpdateAssignmentsFailThroughAllInsertEntrypoints(): void
+    {
+        $row = ['id' => 1, 'name' => 'input'];
+        foreach ([['name', 'name' => 'fixed'], ['name' => 'fixed', 'name'], ['name', 'name'], ['name', 'NAME' => 'fixed']] as $updates) {
+            foreach ([
+                fn(QueryBuilder $builder) => $builder->onDuplicate($updates)->insert('users', $row),
+                fn(QueryBuilder $builder) => $builder->onDuplicate($updates)->insertAll('users', [$row]),
+                fn(QueryBuilder $builder) => $builder->upsert('users', [$row], $updates),
+            ] as $build) {
+                $builder = (new QueryBuilder())->where('id', 7)->get('users');
+                $previousSql = $builder->getLastPrepareQuery();
+                try {
+                    $build($builder);
+                    self::fail('Expected duplicate update assignment to be rejected');
+                } catch (\InvalidArgumentException $error) {
+                    self::assertStringContainsString('Duplicate update assignment', $error->getMessage());
+                }
+                self::assertSame($previousSql, $builder->getLastPrepareQuery());
+                self::assertSame([7], $builder->getLastBindParams());
+            }
+        }
+    }
+
     public function testMixedUpsertQualifiesOnlyGeneratedCurrentColumnReferences(): void
     {
         $builder = (new QueryBuilder())->upsert('app.`__mysqli_new`', [
@@ -69,11 +91,14 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([1, 3, 4, true], $builder->getLastBindParams());
     }
 
-    public function testSingleRowImplicitUpdateKeepsExistingSqlAndBindings(): void
+    public function testSingleRowImplicitUpdateReferencesIncomingValuesOnce(): void
     {
-        $q = (new QueryBuilder())->onDuplicate(['name'])->insert('users', ['id' => 1, 'name' => 'a']);
-        self::assertSame('INSERT  INTO `users` (`id`, `name`)  VALUES (?, ?) ON DUPLICATE KEY UPDATE `name` = ?', $q->getLastPrepareQuery());
-        self::assertSame([1, 'a', 'a'], $q->getLastBindParams());
+        $q = (new QueryBuilder())->fields(['id', 'name', 'score'])->onDuplicate(['name', 'score', 'status' => 'updated'])
+            ->insert('users', ['id' => 1, 'name' => null, 'score' => new Expression('? + ?', [2, 3]), 'ignored' => 99]);
+        self::assertSame('INSERT  INTO `users` (`id`, `name`, `score`)  VALUES (?, ?, ? + ?) AS `__mysqli_new`'
+            . ' ON DUPLICATE KEY UPDATE `name` = `__mysqli_new`.`name`, `score` = `__mysqli_new`.`score`, `status` = ?',
+            $q->getLastPrepareQuery());
+        self::assertSame([1, null, 2, 3, 'updated'], $q->getLastBindParams());
     }
 
     public function testIncomingRowAliasCannotCollideWithTargetTable(): void
@@ -107,22 +132,20 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertStringNotContainsString(' AS `__mysqli_new`', $q->getLastPrepareQuery());
     }
 
-    public function testInvalidBatchShapesAreRejectedBeforeBinding(): void
+    public function testBatchShapesAndColumnOrderThroughInsertAll(): void
     {
         foreach ([[], [null], [['id' => 1], []], [['id' => 1], ['id' => 2, 'name' => 'b']],
             [['id' => 1, 'name' => 'a'], ['id' => 2]], [['id' => 1], ['other' => 2]],
             [[0 => 1]], [['' => 1]], [["bad\0name" => 1]]] as $rows) {
             try {
-                WriteCompiler::normalizeBatch($rows);
+                (new QueryBuilder())->insertAll('users', $rows);
                 self::fail('Expected malformed batch rows to be rejected');
             } catch (\InvalidArgumentException $error) { self::assertNotEmpty($error->getMessage()); }
         }
-        self::assertSame([
-            'columns' => ['id' => '`id`', 'name' => '`name`'],
-            'rows' => [['id' => 1, 'name' => 'a'], ['name' => null, 'id' => 2]],
-        ], WriteCompiler::normalizeBatch([
+        $builder = (new QueryBuilder())->insertAll('users', [
             3 => ['id' => 1, 'name' => 'a'], 8 => ['name' => null, 'id' => 2],
-        ]));
+        ]);
+        self::assertSame([1, 'a', 2, null], $builder->getLastBindParams());
     }
 
     public function testMissingImplicitUpdateColumnIsRejectedInsteadOfBindingNull(): void
