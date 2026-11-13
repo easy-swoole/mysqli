@@ -103,17 +103,19 @@ final class PaginationTest extends TestCase
     {
         $template = new class extends QueryBuilder {
             public static array $countPublications = [];
+            public static int $clones = 0;
             private int $selects = 0;
             private int $depth = 0;
 
             public function __clone(): void
             {
+                self::$clones++;
                 $this->setPrefix('tenant_' . ++$this->depth . '_')->where('tenantId', 7);
             }
 
             public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
             {
-                $this->where('visible', ++$this->selects);
+                $this->where('scope', $this->depth)->where('visible', ++$this->selects);
                 return parent::get($tableName, $numRows, $columns);
             }
 
@@ -127,8 +129,9 @@ final class PaginationTest extends TestCase
         $client->paginate($template, 'orders');
 
         self::assertSame([0], $template::$countPublications);
-        self::assertSame([7, 1], $client->queries[0][1]);
-        self::assertSame([7, 1], $client->queries[1][1]);
+        self::assertSame(3, $template::$clones);
+        self::assertSame([7, 1, 1], $client->queries[0][1]);
+        self::assertSame([7, 1, 1], $client->queries[1][1]);
         self::assertStringContainsString('FROM `tenant_1_orders`', $client->queries[0][0]);
         self::assertStringContainsString('FROM `tenant_1_orders`', $client->queries[1][0]);
     }

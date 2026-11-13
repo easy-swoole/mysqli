@@ -48,6 +48,16 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['display_name'=>"guest, O'Reilly"]], $this->client->query($builder));
     }
 
+    public function testAnsiQuotesDebugSqlUsesIdentifierRulesAndDefaultStringEscapes(): void
+    {
+        $this->client->rawQuery("SET SESSION sql_mode = 'ANSI_QUOTES'");
+        $alias = 'label?' . chr(92);
+        $sql = 'SELECT 1 AS "' . $alias . '", ? AS answer';
+        $builder = (new QueryBuilder())->ansiQuotes()->raw($sql, [42]);
+        self::assertSame([[$alias => 1, 'answer' => 42]], $this->client->query($builder));
+        self::assertSame('SELECT 1 AS "' . $alias . '", 42 AS answer', $builder->getLastQuery());
+    }
+
     public function testGetColumnUsesExplicitNoBackslashEscapesMode(): void
     {
         $fields = <<<'SQL'
@@ -103,6 +113,23 @@ SQL;
         $rows = $this->client->query((clone $template)->get('qb_fix_rollup'));
         self::assertCount(3, $rows);
         self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_rollup')));
+    }
+
+    public function testCountAndPaginationAcceptJoinColumnsWithTheSameName(): void
+    {
+        $table = 'qb_fix_orders o';
+        $template = (new QueryBuilder())->join('qb_fix_users u', 'u.tenantId=o.tenantId')
+            ->fields('o.id, u.id')->selectRaw('? AS marker', [42])->where('o.tenantId', 1);
+        $count = (clone $template)->count($table);
+        self::assertSame([42, 1], $count->getLastBindParams());
+        self::assertSame([['aggregate' => 4]], $this->client->query($count));
+        $page = $this->client->paginate($template->orderByAsc('o.id')->orderByAsc('u.id'), $table, 2);
+        self::assertSame(4, $page['total']);
+        self::assertCount(2, $page['items']);
+
+        $distinct = (new QueryBuilder())->join('qb_fix_users u', 'u.tenantId=o.tenantId')
+            ->fields(['o.tenantId', 'u.tenantId'])->distinct()->count($table);
+        self::assertSame([['aggregate' => 2]], $this->client->query($distinct));
     }
 
     public function testGroupedHavingCanUseColumnsFromAnExplicitStarProjection(): void

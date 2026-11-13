@@ -4,6 +4,7 @@
     "methods": {
         "__construct": "public function __construct(bool $isSubQuery = false, ?string $subQueryAlias = NULL)",
         "aggregate": "public function aggregate(mixed $tableName, string $function, EasySwoole\\Mysqli\\Expression|string $column, string $alias = 'aggregate'): EasySwoole\\Mysqli\\QueryBuilder",
+        "ansiQuotes": "public function ansiQuotes(bool $enabled = true): EasySwoole\\Mysqli\\QueryBuilder",
         "avg": "public function avg(mixed $tableName, EasySwoole\\Mysqli\\Expression|string $column, string $alias = 'aggregate'): EasySwoole\\Mysqli\\QueryBuilder",
         "commit": "public function commit(): void",
         "count": "public function count(mixed $tableName, string $alias = 'aggregate'): EasySwoole\\Mysqli\\QueryBuilder",

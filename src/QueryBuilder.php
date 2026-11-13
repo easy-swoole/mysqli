@@ -38,12 +38,15 @@ class QueryBuilder
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
     private bool $countOnSnapshot = false;
+    private ?QueryBuilder $countSource = null;
     private bool $buildingCountSource = false;
     private bool $noBackslashEscapes = false;
+    private bool $ansiQuotes = false;
     private ?CompiledQuery $readyToPublish = null;
     // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
     private ?CompiledQuery $lastBuilt = null;
     private bool $lastBuiltNoBackslashEscapes = false;
+    private bool $lastBuiltAnsiQuotes = false;
 
     const TS_OP_START = 1;
     const TS_OP_COMMIT = 2;
@@ -595,32 +598,34 @@ class QueryBuilder
         // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
         $quotedAlias = TableReference::identifier($alias);
         $onSnapshot = $this->countOnSnapshot;
+        $source = $this->countSource;
         $this->countOnSnapshot = false;
-        if (static::class === self::class || ($onSnapshot && !$this->overridesCountSource())) {
-            $state = SelectPlanner::countSourceWithQuoteMode($this->pending, $this->noBackslashEscapes);
+        $this->countSource = null;
+        if (static::class === self::class || ($onSnapshot && $source === null)) {
+            $state = $this->planCountSource();
             $buffer = $this->selectBuffer($state, $tableName);
             $query = $this->compileQuery($state, $buffer, 'SELECT', null);
-            $sourceSql = $query->sql;
+            $sql = $this->wrapCountSource($query->sql, $quotedAlias, $query);
             $parameters = $query->parameters;
         } else {
-            $source = clone $this;
+            $source ??= clone $this;
             if ($onSnapshot) {
-                // 分页模板已应用过克隆钩子，内层副本沿用计数分支的 SELECT 配置。
+                // 两个副本分别从原模板克隆，内层沿用 count() 开始时的构建配置。
                 $source->pending = $this->pending;
                 $source->prefix = $this->prefix;
                 $source->noBackslashEscapes = $this->noBackslashEscapes;
+                $source->ansiQuotes = $this->ansiQuotes;
             }
-            $source->pending = SelectPlanner::countSourceWithQuoteMode($source->pending, $source->noBackslashEscapes);
+            $source->pending = $source->planCountSource();
             $source->buildingCountSource = $onSnapshot;
             try {
                 $source->get($tableName);
-                $sourceSql = $source->getLastPrepareQuery();
+                $sql = $source->wrapCountSource($source->getLastPrepareQuery(), $quotedAlias, $source->compiled);
                 $parameters = $source->getLastBindParams();
             } finally {
                 $source->buildingCountSource = false;
             }
         }
-        $sql = SelectPlanner::countSql($sourceSql, $quotedAlias);
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
         return $this->raw($sql, $parameters);
@@ -629,13 +634,27 @@ class QueryBuilder
     /** @internal 从模板创建计数查询。 */
     public function countQuery(?string $table, string $alias): QueryBuilder
     {
-        $source = clone $this;
-        $source->countOnSnapshot = true;
+        $counter = clone $this;
+        $counter->countSource = static::class !== self::class && $this->overridesCountSource() ? clone $this : null;
+        $counter->countOnSnapshot = true;
         try {
-            return $source->count($table, $alias);
+            return $counter->count($table, $alias);
         } finally {
-            $source->countOnSnapshot = false;
+            $counter->countOnSnapshot = false;
+            $counter->countSource = null;
         }
+    }
+
+    /** @return State */
+    private function planCountSource(): array
+    {
+        return SelectPlanner::countSourceForMode($this->pending, $this->noBackslashEscapes, $this->ansiQuotes);
+    }
+
+    private function wrapCountSource(string $sql, string $alias, ?CompiledQuery $query): string
+    {
+        return SelectPlanner::countSqlForProjection($sql, $alias, $query?->joinedProjection(),
+            $this->noBackslashEscapes, $this->ansiQuotes);
     }
 
     /** 子类定制 SELECT 或读取构建结果时，在独立副本上调用这些方法。 */
@@ -686,6 +705,13 @@ class QueryBuilder
         return $this;
     }
 
+    /** 会话开启 ANSI_QUOTES 时，将双引号按标识符规则处理。 */
+    public function ansiQuotes(bool $enabled = true): QueryBuilder
+    {
+        $this->ansiQuotes = $enabled;
+        return $this;
+    }
+
     /** SELECT 获取某一列的数据 */
     public function getColumn(mixed $tableName, mixed $columns = null, mixed $numRows = null): ?QueryBuilder
     {
@@ -693,7 +719,8 @@ class QueryBuilder
             $columns = $this->pending['fields'];
             if ($columns !== null && $columns !== []) {
                 $first = reset($columns);
-                $columns = $first instanceof Expression ? $first : SqlList::firstItem($first, $this->noBackslashEscapes);
+                $columns = $first instanceof Expression ? $first
+                    : SqlList::firstForMode($first, $this->noBackslashEscapes, $this->ansiQuotes);
             }
         } elseif (!is_string($columns) && !($columns instanceof Expression)) {
             throw new \TypeError('Column must be a string, Expression or null');
@@ -863,7 +890,8 @@ class QueryBuilder
         if ($query === null || $query->parameters === []) {
             return $query?->sql;
         }
-        return SqlFormatter::renderWithQuoteMode($query->sql, $query->parameters, $this->lastBuiltNoBackslashEscapes);
+        return SqlFormatter::renderForMode($query->sql, $query->parameters,
+            $this->lastBuiltNoBackslashEscapes, $this->lastBuiltAnsiQuotes);
     }
 
     /** 获取子查询 */
@@ -1060,9 +1088,7 @@ class QueryBuilder
         $operation = (new QueryCompiler())->compile(
             $buffer, $parts, $statement, $numRows, $tableData, $fields ?? $state['fields'], $batch
         );
-        $needsParentheses = $statement !== 'SELECT' || $parts->ordering !== [] || $numRows !== null
-            || $parts->unions !== [] || $parts->forUpdate || $parts->lockInShareMode;
-        return new CompiledQuery($buffer->sql, $buffer->parameters, $state['queryOptions'], $operation, $needsParentheses);
+        return CompiledQuery::fromBuffer($buffer, $state['queryOptions'], $operation);
     }
 
     private function completeBuild(string $sql, array $parameters, ?int $operation, bool $needsParentheses = true): QueryBuilder
@@ -1074,6 +1100,7 @@ class QueryBuilder
     {
         $this->lastBuilt = $query;
         $this->lastBuiltNoBackslashEscapes = $this->noBackslashEscapes;
+        $this->lastBuiltAnsiQuotes = $this->ansiQuotes;
         $this->readyToPublish = $query;
         if ($this->buildingCountSource) {
             $this->resetBuildState();

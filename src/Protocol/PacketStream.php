@@ -94,9 +94,7 @@ final class PacketStream
     public function enableCompression(bool $enabled): void
     {
         $this->compressionEnabled = $enabled;
-        $this->compressedSequence = 0;
-        $this->decompressedBuffer = '';
-        $this->decompressedOffset = 0;
+        $this->resetCompressionState();
     }
 
     public function close(): void
@@ -117,6 +115,11 @@ final class PacketStream
     public function beginCommand(): void
     {
         $this->sequence = 0;
+        $this->resetCompressionState();
+    }
+
+    private function resetCompressionState(): void
+    {
         $this->compressedSequence = 0;
         $this->decompressedBuffer = '';
         $this->decompressedOffset = 0;

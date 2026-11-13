@@ -92,6 +92,7 @@ final class SelectPlanner
         $select->sql = 'SELECT ' . QueryCompiler::modifierSql('SELECT', $options) . ' ' . $column . ' FROM ' . $tableSql
             . TableReference::indexHints($indexHints);
         $select->tableName = $table;
+        $select->projection = $column;
         return $select;
     }
 
@@ -108,6 +109,12 @@ final class SelectPlanner
     /** @param State $state @return State */
     public static function countSourceWithQuoteMode(array $state, bool $noBackslashEscapes): array
     {
+        return self::countSourceForMode($state, $noBackslashEscapes, false);
+    }
+
+    /** @param State $state @return State */
+    public static function countSourceForMode(array $state, bool $noBackslashEscapes, bool $ansiQuotes): array
+    {
         $state['ordering'] = [];
         $state['limit'] = null;
         $state['forUpdate'] = false;
@@ -123,7 +130,7 @@ final class SelectPlanner
         if ($state['groups'] !== []) {
             // 分组计数默认只投影分组表达式；显式 * 可供 HAVING 引用其他字段。
             if ($state['fields'] === null || $state['havingConditions'] === []) {
-                $state['fields'] = self::groupProjection($state['groups'], $noBackslashEscapes) ?? $state['fields'];
+                $state['fields'] = self::groupProjection($state['groups'], $noBackslashEscapes, $ansiQuotes) ?? $state['fields'];
             }
         } elseif ($state['havingConditions'] === []) {
             $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
@@ -132,7 +139,7 @@ final class SelectPlanner
     }
 
     /** 生成仅包含分组表达式的投影；按列位置分组时保留原投影。 */
-    private static function groupProjection(array $groups, bool $noBackslashEscapes): ?array
+    private static function groupProjection(array $groups, bool $noBackslashEscapes, bool $ansiQuotes): ?array
     {
         $last = array_key_last($groups);
         // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
@@ -143,7 +150,7 @@ final class SelectPlanner
             if (preg_match('/\A\s*ROLLUP\s*\((.*)\)\s*\z/is', $group, $rollup) === 1) {
                 $group = $rollup[1];
             }
-            foreach (SqlList::splitItems($group, $noBackslashEscapes) as $item) {
+            foreach (SqlList::splitForMode($group, $noBackslashEscapes, $ansiQuotes) as $item) {
                 if (preg_match('/\A\s*[0-9]+\s*\z/', $item) === 1) {
                     return null;
                 }
@@ -156,8 +163,30 @@ final class SelectPlanner
     /** 参数保持已构建来源查询中的 SQL 顺序。 */
     public static function countSql(string $sourceSql, string $quotedAlias): string
     {
+        return self::countSqlForProjection($sourceSql, $quotedAlias, null, false, false);
+    }
+
+    public static function countSqlForProjection(
+        string $sourceSql, string $quotedAlias, ?string $projection, bool $noBackslashEscapes, bool $ansiQuotes
+    ): string {
+        $columnList = '';
+        if ($projection !== null) {
+            $items = SqlList::splitForMode($projection, $noBackslashEscapes, $ansiQuotes);
+            $names = [];
+            foreach ($items as $index => $item) {
+                // 星号由服务端展开，列数在编译时未知。
+                if (preg_match('/(?:^|\.)\s*\*\s*\z/', trim($item)) === 1) {
+                    $names = [];
+                    break;
+                }
+                $names[] = '`__mysqli_col' . $index . '`';
+            }
+            if ($names !== []) {
+                $columnList = ' (' . implode(', ', $names) . ')';
+            }
+        }
         return 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($sourceSql)
-            . ' AS `__mysqli_count` LIMIT 1';
+            . ' AS `__mysqli_count`' . $columnList . ' LIMIT 1';
     }
 
     public static function aggregateExpression(string $function, string|Expression $column, string $alias, bool $hasUnion): Expression

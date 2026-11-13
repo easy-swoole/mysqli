@@ -7,6 +7,8 @@ final class SqlBuffer
 {
     public ?string $column = null;
     public ?string $baseTableName = null;
+    public ?string $projection = null;
+    public bool $unionOperandNeedsParentheses = true;
 
     /** @param array<array-key, mixed> $parameters */
     public function __construct(public string $sql, public array $parameters = [], public mixed $tableName = '') {}

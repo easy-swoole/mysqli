@@ -235,7 +235,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。子类定制内层 SELECT 的构建或结果读取时，这些方法在计数分支的独立副本上调用。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。子类定制内层 SELECT 的构建或结果读取时，内层也直接从原模板克隆。只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -487,6 +487,7 @@ $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status 
 - 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
 - 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
 - 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
+- 会话开启 `ANSI_QUOTES` 时，用 `$builder->ansiQuotes()` 让字段列表、分组列表和调试 SQL 将双引号视为标识符引用。该设置默认关闭，可与 `noBackslashEscapes()` 独立使用。调试 SQL 沿用构建时的设置。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
 ### `selectRaw(string $sql, array $parameters = [])`
@@ -769,8 +770,9 @@ $total = $client->query($counter)[0]['total'];
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
 - `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。分组计数默认只选择分组表达式，可直接配合 `HAVING SUM(amount) > ?`。如果 HAVING 引用了其他投影字段或别名，用 `fields()` 指定相应列或表达式。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
+- JOIN 显式列出字段时，计数派生表为这些列分配独立名称，支持 `a.id, b.id` 这类同名投影。DISTINCT、UNION 或 HAVING 需要保留投影且通配列会展开出同名字段时，用 `fields()` 显式列出需要的字段。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
-- 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
+- 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
 
 ### `aggregate($tableName, $function, $column, $alias = 'aggregate')` / `sum()` / `avg()` / `min()` / `max()`
 

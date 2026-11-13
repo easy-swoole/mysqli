@@ -15,10 +15,15 @@ final class SqlFormatter
     /** @internal 调试 SQL 使用构建时的引号规则。 */
     public static function renderWithQuoteMode(string $str, array $vals, bool $noBackslashEscapes): ?string
     {
+        return self::renderForMode($str, $vals, $noBackslashEscapes, false);
+    }
+
+    public static function renderForMode(string $str, array $vals, bool $noBackslashEscapes, bool $ansiQuotes): string
+    {
         $index = 0;
         $start = 0;
         $result = '';
-        foreach (SqlScanner::tokens($str, '?', $noBackslashEscapes, skipLineComments: true) as $offset => $_) {
+        foreach (SqlScanner::tokensForMode($str, '?', $noBackslashEscapes, $ansiQuotes, skipLineComments: true) as $offset => $_) {
             if (!array_key_exists($index, $vals)) { break; }
             $result .= substr($str, $start, $offset - $start) . self::literal($vals[$index++], $noBackslashEscapes);
             $start = $offset + 1;

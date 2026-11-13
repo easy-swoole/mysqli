@@ -46,6 +46,20 @@ SQL, $builder->getLastQuery());
         self::assertSame('SELECT ' . $literal . ', 42', $builder->getLastQuery());
     }
 
+    public function testAnsiQuotesKeepsIdentifierBoundariesAndStringEscapesIndependent(): void
+    {
+        $identifier = '"label?' . chr(92) . '"';
+        $string = "'it" . chr(92) . "'s?'";
+        $sql = "SELECT 1 AS $identifier, $string, ? AS answer";
+        $builder = (new QueryBuilder())->ansiQuotes()->raw($sql, [42])->ansiQuotes(false);
+        self::assertSame("SELECT 1 AS $identifier, $string, 42 AS answer", $builder->getLastQuery());
+        self::assertSame($sql, $builder->getLastPrepareQuery());
+        $builder->ansiQuotes()->fields("$identifier, id")->getColumn('orders');
+        self::assertSame("SELECT  $identifier FROM `orders`", $builder->getLastPrepareQuery());
+        $builder->groupBy("$identifier, id")->count('orders');
+        self::assertStringContainsString("$identifier AS `__mysqli_group0`,  id AS `__mysqli_group1`", $builder->getLastPrepareQuery());
+    }
+
     #[DataProvider('tableReferences')]
     public function testTableReferencesPreservePrefixAndAliasRules(string $table, string $prefix, string $expected): void
     {

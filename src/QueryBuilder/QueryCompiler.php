@@ -118,6 +118,9 @@ final class QueryCompiler
 
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
+        if (!$isSelect || $parts->joins === []) {
+            $buffer->projection = null;
+        }
         $select->appendJoins($parts->joins, $parts->joinConditions);
         if ($statement === 'UPDATE') {
             (new WriteCompiler($buffer, null))->appendData($tableData, false, $fields);
@@ -126,6 +129,9 @@ final class QueryCompiler
         if ($isSelect) {
             $select->appendGroups($parts->groups);
             $conditions->append('HAVING', $parts->having);
+        }
+        $beforeUnionAndTail = strlen($buffer->sql);
+        if ($isSelect) {
             $select->appendUnions($parts->unions);
         }
         $select->appendOrder($parts->ordering);
@@ -138,6 +144,10 @@ final class QueryCompiler
         if ($parts->lockInShareMode) {
             $buffer->sql .= ' LOCK IN SHARE MODE';
             return QueryBuilder::TS_OP_LOCK_IN_SHARE;
+        }
+        if ($isSelect) {
+            // UNION 分支只在实际生成集合、排序、分页或锁子句时需要括号。
+            $buffer->unionOperandNeedsParentheses = strlen($buffer->sql) !== $beforeUnionAndTail;
         }
         return null;
     }

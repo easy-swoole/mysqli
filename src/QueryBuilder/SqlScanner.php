@@ -14,6 +14,17 @@ final class SqlScanner
         bool $noBackslashEscapes,
         bool $skipLineComments = false,
     ): \Generator {
+        yield from self::tokensForMode($sql, $tokens, $noBackslashEscapes, false, $skipLineComments);
+    }
+
+    /** @return \Generator<int, string> */
+    public static function tokensForMode(
+        string $sql,
+        string $tokens,
+        bool $noBackslashEscapes,
+        bool $ansiQuotes,
+        bool $skipLineComments = false,
+    ): \Generator {
         $special = $tokens . "'\"`/" . ($skipLineComments ? '-#' : '');
         $length = strlen($sql);
         for ($offset = 0; $offset < $length; $offset++) {
@@ -22,7 +33,8 @@ final class SqlScanner
             $character = $sql[$offset];
             $next = $sql[$offset + 1] ?? null;
             if ($character === "'" || $character === '"' || $character === '`') {
-                $offset = self::quoteEnd($sql, $offset, $character, !$noBackslashEscapes && $character !== '`');
+                $stringQuote = $character === "'" || ($character === '"' && !$ansiQuotes);
+                $offset = self::quoteEnd($sql, $offset, $character, $stringQuote && !$noBackslashEscapes);
             } elseif ($character === '/' && $next === '*') {
                 $end = strpos($sql, '*/', $offset + 2);
                 $offset = $end === false ? $length : $end + 1;
