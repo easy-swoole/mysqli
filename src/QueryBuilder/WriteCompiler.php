@@ -9,7 +9,7 @@ use EasySwoole\Mysqli\Exception\Exception;
 /** @internal 处理批量选项、写入字段过滤、赋值及重复键更新。 */
 final class WriteCompiler
 {
-    /** @var array<string, string>|null */
+    /** @var array<string, string>|null 供独立调用 appendData() 和 appendDuplicate() 时使用。 */
     private ?array $batchColumns = null;
 
     /** 保留历史构造参数，写入值直接使用子查询引用。 */
@@ -108,20 +108,48 @@ final class WriteCompiler
     public function appendData(array $tableData, bool $isInsert, ?array $fields, bool $batch = false): array
     {
         $this->batchColumns = null;
-        $first = array_key_first($tableData);
-        if ($isInsert && ($batch || (is_int($first) && is_array($tableData[$first])))) {
-            [$columns, $rows] = self::prepareBatch($tableData, $fields);
-            $this->batchColumns = $columns;
-            $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
-            $separator = '';
-            foreach ($rows as $row) {
-                $this->buffer->sql .= $separator . '(';
-                $this->appendPairs($row, $columns, true);
-                $this->buffer->sql .= ')';
-                $separator = ',';
-            }
+        if ($isInsert && self::isBatch($tableData, $batch)) {
+            $this->batchColumns = $this->appendBatch($tableData, $fields);
             return [];
         }
+        return $this->appendRow($tableData, $isInsert, $fields);
+    }
+
+    /** 插入和重复键更新在同一次编译中直接共享行或列映射。 */
+    public function appendInsert(array $tableData, ?array $fields, bool $batch, ?array $updateColumns): void
+    {
+        if (self::isBatch($tableData, $batch)) {
+            $columns = $this->appendBatch($tableData, $fields);
+            $this->appendDuplicateAssignments([], $updateColumns, $columns);
+        } else {
+            $row = $this->appendRow($tableData, true, $fields);
+            $this->appendDuplicateAssignments($row, $updateColumns, null);
+        }
+    }
+
+    private static function isBatch(array $tableData, bool $batch): bool
+    {
+        $first = array_key_first($tableData);
+        return $batch || (is_int($first) && is_array($tableData[$first]));
+    }
+
+    /** @return array<string, string> */
+    private function appendBatch(array $tableData, ?array $fields): array
+    {
+        [$columns, $rows] = self::prepareBatch($tableData, $fields);
+        $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
+        $separator = '';
+        foreach ($rows as $row) {
+            $this->buffer->sql .= $separator . '(';
+            $this->appendPairs($row, $columns, true);
+            $this->buffer->sql .= ')';
+            $separator = ',';
+        }
+        return $columns;
+    }
+
+    private function appendRow(array $tableData, bool $isInsert, ?array $fields): array
+    {
         $tableData = self::filterRow($tableData, $fields);
         if (!$isInsert && $tableData === []) {
             throw new \InvalidArgumentException('UPDATE requires at least one assignment');
@@ -208,6 +236,11 @@ final class WriteCompiler
 
     public function appendDuplicate(mixed $tableData, mixed $updateColumns): void
     {
+        $this->appendDuplicateAssignments($tableData, $updateColumns, $this->batchColumns);
+    }
+
+    private function appendDuplicateAssignments(mixed $tableData, mixed $updateColumns, ?array $batchColumns): void
+    {
         if ($updateColumns === null || $updateColumns === []) { return; }
         $updates = [];
         foreach ($updateColumns as $key => $value) {
@@ -227,11 +260,11 @@ final class WriteCompiler
         $values = [];
         $incoming = [];
         foreach ($updates as $column => [$implicit, $value]) {
-            $columns[$column] = $this->batchColumns[$column] ?? TableReference::identifier($column);
+            $columns[$column] = $batchColumns[$column] ?? TableReference::identifier($column);
             if (!$implicit) {
                 $values[$column] = $value;
-            } elseif ($this->batchColumns !== null) {
-                if (!isset($this->batchColumns[$column])) {
+            } elseif ($batchColumns !== null) {
+                if (!isset($batchColumns[$column])) {
                     throw new \InvalidArgumentException('Implicit duplicate-update column must exist in every batch row');
                 }
                 $incoming[] = $column;
@@ -253,6 +286,6 @@ final class WriteCompiler
             }
         }
         $this->buffer->sql .= ' ON DUPLICATE KEY UPDATE ';
-        $this->appendPairs($values, $columns, false, $readQualifier, $this->batchColumns !== null);
+        $this->appendPairs($values, $columns, false, $readQualifier, $batchColumns !== null);
     }
 }

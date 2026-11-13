@@ -57,7 +57,20 @@ final class SelectPlanner
         ?array $fromSource,
         array $indexHints,
     ): SelectPlan {
-        $select = new SqlBuffer('', [], $tableName);
+        $select = self::selectBuffer($tableName, $columns, $options, $prefix, $fromSource, $indexHints);
+        return new SelectPlan($select->sql, $select->parameters, $select->tableName);
+    }
+
+    /** @param null|array{sql: string, params: array, alias: string} $fromSource */
+    public static function selectBuffer(
+        mixed $tableName,
+        mixed $columns,
+        array $options,
+        mixed $prefix,
+        ?array $fromSource,
+        array $indexHints,
+    ): SqlBuffer {
+        $select = new SqlBuffer('', tableName: $tableName);
         $column = SelectCompiler::columns($columns, $select);
         $table = $tableName;
         if ($fromSource !== null) {
@@ -76,13 +89,14 @@ final class SelectPlanner
             }
             $tableSql = TableReference::parse($table, $prefix);
         }
-        $sql = 'SELECT ' . QueryCompiler::modifierSql('SELECT', $options) . ' ' . $column . ' FROM ' . $tableSql
+        $select->sql = 'SELECT ' . QueryCompiler::modifierSql('SELECT', $options) . ' ' . $column . ' FROM ' . $tableSql
             . TableReference::indexHints($indexHints);
-        return new SelectPlan($sql, $select->parameters, $table);
+        $select->tableName = $table;
+        return $select;
     }
 
     /**
-     * 转换写时复制的状态副本；公开入口仍克隆自身并调用副本的 get()。
+     * 转换写时复制的状态副本，供 COUNT 编译内层 SELECT。
      * @param State $state
      * @return State
      */

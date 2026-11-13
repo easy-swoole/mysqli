@@ -44,12 +44,7 @@ final class Statement
 
     private function executeWithin(array $parameters, Deadline|float|null $timeout): array|bool
     {
-        if ($this->closed) {
-            throw new \LogicException('The prepared statement is closed');
-        }
-        if ($this->beforeExecute !== null) {
-            ($this->beforeExecute)();
-        }
+        $this->beginExecution();
         $result = $this->connection->executeWithDeadline($this, $parameters, $timeout);
         if ($this->afterExecute !== null) {
             ($this->afterExecute)($result);
@@ -74,16 +69,23 @@ final class Statement
 
     private function iterateWithin(array $parameters, Deadline|float|null $timeout): ResultStream
     {
-        if ($this->closed) {
-            throw new \LogicException('The prepared statement is closed');
-        }
-        if ($this->beforeExecute !== null) { ($this->beforeExecute)(); }
+        $this->beginExecution();
         $stream = $this->connection->iterateStatementWithDeadline($this, $parameters, $timeout);
         if ($this->afterExecute !== null) {
             $afterExecute = $this->afterExecute;
             $stream->onComplete(static fn() => $afterExecute(true));
         }
         return $stream;
+    }
+
+    private function beginExecution(): void
+    {
+        if ($this->closed) {
+            throw new \LogicException('The prepared statement is closed');
+        }
+        if ($this->beforeExecute !== null) {
+            ($this->beforeExecute)();
+        }
     }
 
     /**

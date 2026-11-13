@@ -15,33 +15,28 @@ final class SqlFormatter
     /** @internal 调试 SQL 使用构建时的引号规则。 */
     public static function renderWithQuoteMode(string $str, array $vals, bool $noBackslashEscapes): ?string
     {
-        $i = 0;
-        // 先匹配已引用的字面量及注释，再匹配实际占位符。
-        $strings = $noBackslashEscapes
-            ? <<<'REGEX'
-'(?:''|[^'])*'|"(?:""|[^"])*"
-REGEX
-            : <<<'REGEX'
-'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"
-REGEX;
-        $pattern = '~' . $strings . <<<'REGEX'
-|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
-REGEX;
-        return preg_replace_callback($pattern, static function (array $match) use ($vals, &$i, $noBackslashEscapes): string {
-            if ($match[0] !== '?' || !array_key_exists($i, $vals)) {
-                return $match[0];
-            }
-            $val = $vals[$i++];
-            if ($val === null) {
-                return 'NULL';
-            }
-            if (is_bool($val)) {
-                return (string)(int)$val;
-            }
-            if (is_int($val) || is_float($val)) {
-                return (string)$val;
-            }
-            return "'" . ($noBackslashEscapes ? str_replace("'", "''", $val) : addslashes($val)) . "'";
-        }, $str);
+        $index = 0;
+        $start = 0;
+        $result = '';
+        foreach (SqlScanner::tokens($str, '?', $noBackslashEscapes, skipLineComments: true) as $offset => $_) {
+            if (!array_key_exists($index, $vals)) { break; }
+            $result .= substr($str, $start, $offset - $start) . self::literal($vals[$index++], $noBackslashEscapes);
+            $start = $offset + 1;
+        }
+        return $result . substr($str, $start);
+    }
+
+    private static function literal(mixed $value, bool $noBackslashEscapes): string
+    {
+        if ($value === null) {
+            return 'NULL';
+        }
+        if (is_bool($value)) {
+            return (string)(int)$value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string)$value;
+        }
+        return "'" . ($noBackslashEscapes ? str_replace("'", "''", $value) : addslashes($value)) . "'";
     }
 }

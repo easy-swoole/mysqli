@@ -174,10 +174,22 @@ final class Authenticator
             return '';
         }
         return match ($plugin) {
-            'mysql_native_password' => Codec::xorBytes(sha1($password, true), sha1($scramble . sha1(sha1($password, true), true), true)),
-            'caching_sha2_password' => Codec::xorBytes(hash('sha256', $password, true), hash('sha256', hash('sha256', hash('sha256', $password, true), true) . $scramble, true)),
+            'mysql_native_password' => self::nativePasswordToken($password, $scramble),
+            'caching_sha2_password' => self::cachingSha2PasswordToken($password, $scramble),
             default => throw new Exception("Unsupported MySQL authentication plugin {$plugin}"),
         };
+    }
+
+    private static function nativePasswordToken(string $password, string $scramble): string
+    {
+        $firstHash = sha1($password, true);
+        return Codec::xorBytes($firstHash, sha1($scramble . sha1($firstHash, true), true));
+    }
+
+    private static function cachingSha2PasswordToken(string $password, string $scramble): string
+    {
+        $firstHash = hash('sha256', $password, true);
+        return Codec::xorBytes($firstHash, hash('sha256', hash('sha256', $firstHash, true) . $scramble, true));
     }
 
 }

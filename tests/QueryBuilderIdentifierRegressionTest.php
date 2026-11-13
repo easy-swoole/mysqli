@@ -30,6 +30,22 @@ SQL, $builder->getLastQuery());
         self::assertSame([42, "O'Reilly\\"], $builder->getLastBindParams());
     }
 
+    public function testDebugSqlAndListSplittingShareQuotedBoundaries(): void
+    {
+        $literal = "'prefix" . chr(92) . "\n" . "suffix,?''x'";
+        $list = $literal . ', ?';
+        self::assertSame([$literal, ' ?'], SqlList::items($list));
+        self::assertSame($literal, SqlList::first($list));
+        $builder = (new QueryBuilder())->raw('SELECT ' . $list, [42]);
+        self::assertSame('SELECT ' . $literal . ', 42', $builder->getLastQuery());
+        self::assertSame('SELECT ' . $list, $builder->getLastPrepareQuery());
+        self::assertSame([42], $builder->getLastBindParams());
+
+        $literal = "'" . str_repeat('a', 100000) . "?', `label?`";
+        $builder->raw('SELECT ' . $literal . ', ?', [42]);
+        self::assertSame('SELECT ' . $literal . ', 42', $builder->getLastQuery());
+    }
+
     #[DataProvider('tableReferences')]
     public function testTableReferencesPreservePrefixAndAliasRules(string $table, string $prefix, string $expected): void
     {

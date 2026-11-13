@@ -235,7 +235,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。计数与数据分支分别从原模板克隆一次。计数分支的内层 SELECT 是内部编译步骤，只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。子类定制内层 SELECT 的构建或结果读取时，这些方法在计数分支的独立副本上调用。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -1279,7 +1279,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
 | `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
-| `SelectPlanner` / `SelectPlan` | 规划 SELECT 语句头、COUNT 来源状态和聚合表达式 |
+| `SelectPlanner` | 规划 SELECT 语句头、COUNT 来源状态和聚合表达式。SELECT 头和后续子句共享 SQL 缓冲 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
 | `QueryCompiler` | 构建写入语句头，按语句类型和绑定顺序协调子句编译，生成 SELECT 行锁及事务标记 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
@@ -1288,6 +1288,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
 | `SqlList` | 在引号、块注释和嵌套表达式之外解析选择列表 |
+| `SqlScanner` | 为列表拆分和调试 SQL 共用引号边界识别 |
 | `Pagination` | 分页参数校验与大整数总数、末页计算 |
 | `ExpressionFactory` | 保持 now/inc/dec/not/func 的既有表达式格式 |
 | `SqlFormatter` | 仅生成调试展示 SQL，不参与数据库执行 |

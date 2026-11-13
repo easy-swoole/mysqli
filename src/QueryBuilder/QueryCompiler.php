@@ -103,11 +103,7 @@ final class QueryCompiler
                 || $parts->ordering !== [] || $numRows !== null) {
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
             }
-            $write = new WriteCompiler($buffer, null);
-            $inserted = $write->appendData($tableData, true, $fields, $batch);
-            if ($statement === 'INSERT') {
-                $write->appendDuplicate($inserted, $parts->updateColumns);
-            }
+            (new WriteCompiler($buffer, null))->appendInsert($tableData, $fields, $batch, $parts->updateColumns);
             return null;
         }
 

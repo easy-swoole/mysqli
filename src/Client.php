@@ -75,7 +75,7 @@ class Client
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {
-            $statement = $execution->ownStatement($this->prepareForExecution($sql, $execution->deadline()));
+            $statement = $this->prepareForExecution($sql, $execution);
             return $statement->executeWithDeadline($parameters, $execution->deadline());
         });
     }
@@ -92,7 +92,7 @@ class Client
         $execution = $this->beginExecution($timeout);
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
-        $statement = $execution->ownStatement($this->prepareForExecution($sql, $execution->deadline()));
+        $statement = $this->prepareForExecution($sql, $execution);
         try {
             $stream = $statement->iterateWithDeadline($parameters, $execution->deadline());
         } catch (\Throwable $error) {
@@ -155,14 +155,16 @@ class Client
      */
     public function prepare(string $sql, ?float $timeout = null): Statement
     {
-        return $this->prepareWithDeadline($sql, $this->queryDeadline($timeout));
+        return $this->prepareWithDeadline($sql, $this->queryDeadline($timeout), fn() => $this->resetMetadata());
     }
 
-    private function prepareForExecution(string $sql, Deadline $deadline): Statement
+    private function prepareForExecution(string $sql, ExecutionContext $execution): Statement
     {
-        return $this->overrides('prepare')
+        $deadline = $execution->deadline();
+        $statement = $this->overrides('prepare')
             ? $this->prepare($sql, $deadline->remaining())
-            : $this->prepareWithDeadline($sql, $deadline);
+            : $this->prepareWithDeadline($sql, $deadline, null);
+        return $execution->ownStatement($statement);
     }
 
     /** 只有实际覆写公开方法时才将截止时间转换成剩余秒数。 */
@@ -172,10 +174,10 @@ class Client
             && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() !== self::class;
     }
 
-    private function prepareWithDeadline(string $sql, Deadline $deadline): Statement
+    private function prepareWithDeadline(string $sql, Deadline $deadline, ?callable $beforeExecute): Statement
     {
         return $this->connection()->prepareWithDeadline($sql, $deadline)->setExecutionCallbacks(
-            fn() => $this->resetMetadata(),
+            $beforeExecute,
             fn() => $this->captureMetadata(),
         );
     }

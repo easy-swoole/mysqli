@@ -574,15 +574,19 @@ class QueryBuilder
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
         $this->readyToPublish = null;
-        $columns ??= $this->pending['fields'] ?? '*';
-        $plan = SelectPlanner::selectHead(
-            $tableName, $columns, $this->pending['queryOptions'], $this->prefix,
-            $this->pending['fromSource'], ['FORCE' => $this->pending['forceIndexes'],
-                'USE' => $this->pending['useIndexes'], 'IGNORE' => $this->pending['ignoreIndexes']],
-        );
-        $this->pending['tableName'] = $plan->tableName;
-        $buffer = new SqlBuffer($plan->sql, $plan->parameters, $plan->tableName);
+        $buffer = $this->selectBuffer($this->pending, $tableName, $columns);
+        $this->pending['tableName'] = $buffer->tableName;
         return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
+    }
+
+    /** @param State $state */
+    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null): SqlBuffer
+    {
+        return SelectPlanner::selectBuffer(
+            $tableName, $columns ?? $state['fields'] ?? '*', $state['queryOptions'], $this->prefix,
+            $state['fromSource'], ['FORCE' => $state['forceIndexes'],
+                'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
+        );
     }
 
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
@@ -590,19 +594,39 @@ class QueryBuilder
     {
         // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
         $quotedAlias = TableReference::identifier($alias);
-        if ($this->countOnSnapshot) {
-            $this->countOnSnapshot = false;
-            [$sql, $parameters] = $this->compileCountOnSnapshot($tableName, $quotedAlias);
+        $onSnapshot = $this->countOnSnapshot;
+        $this->countOnSnapshot = false;
+        if (static::class === self::class || ($onSnapshot && !$this->overridesCountSource())) {
+            $state = SelectPlanner::countSourceWithQuoteMode($this->pending, $this->noBackslashEscapes);
+            $buffer = $this->selectBuffer($state, $tableName);
+            $query = $this->compileQuery($state, $buffer, 'SELECT', null);
+            $sourceSql = $query->sql;
+            $parameters = $query->parameters;
         } else {
             $source = clone $this;
-            [$sql, $parameters] = $source->compileCountSource($tableName, $quotedAlias);
+            if ($onSnapshot) {
+                // 分页模板已应用过克隆钩子，内层副本沿用计数分支的 SELECT 配置。
+                $source->pending = $this->pending;
+                $source->prefix = $this->prefix;
+                $source->noBackslashEscapes = $this->noBackslashEscapes;
+            }
+            $source->pending = SelectPlanner::countSourceWithQuoteMode($source->pending, $source->noBackslashEscapes);
+            $source->buildingCountSource = $onSnapshot;
+            try {
+                $source->get($tableName);
+                $sourceSql = $source->getLastPrepareQuery();
+                $parameters = $source->getLastBindParams();
+            } finally {
+                $source->buildingCountSource = false;
+            }
         }
+        $sql = SelectPlanner::countSql($sourceSql, $quotedAlias);
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
         return $this->raw($sql, $parameters);
     }
 
-    /** @internal 从模板创建计数查询，仅触发一次克隆。 */
+    /** @internal 从模板创建计数查询。 */
     public function countQuery(?string $table, string $alias): QueryBuilder
     {
         $source = clone $this;
@@ -614,35 +638,15 @@ class QueryBuilder
         }
     }
 
-    /** @return array{string, array} */
-    private function compileCountSource(mixed $table, string $quotedAlias): array
+    /** 子类定制 SELECT 或读取构建结果时，在独立副本上调用这些方法。 */
+    private function overridesCountSource(): bool
     {
-        $this->pending = SelectPlanner::countSourceWithQuoteMode($this->pending, $this->noBackslashEscapes);
-        $this->get($table);
-        return [SelectPlanner::countSql($this->getLastPrepareQuery(), $quotedAlias), $this->getLastBindParams()];
-    }
-
-    /** @return array{string, array} */
-    private function compileCountOnSnapshot(mixed $table, string $quotedAlias): array
-    {
-        // 内层 SELECT 是计数计划的中间结果，最终 COUNT 仍从原发布状态开始。
-        $pending = $this->pending;
-        $compiled = $this->compiled;
-        $readyToPublish = $this->readyToPublish;
-        $lastBuilt = $this->lastBuilt;
-        $lastBuiltNoBackslashEscapes = $this->lastBuiltNoBackslashEscapes;
-        $buildingCountSource = $this->buildingCountSource;
-        $this->buildingCountSource = true;
-        try {
-            return $this->compileCountSource($table, $quotedAlias);
-        } finally {
-            $this->pending = $pending;
-            $this->compiled = $compiled;
-            $this->readyToPublish = $readyToPublish;
-            $this->lastBuilt = $lastBuilt;
-            $this->lastBuiltNoBackslashEscapes = $lastBuiltNoBackslashEscapes;
-            $this->buildingCountSource = $buildingCountSource;
+        foreach (['get', 'getLastPrepareQuery', 'getLastBindParams'] as $method) {
+            if ((new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() !== self::class) {
+                return true;
+            }
         }
+        return false;
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */
@@ -1039,18 +1043,35 @@ class QueryBuilder
         bool $batch = false,
         ?array $fields = null
     ): QueryBuilder {
-        $parts = PendingQuery::parts($this->pending);
+        return $this->publishBuild($this->compileQuery($this->pending, $buffer, $statement, $numRows, $tableData, $batch, $fields));
+    }
+
+    /** @param State $state */
+    private function compileQuery(
+        array $state,
+        SqlBuffer $buffer,
+        string $statement,
+        mixed $numRows,
+        mixed $tableData = null,
+        bool $batch = false,
+        ?array $fields = null
+    ): CompiledQuery {
+        $parts = PendingQuery::parts($state);
         $operation = (new QueryCompiler())->compile(
-            $buffer, $parts, $statement, $numRows, $tableData, $fields ?? $this->pending['fields'], $batch
+            $buffer, $parts, $statement, $numRows, $tableData, $fields ?? $state['fields'], $batch
         );
         $needsParentheses = $statement !== 'SELECT' || $parts->ordering !== [] || $numRows !== null
             || $parts->unions !== [] || $parts->forUpdate || $parts->lockInShareMode;
-        return $this->completeBuild($buffer->sql, $buffer->parameters, $operation, $needsParentheses);
+        return new CompiledQuery($buffer->sql, $buffer->parameters, $state['queryOptions'], $operation, $needsParentheses);
     }
 
     private function completeBuild(string $sql, array $parameters, ?int $operation, bool $needsParentheses = true): QueryBuilder
     {
-        $query = new CompiledQuery($sql, $parameters, $this->pending['queryOptions'], $operation, $needsParentheses);
+        return $this->publishBuild(new CompiledQuery($sql, $parameters, $this->pending['queryOptions'], $operation, $needsParentheses));
+    }
+
+    private function publishBuild(CompiledQuery $query): QueryBuilder
+    {
         $this->lastBuilt = $query;
         $this->lastBuiltNoBackslashEscapes = $this->noBackslashEscapes;
         $this->readyToPublish = $query;

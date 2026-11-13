@@ -24,11 +24,13 @@ final class SqlList
     public static function splitItems(string $sql, bool $noBackslashEscapes): array
     {
         $items = [];
-        while ($sql !== '') {
-            $first = self::firstItem($sql, $noBackslashEscapes);
-            $items[] = $first;
-            if (strlen($first) >= strlen($sql)) { break; }
-            $sql = substr($sql, strlen($first) + 1);
+        $start = 0;
+        foreach (self::separators($sql, $noBackslashEscapes) as $offset) {
+            $items[] = substr($sql, $start, $offset - $start);
+            $start = $offset + 1;
+        }
+        if ($start < strlen($sql)) {
+            $items[] = substr($sql, $start);
         }
         return $items;
     }
@@ -42,38 +44,24 @@ final class SqlList
     /** @internal 按调用方指定的反斜杠规则读取首项。 */
     public static function firstItem(string $sql, bool $noBackslashEscapes): string
     {
-        $length = strlen($sql);
+        foreach (self::separators($sql, $noBackslashEscapes) as $offset) {
+            return substr($sql, 0, $offset);
+        }
+        return $sql;
+    }
+
+    /** @return \Generator<int, int> */
+    private static function separators(string $sql, bool $noBackslashEscapes): \Generator
+    {
         $depth = 0;
-        $quote = null;
-        $blockComment = false;
-        for ($position = 0; $position < $length; $position++) {
-            $character = $sql[$position];
-            $next = $position + 1 < $length ? $sql[$position + 1] : null;
-            if ($blockComment) {
-                if ($character === '*' && $next === '/') { $blockComment = false; $position++; }
-                continue;
-            }
-            if ($quote !== null) {
-                if (!$noBackslashEscapes && $character === '\\' && $quote !== '`') { $position++; continue; }
-                if ($character === $quote) {
-                    if ($next === $quote) { $position++; }
-                    else { $quote = null; }
-                }
-                continue;
-            }
-            if ($character === "'" || $character === '"' || $character === '`') {
-                $quote = $character;
-            } elseif ($character === '/' && $next === '*') {
-                $blockComment = true;
-                $position++;
-            } elseif ($character === '(') {
+        foreach (SqlScanner::tokens($sql, '(),', $noBackslashEscapes) as $offset => $character) {
+            if ($character === '(') {
                 $depth++;
             } elseif ($character === ')') {
                 $depth = max(0, $depth - 1);
-            } elseif ($character === ',' && $depth === 0) {
-                return substr($sql, 0, $position);
+            } elseif ($depth === 0) {
+                yield $offset;
             }
         }
-        return $sql;
     }
 }
