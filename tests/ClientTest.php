@@ -33,6 +33,15 @@ final class ClientTest extends TestCase
         $this->client = null;
     }
 
+    public function testSetCharsetChangesTheCurrentSessionCharset(): void
+    {
+        $connection = $this->client->mysqlClient();
+        self::assertTrue($connection->set_charset('latin1'));
+        self::assertSame([['charset' => 'latin1']], $connection->query('SELECT @@character_set_connection AS charset'));
+        self::assertTrue($connection->set_charset('utf8mb4'));
+        self::assertSame([['charset' => 'utf8mb4']], $connection->query('SELECT @@character_set_connection AS charset'));
+    }
+
     public function testRawQueryAgainstTemporaryFixture(): void
     {
         $rows = $this->client->rawQuery('SELECT id, name FROM student ORDER BY id LIMIT 1');

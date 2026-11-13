@@ -362,8 +362,7 @@ final class Connection
      */
     public function set_charset(string $charset): bool
     {
-        $timeout = func_get_args()[1] ?? null;
-        return $this->query(self::charsetSql($charset), $timeout) === true;
+        return $this->query(self::charsetSql($charset)) === true;
     }
 
     private static function charsetSql(string $charset): string

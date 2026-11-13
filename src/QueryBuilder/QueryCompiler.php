@@ -175,7 +175,7 @@ final class QueryCompiler
         return 'SELECT ' . self::modifierSql('SELECT', $options) . ' ' . $projection;
     }
 
-    /** @param 'SELECT'|'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
+    /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
     public function compile(
         SqlBuffer $buffer,
         QueryParts $parts,
@@ -185,12 +185,6 @@ final class QueryCompiler
         ?array $fields,
         bool $batch
     ): ?int {
-        if ($statement === 'SELECT') {
-            $conditions = new ConditionCompiler($buffer);
-            $select = new SelectCompiler($buffer, $conditions);
-            $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, false);
-            return $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
-        }
         if ($parts->groups !== [] || $parts->having !== [] || $parts->unions !== []
             || $parts->forUpdate || $parts->lockInShareMode) {
             throw new \InvalidArgumentException('GROUP BY, HAVING, UNION and row locks require SELECT');

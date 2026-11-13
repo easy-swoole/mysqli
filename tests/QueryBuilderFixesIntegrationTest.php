@@ -141,6 +141,40 @@ SQL;
             $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 1'));
     }
 
+    public function testUpsertUsesOverriddenDuplicateAndBatchInsertMethods(): void
+    {
+        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_audit_scores (id INT PRIMARY KEY, score INT)');
+        $this->client->rawQuery('INSERT INTO qb_fix_audit_scores VALUES (1, 51), (2, 72)');
+        $score = QueryBuilder::subQuery()->where('id', 1)->get('qb_fix_audit_scores', null, 'score');
+        $builder = new class($score) extends QueryBuilder {
+            public array $calls = [];
+
+            public function __construct(private readonly QueryBuilder $score) {}
+
+            public function onDuplicate(mixed $updateColumns): QueryBuilder
+            {
+                $this->calls[] = 'onDuplicate';
+                return parent::onDuplicate($updateColumns + ['score' => $this->score]);
+            }
+
+            public function insertAll(mixed $tableName, mixed $insertData, mixed $option = []): QueryBuilder
+            {
+                $this->calls[] = 'insertAll';
+                $this->score->where('id', 2)->get('qb_fix_audit_scores', null, 'score');
+                return parent::insertAll($tableName, $insertData, $option);
+            }
+        };
+        $builder->upsert('qb_fix_orders', [
+            ['id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0],
+        ], ['status' => 'adjusted']);
+
+        self::assertSame(['onDuplicate', 'insertAll'], $builder->calls);
+        self::assertSame([1, 1, 'Alice', 'paid', 0, 'adjusted', 1], $builder->getLastBindParams());
+        self::assertTrue($this->client->query($builder));
+        self::assertSame([['score' => 51, 'status' => 'adjusted']],
+            $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 1'));
+    }
+
     public function testDistinctRollupCountKeepsTheOriginalProjection(): void
     {
         $this->client->rawQuery("SET SESSION sql_mode = ''");

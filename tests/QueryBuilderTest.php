@@ -216,10 +216,31 @@ final class QueryBuilderTest extends TestCase
             $this->builder->get('items');
             self::assertSame('SELECT * FROM `items`', $this->normalizedSql($this->builder));
         }
-        $this->builder->skipLocked()->nowait()->get('items');
-        self::assertStringEndsWith('FOR UPDATE NOWAIT', $this->builder->getLastPrepareQuery());
         $this->builder->skipLocked()->forUpdate(false)->get('items');
         self::assertSame('SELECT * FROM `items`', $this->normalizedSql($this->builder));
+    }
+
+    public function testLockWaitPoliciesConflictInEitherOrder(): void
+    {
+        foreach ([
+            static fn(QueryBuilder $q) => $q->skipLocked()->nowait(),
+            static fn(QueryBuilder $q) => $q->nowait()->skipLocked(),
+            static fn(QueryBuilder $q) => $q->setSelectLockOption(' skip locked ')->selectForUpdate(true, 'nowait'),
+            static fn(QueryBuilder $q) => $q->nowait()->setSelectLockOption('SKIP LOCKED'),
+        ] as $configure) {
+            $builder = new QueryBuilder();
+            try {
+                $configure($builder);
+                self::fail('Expected conflicting wait policies to be rejected');
+            } catch (\InvalidArgumentException $error) {
+                self::assertSame('NOWAIT and SKIP LOCKED cannot be combined', $error->getMessage());
+            }
+            $builder->reset()->nowait()->get('items');
+            self::assertStringEndsWith('FOR UPDATE NOWAIT', $builder->getLastPrepareQuery());
+        }
+
+        $this->builder->skipLocked()->setSelectLockOption('')->nowait()->get('items');
+        self::assertStringEndsWith('FOR UPDATE NOWAIT', $this->builder->getLastPrepareQuery());
     }
 
     public function testLiteralConditionValuesAreAlwaysBound(): void

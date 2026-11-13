@@ -447,9 +447,10 @@ class QueryBuilder
             throw new \TypeError('FOR UPDATE flag must be a boolean');
         }
         if ($isLock) {
+            $waitOption = $option === null ? null : $this->lockWaitOption($option);
             $this->setQueryOption(['FOR UPDATE']);
-            if ($option !== null) {
-                $this->pending['selectLockOption'] = $this->lockWaitOption($option);
+            if ($waitOption !== null) {
+                $this->pending['selectLockOption'] = $waitOption;
             }
         } else {
             $this->pending['forUpdate'] = false;
@@ -780,7 +781,8 @@ class QueryBuilder
     public function upsert(mixed $tableName, array $rows, array $updateColumns): QueryBuilder
     {
         if ($updateColumns === []) { throw new \InvalidArgumentException('Upsert requires update columns'); }
-        return $this->compileWrite('INSERT', $tableName, $rows, batch: true, updateColumns: $updateColumns);
+        $this->onDuplicate($updateColumns);
+        return $this->insertAll($tableName, $rows);
     }
 
     /** REPLACE插入 */
@@ -1071,9 +1073,15 @@ class QueryBuilder
 
     private function lockWaitOption(LockWaitPolicy|string $option): string
     {
-        if ($option instanceof LockWaitPolicy) { return $option->value; }
-        // 保留旧 SQL 尾部片段（例如 OF table_name）；仅规范化已知策略。
-        return LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option;
+        // 自定义 SQL 尾部由调用方指定，固定等待策略统一按枚举值比较。
+        $next = $option instanceof LockWaitPolicy ? $option->value
+            : (LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option);
+        $current = $this->pending['selectLockOption'];
+        if (($current === LockWaitPolicy::Nowait->value && $next === LockWaitPolicy::SkipLocked->value)
+            || ($current === LockWaitPolicy::SkipLocked->value && $next === LockWaitPolicy::Nowait->value)) {
+            throw new \InvalidArgumentException('NOWAIT and SKIP LOCKED cannot be combined');
+        }
+        return $next;
     }
 
     // 语句编译与结果发布
@@ -1086,7 +1094,6 @@ class QueryBuilder
         mixed $numRows = null,
         bool $batch = false,
         ?array $fields = null,
-        ?array $updateColumns = null,
     ): QueryBuilder {
         if ($this->isSubQuery) {
             $operation = $statement === 'INSERT' || $statement === 'REPLACE' ? 'INSERT or REPLACE' : $statement;
@@ -1100,7 +1107,6 @@ class QueryBuilder
         $this->pending['tableName'] = $reference['name'];
         $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
         $state = $this->pending;
-        $state['updateColumns'] = $updateColumns ?? $state['updateColumns'];
         (new QueryCompiler())->compile(
             $buffer, PendingQuery::parts($state), $statement, $numRows ?? $state['limit'],
             $tableData, $fields ?? $state['fields'], $batch
