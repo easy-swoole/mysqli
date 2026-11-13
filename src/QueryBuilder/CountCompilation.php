@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\QueryBuilder;
 
-/** @internal COUNT 构建和发布的范围，结束时一并解除钩子内副本的临时状态。 */
+/** @internal 记录 get() 钩子内编译的计数来源，按实际返回的查询选取。 */
 final class CountCompilation
 {
     public bool $active = true;
-    public bool $skipResetHook = false;
 
-    /** @param array{bool, bool}|null $quoteMode */
-    public function __construct(public readonly ?array $quoteMode = null) {}
+    /** @var \WeakMap<CompiledQuery, CompiledQuery> */
+    public readonly \WeakMap $sources;
+
+    public function __construct(public readonly bool $skipResetHook)
+    {
+        $this->sources = new \WeakMap();
+    }
 }

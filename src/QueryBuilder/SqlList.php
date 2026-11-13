@@ -11,58 +11,8 @@ final class SqlList
         return '(' . $sql . ')';
     }
 
-    /**
-     * 仅在顶层逗号处分隔，并保留每个表达式的原始文本。
-     * @return list<string>
-     */
-    public static function items(string $sql): array
-    {
-        return self::splitItems($sql, false);
-    }
-
-    /** @internal 按调用方指定的反斜杠规则拆分列表。 */
-    public static function splitItems(string $sql, bool $noBackslashEscapes): array
-    {
-        return self::splitForMode($sql, $noBackslashEscapes, false);
-    }
-
-    /** @return list<string> */
-    public static function splitForMode(string $sql, bool $noBackslashEscapes, bool $ansiQuotes): array
-    {
-        $items = [];
-        $start = 0;
-        foreach (self::separators($sql, $noBackslashEscapes, $ansiQuotes) as $offset) {
-            $items[] = substr($sql, $start, $offset - $start);
-            $start = $offset + 1;
-        }
-        if ($start < strlen($sql)) {
-            $items[] = substr($sql, $start);
-        }
-        return $items;
-    }
-
     /** 保留首个顶层列表项及其原有空白和别名。 */
-    public static function first(string $sql): string
-    {
-        return self::firstItem($sql, false);
-    }
-
-    /** @internal 按调用方指定的反斜杠规则读取首项。 */
-    public static function firstItem(string $sql, bool $noBackslashEscapes): string
-    {
-        return self::firstForMode($sql, $noBackslashEscapes, false);
-    }
-
     public static function firstForMode(string $sql, bool $noBackslashEscapes, bool $ansiQuotes): string
-    {
-        foreach (self::separators($sql, $noBackslashEscapes, $ansiQuotes) as $offset) {
-            return substr($sql, 0, $offset);
-        }
-        return $sql;
-    }
-
-    /** @return \Generator<int, int> */
-    private static function separators(string $sql, bool $noBackslashEscapes, bool $ansiQuotes): \Generator
     {
         $depth = 0;
         foreach (SqlScanner::tokensForMode($sql, '(),', $noBackslashEscapes, $ansiQuotes) as $offset => $character) {
@@ -71,8 +21,9 @@ final class SqlList
             } elseif ($character === ')') {
                 $depth = max(0, $depth - 1);
             } elseif ($depth === 0) {
-                yield $offset;
+                return substr($sql, 0, $offset);
             }
         }
+        return $sql;
     }
 }

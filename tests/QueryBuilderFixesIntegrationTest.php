@@ -328,6 +328,84 @@ SQL;
         self::assertNull($builder->getLastPrepareQuery());
     }
 
+    public function testPaginationCountsOnlyTheLatestOrdersSelectedByTheSubquery(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $latest = (clone $this)->orderByDesc('id')->latestOrders($tableName);
+                $this->reorder()->orderByAsc('s.id')->fromSub($latest, 's');
+                return parent::get(null, $numRows, ['s.id']);
+            }
+
+            private function latestOrders(mixed $tableName): QueryBuilder
+            {
+                return parent::get($tableName, 2);
+            }
+        };
+        $builder->where('score', 10, '>=');
+        $count = (clone $builder)->count('qb_fix_orders');
+        self::assertMatchesRegularExpression('/SELECT\s+\*\s+FROM.*ORDER BY id DESC\s+LIMIT 2\)/', $count->getLastPrepareQuery());
+        self::assertSame([10, 10], $count->getLastBindParams());
+        self::assertSame([['aggregate' => 2]], $this->client->query($count));
+        $page = $this->client->paginate($builder, 'qb_fix_orders', 1, 2);
+        self::assertSame(2, $page['total']);
+        self::assertSame(2, $page['lastPage']);
+        self::assertSame([['id' => 4]], $page['items']);
+    }
+
+    public function testGetOneUsesTheDefaultProjectionOfTheOrderBuilder(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                if ($columns === null && $this->getField() === null) {
+                    $this->fields(['id', 'status']);
+                }
+                return parent::get($tableName, $numRows, $columns);
+            }
+        };
+        $builder->where('tenantId', 1)->orderByAsc('id');
+        $one = (clone $builder)->getOne('qb_fix_orders');
+        self::assertSame([['id' => 1, 'status' => 'paid+']], $this->client->query($one));
+        $explicit = $builder->getOne('qb_fix_orders', 'name');
+        self::assertSame([['name' => 'Alice']], $this->client->query($explicit));
+    }
+
+    public function testCountIgnoresTopLevelOptionsAndLimitAddedByGetOverride(): void
+    {
+        $builder = new class extends QueryBuilder {
+            private bool $hasLimit = false;
+
+            public function limit(int $one, ?int $two = null): QueryBuilder
+            {
+                $this->hasLimit = true;
+                return parent::limit($one, $two);
+            }
+
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $this->setQueryOption(['SQL_BUFFER_RESULT', 'HIGH_PRIORITY'])->orderByAsc('id');
+                if (!$this->hasLimit) {
+                    $numRows ??= 1;
+                }
+                return parent::get($tableName, $numRows, 'id');
+            }
+        };
+        $builder->where('tenantId', 1);
+        $count = (clone $builder)->count('qb_fix_orders');
+        self::assertSame([['aggregate' => 2]], $this->client->query($count));
+        $sql = $count->getLastPrepareQuery();
+        foreach (['HIGH_PRIORITY', 'SQL_BUFFER_RESULT', 'ORDER BY'] as $clause) {
+            self::assertStringNotContainsString($clause, $sql);
+        }
+        self::assertSame(1, substr_count($sql, 'LIMIT'));
+        $page = $this->client->paginate($builder, 'qb_fix_orders', 1, 2);
+        self::assertSame(2, $page['total']);
+        self::assertSame(2, $page['lastPage']);
+        self::assertSame([['id' => 2]], $page['items']);
+    }
+
     public function testCountAndPaginationKeepTopLevelSelectOptionsOutOfTheCountSource(): void
     {
         $table = 'qb_fix_orders';
@@ -431,6 +509,40 @@ SQL;
             self::assertSame([['id'=>4]],$statement->execute([3]));
         } finally {$statement->close();}
         self::assertSame([['value'=>1]],iterator_to_array($this->client->rawIterate('SELECT 1 AS value')));
+    }
+
+    public function testCompleteServerErrorInAStreamKeepsTheTransactionUsable(): void
+    {
+        $connection = $this->client->mysqlClient();
+        $calls = 0;
+        $this->client->onQuery(static function () use (&$calls): void { $calls++; });
+        $sql = "SELECT IF(id=1, 'ok', JSON_EXTRACT(CONCAT('bad', id), '$')) AS value"
+            . ' FROM (SELECT 1 AS id UNION ALL SELECT 2) s';
+        self::assertTrue($connection->begin_transaction());
+        try {
+            foreach ([fn() => $this->client->rawIterate($sql),
+                fn() => $this->client->iterate((new QueryBuilder())->raw($sql))] as $start) {
+                $stream = $start();
+                $rows = [];
+                try {
+                    foreach ($stream as $row) { $rows[] = $row; }
+                    self::fail('Expected MySQL JSON error');
+                } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                    self::assertSame(3141, $error->getCode());
+                }
+                self::assertSame([['value' => 'ok']], $rows);
+                self::assertTrue($stream->isClosed());
+                self::assertFalse($stream->isComplete());
+                self::assertFalse($connection->isBusy());
+                self::assertTrue($connection->inTransaction());
+                self::assertFalse($connection->isTransactionLost());
+                self::assertTrue($this->client->ping());
+                self::assertNull($this->client->getLastAffectRows());
+            }
+            self::assertSame(0, $calls);
+        } finally {
+            $connection->rollback();
+        }
     }
 
     public function testEarlyStreamExitPreservesTransactionLostProtection(): void

@@ -34,8 +34,7 @@ SQL, $builder->getLastQuery());
     {
         $literal = "'prefix" . chr(92) . "\n" . "suffix,?''x'";
         $list = $literal . ', ?';
-        self::assertSame([$literal, ' ?'], SqlList::items($list));
-        self::assertSame($literal, SqlList::first($list));
+        self::assertSame($literal, SqlList::firstForMode($list, false, false));
         $builder = (new QueryBuilder())->raw('SELECT ' . $list, [42]);
         self::assertSame('SELECT ' . $literal . ', 42', $builder->getLastQuery());
         self::assertSame('SELECT ' . $list, $builder->getLastPrepareQuery());
@@ -146,7 +145,7 @@ SQL, $builder->getLastQuery());
     #[DataProvider('sqlLists')]
     public function testFirstSqlListItemIgnoresNestedAndQuotedCommas(string $list, string $expected): void
     {
-        self::assertSame($expected, SqlList::first($list));
+        self::assertSame($expected, SqlList::firstForMode($list, false, false));
     }
 
     public static function sqlLists(): array

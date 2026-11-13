@@ -7213,50 +7213,6 @@
             "final": true,
             "abstract": false,
             "methods": {
-                "first": {
-                    "visibility": "public",
-                    "static": true,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "sql",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "string"
-                            ]
-                        }
-                    ],
-                    "returnType": [
-                        "string"
-                    ]
-                },
-                "items": {
-                    "visibility": "public",
-                    "static": true,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "sql",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "string"
-                            ]
-                        }
-                    ],
-                    "returnType": [
-                        "array"
-                    ]
-                },
                 "parenthesized": {
                     "visibility": "public",
                     "static": true,

@@ -41,6 +41,8 @@ class QueryBuilder
     // null 为直接调用 count()，false 为可直接编译的分页副本。
     private QueryBuilder|false|null $countSource = null;
     private ?CountCompilation $countCompilation = null;
+    /** @var (\Closure(): (array{bool, bool}|null))|null */
+    private ?\Closure $countPublicationQuoteMode = null;
     private bool $noBackslashEscapes = false;
     private bool $ansiQuotes = false;
     private ?CompiledQuery $readyToPublish = null;
@@ -576,20 +578,34 @@ class QueryBuilder
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
         $this->readyToPublish = null;
-        $scope = $this->countCompilation;
-        $forCount = $scope?->active && $scope->quoteMode === null;
-        $buffer = $this->selectBuffer($this->pending, $tableName, $columns, $forCount);
+        $buffer = $this->selectBuffer($this->pending, $tableName, $columns);
         $this->pending['tableName'] = $buffer->tableName;
-        return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
+        $scope = $this->countCompilation;
+        if (!$scope?->active) {
+            return $this->compilePending($buffer, 'SELECT', $numRows ?? $this->pending['limit']);
+        }
+
+        // 钩子内的 SELECT 照常构建，另存可用于计数的版本。返回后才确定使用哪一条。
+        $countState = SelectPlanner::countSource($this->pending);
+        $countColumns = $columns ?? $countState['fields'] ?? SelectPlanner::countDefaultColumns($countState);
+        $buffer->countSource = $this->selectBuffer($countState, $tableName, $countColumns);
+        $query = $this->compileQuery($this->pending, $buffer, 'SELECT', $numRows ?? $this->pending['limit']);
+        $scope->sources[$query] = CompiledQuery::fromBuffer($buffer->countSource, $countState['queryOptions'], null, $query->quoteMode);
+        return $this->publishBuild($query);
+    }
+
+    private function compileCountSelect(mixed $tableName, mixed $columns = null): CompiledQuery
+    {
+        $state = SelectPlanner::countSource($this->pending);
+        $columns ??= $state['fields'] ?? SelectPlanner::countDefaultColumns($state);
+        return $this->compileQuery($state, $this->selectBuffer($state, $tableName, $columns), 'SELECT', null);
     }
 
     /** @param State $state */
-    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null, bool $forCount = false): SqlBuffer
+    private function selectBuffer(array $state, mixed $tableName, mixed $columns = null): SqlBuffer
     {
-        // 等子类 get() 确定投影后，再决定普通行计数的默认列。
-        $columns ??= $state['fields'] ?? ($forCount ? SelectPlanner::countDefaultColumns($state) : '*');
         return SelectPlanner::selectBuffer(
-            $tableName, $columns, $state['queryOptions'], $this->prefix,
+            $tableName, $columns ?? $state['fields'] ?? '*', $state['queryOptions'], $this->prefix,
             $state['fromSource'], ['FORCE' => $state['forceIndexes'],
                 'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
         );
@@ -606,14 +622,15 @@ class QueryBuilder
         $sql = SelectPlanner::countSql($inner->sql, $quotedAlias);
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
-        $previousCompilation = $this->countCompilation;
-        $publication = new CountCompilation($inner->quoteMode);
-        $this->countCompilation = $publication;
+        $previousQuoteMode = $this->countPublicationQuoteMode;
+        $quoteMode = $inner->quoteMode;
+        // raw() 钩子返回后，钩子内创建的副本也不再使用临时引号模式。
+        $this->countPublicationQuoteMode = static function () use (&$quoteMode): ?array { return $quoteMode; };
         try {
             return $this->raw($sql, $inner->parameters);
         } finally {
-            $publication->active = false;
-            $this->countCompilation = $previousCompilation;
+            $quoteMode = null;
+            $this->countPublicationQuoteMode = $previousQuoteMode;
         }
     }
 
@@ -636,8 +653,7 @@ class QueryBuilder
     private function countSelectResult(mixed $tableName, QueryBuilder|false|null $source): CompiledQuery
     {
         if (static::class === self::class || $source === false) {
-            $state = SelectPlanner::countSource($this->pending);
-            return $this->compileQuery($state, $this->selectBuffer($state, $tableName, forCount: true), 'SELECT', null);
+            return $this->compileCountSelect($tableName);
         }
 
         if ($source === $this) {
@@ -656,15 +672,19 @@ class QueryBuilder
 
     private function compileCountSource(mixed $tableName, bool $paging): CompiledQuery
     {
-        $this->pending = SelectPlanner::countSource($this->pending);
         $previousCompilation = $this->countCompilation;
-        $compilation = new CountCompilation();
-        $compilation->skipResetHook = $paging;
+        $compilation = new CountCompilation($paging);
         $this->countCompilation = $compilation;
         try {
             $source = $this->get($tableName);
-            return new CompiledQuery($source->getLastPrepareQuery(), $source->getLastBindParams(),
-                [], null, quoteMode: $source->compiled->quoteMode);
+            $original = $source->compiled;
+            $source->compiled = $compilation->sources[$original] ?? $original;
+            try {
+                return new CompiledQuery($source->getLastPrepareQuery(), $source->getLastBindParams(),
+                    [], null, quoteMode: $source->compiled->quoteMode);
+            } finally {
+                $source->compiled = $original;
+            }
         } finally {
             $compilation->active = false;
             $this->countCompilation = $previousCompilation;
@@ -708,8 +728,7 @@ class QueryBuilder
     /** SELECT LIMIT1查询 */
     public function getOne(mixed $tableName, mixed $columns = null): QueryBuilder
     {
-        $columns ??= $this->pending['fields'] ?? '*';
-        return $this->get($tableName, 1, $columns);
+        return $this->get($tableName, 1, $columns ?? $this->pending['fields']);
     }
 
     /** 指定拆分 SQL 表达式列表时是否按 NO_BACKSLASH_ESCAPES 解释引号。 */
@@ -956,7 +975,7 @@ class QueryBuilder
             throw new \TypeError('Raw SQL must be a string');
         }
         $parameters = array_map(static fn($value) => $value, array_values($param));
-        $quoteMode = $this->countCompilation?->active ? $this->countCompilation->quoteMode : null;
+        $quoteMode = $this->countPublicationQuoteMode?->__invoke();
         return $this->completeBuild($sql, $parameters, $this->pending['transactionOp'], quoteMode: $quoteMode);
     }
 

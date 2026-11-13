@@ -161,7 +161,7 @@ final class ClientExecutionContextTest extends TestCase
         $this->assertClosed($statement);
     }
 
-    public function testStreamReadFailureAndCleanupFailureKeepTheExistingPriority(): void
+    public function testStreamReadFailureTakesPriorityOverStatementCleanupFailure(): void
     {
         foreach ([false, true] as $failCleanup) {
             $statement = $this->statement($failCleanup ? $this->connected(true) : null);
@@ -172,8 +172,8 @@ final class ClientExecutionContextTest extends TestCase
                 ->onClose([$context, 'finishStream']);
             try { iterator_to_array($stream); self::fail('Expected read/cleanup error'); }
             catch (\Throwable $error) {
-                if ($failCleanup) { self::assertInstanceOf(Exception::class, $error); self::assertStringContainsString('Concurrent', $error->getMessage()); }
-                else { self::assertSame($original, $error); $this->assertClosed($statement); }
+                self::assertSame($original, $error);
+                if (!$failCleanup) { $this->assertClosed($statement); }
             }
         }
     }

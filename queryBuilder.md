@@ -34,7 +34,7 @@ Coroutine\run(function (): void {
 
 构造器的 `get()`、`getOne()`、`insert()`、`update()` 等方法返回构造器，
 不会执行数据库操作。`getOne()` 构建 `LIMIT 1` 查询，执行后仍返回行数组。
-`get()` 和 `getOne()` 省略字段或传入 `null` 时沿用当前字段配置，显式传入 `'*'` 选择全部列。
+`get()` 和 `getOne()` 省略字段或传入 `null` 时沿用当前字段配置，显式传入 `'*'` 选择全部列。子类覆写 `get()` 时，也可以为省略字段的 `getOne()` 提供默认投影。
 成功执行写入语句返回 `true`；影响行数和插入 ID 分别由客户端的
 `getLastAffectRows()`、`getLastInsertId()` 获取。
 
@@ -565,9 +565,9 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT，钩子内构建的子查询保留自己的 ORDER BY 和 LIMIT。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
-- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用模板中的选项。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
 - 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
@@ -1083,6 +1083,7 @@ try {
 - 命令只返回 OK 时，结果流在返回前已完成，遍历得到零行。此时调用 `close()` 不会关闭会话。
 - Prepare、Execute、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
 - 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前 break、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
+- 读取行时收到完整的 MySQL 查询错误，流会关闭并抛出原错误。会话仍有效时可以继续查询。
 - 流结束前连接保持独占，不能在同一 Client 上发起查询、Prepare、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在 fetch 时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
 - 创建流时客户端插入 ID/影响行数清空；完整 SELECT 读取后 `getLastAffectRows()` 为已读取行数，`getLastInsertId()` 同步服务端元数据。提前停止或读取失败不发布成功元数据。
 - `onQuery()` 仅在完整耗尽和清理成功后收到 `true`，不再传结果数组；提前停止或读取失败不会触发成功回调。

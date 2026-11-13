@@ -116,6 +116,7 @@ final class QueryCompiler
             }
         }
 
+        $headLength = $buffer->countSource === null ? 0 : strlen($buffer->sql);
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
         $select->appendJoins($parts->joins, $parts->joinConditions);
@@ -130,6 +131,12 @@ final class QueryCompiler
         $beforeUnionAndTail = strlen($buffer->sql);
         if ($isSelect) {
             $select->appendUnions($parts->unions);
+        }
+        if ($buffer->countSource !== null) {
+            // 计数与正常 SELECT 共用来源和条件，保留已编译 UNION 分支。
+            $buffer->countSource->sql .= substr($buffer->sql, $headLength);
+            // 两个 SELECT 头的绑定顺序相同。默认常量只替换无绑定的星号。
+            $buffer->countSource->parameters = $buffer->parameters;
         }
         $select->appendOrder($parts->ordering);
         $select->appendLimit($numRows);

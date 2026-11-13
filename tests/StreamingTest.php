@@ -170,21 +170,25 @@ final class StreamingTest extends TestCase
         $this->completed($done);
     }
 
-    public function testStreamErrorAfterSomeRowsClosesConnectionAndPreservesServerCode(): void
+    public function testStreamErrorAfterSomeRowsKeepsConnectionAndPreservesServerCode(): void
     {
         [$client, $done] = $this->server(static function (Socket $peer): void {
             self::receive($peer);
             self::header($peer);
             self::send($peer, "\x011", 4);
             self::send($peer, "\xff" . pack('v', 1064) . '#42000broken query', 5);
-            self::assertSame('', $peer->recvAll(4, 1.0));
+            self::assertSame("\x0e", self::receive($peer));
+            self::send($peer, self::ok(), 1);
+            self::assertSame("\x01", self::receive($peer));
         });
         $stream = $client->rawIterate('SELECT id FROM records');
         try { iterator_to_array($stream); self::fail('Expected server failure'); }
         catch (Exception $error) { self::assertSame(1064, $error->getCode()); }
         self::assertSame(1, $stream->getRowsRead());
         self::assertFalse($client->mysqlClient()->isBusy());
-        self::assertFalse($client->mysqlClient()->isConnected());
+        self::assertTrue($stream->isClosed());
+        self::assertFalse($stream->isComplete());
+        self::assertTrue($client->ping());
         self::assertNull($client->getLastAffectRows());
         $client->close();
         $this->completed($done);

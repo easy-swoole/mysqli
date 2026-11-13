@@ -252,14 +252,18 @@ final class Connection
             if ($columns === null) {
                 return ResultStream::completedEmpty();
             }
+            // ERR 报文结束当前响应，即使流没有成功读到 EOF。
+            $serverError = false;
             // 关闭回调持有预处理语句，避免读取期间因语句销毁而发送关闭命令。
             return new ResultStream(
-                fn(): ?array => $this->readResultRow($deadline, $binary, $sql, $columns),
-                function (bool $complete, int $rows) use ($owner): void {
+                function () use ($deadline, $binary, $sql, $columns, &$serverError): ?array {
+                    return $this->readResultRow($deadline, $binary, $sql, $columns, $serverError);
+                },
+                function (bool $complete, int $rows) use ($owner, &$serverError): void {
                     try {
                         if ($complete) {
                             $this->affected_rows = $rows;
-                        } elseif ($this->state->isConnected()) {
+                        } elseif (!$serverError && $this->state->isConnected()) {
                             $this->invalidateConnection();
                         }
                     } finally {
@@ -490,10 +494,10 @@ final class Connection
     }
 
     /** 只读取当前行，不缓存其他行；EOF 时同步事务状态。 */
-    private function readResultRow(Deadline $deadline, bool $binary, string $sql, array $columns): ?array
+    private function readResultRow(Deadline $deadline, bool $binary, string $sql, array $columns, ?bool &$serverError = null): ?array
     {
         $row = $this->stream->readPacket($deadline, 'result row');
-        $this->throwIfError($row, $sql);
+        $this->throwIfError($row, $sql, $serverError);
         if ($this->isEof($row)) {
             $this->parseEofStatus($row);
             return null;
@@ -573,7 +577,7 @@ final class Connection
     /**
      * 识别服务端错误响应并抛出异常。
      */
-    private function throwIfError(string $packet, string $context): void
+    private function throwIfError(string $packet, string $context, ?bool &$serverError = null): void
     {
         if (($packet[0] ?? '') !== "\xff") {
             return;
@@ -585,6 +589,7 @@ final class Connection
             $offset += 6;
         }
         $message = substr($packet, $offset);
+        $serverError = true;
         $this->errno = $code;
         $this->error = $message;
         if ($code === PacketStream::ER_CLIENT_INTERACTION_TIMEOUT) {

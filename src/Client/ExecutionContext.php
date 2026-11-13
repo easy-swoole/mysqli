@@ -80,7 +80,11 @@ final class ExecutionContext
     /** 注册为自建语句结果流的关闭回调，在协议处理和元数据更新后执行。 */
     public function finishStream(bool $complete): void
     {
-        $this->closeOwnedStatement();
-        if ($complete) { $this->complete(true); }
+        if ($complete) {
+            $this->closeOwnedStatement();
+            $this->complete(true);
+        } else {
+            $this->discardOwnedStatement();
+        }
     }
 }

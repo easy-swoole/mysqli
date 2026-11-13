@@ -257,6 +257,7 @@ try {
 - 命令只返回 OK 时，结果流在返回前已完成，遍历得到零行。此时调用 `close()` 不会关闭会话。
 - 预处理、执行、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
 - 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前退出循环、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
+- 读取行时收到完整的 MySQL 查询错误，流会关闭并抛出原错误。会话仍有效时可以继续查询。
 - 流结束前连接保持独占，不能在同一 Client 上发起查询、创建预处理语句、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在读取时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
 - 创建流时客户端插入 ID/影响行数清空；完整 SELECT 读取后 `getLastAffectRows()` 为已读取行数，`getLastInsertId()` 同步服务端元数据。提前停止或读取失败不发布成功元数据。
 - `onQuery()` 仅在完整耗尽和清理成功后收到 `true`，不再传结果数组；提前停止或读取失败不会触发成功回调。
@@ -732,7 +733,7 @@ $builder->fields('id')->getOne('users', '*');   // SELECT * FROM `users` LIMIT 1
 
 - 省略 `$columns` 或传入 `null` 时，使用当前的 `fields()` 和 `selectRaw()` 配置。未配置时默认选择 `*`。
 - 显式传入字段会覆盖当前配置。传入 `'*'` 选择全部列，空字段数组会抛出 `InvalidArgumentException`。
-- `getOne()` 固定生成 `LIMIT 1`。
+- `getOne()` 将 `LIMIT 1` 和字段参数传给 `get()`。调用和 `fields()` 均未指定字段时，子类覆写的 `get()` 可以决定默认投影。
 
 ### `update($tableName, $tableData, $numRows = null)`：限定字段名
 
@@ -774,9 +775,9 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT，钩子内构建的子查询保留自己的 ORDER BY 和 LIMIT。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
-- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用模板中的选项。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
 - COUNT 使用内层 `get()` 返回的构造器读取 SQL、参数和编译时的引号模式。COUNT 的 `raw()` 钩子沿用这个引号模式。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
@@ -1297,7 +1298,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `WriteCompiler` | 批量选项、写入字段过滤、列对齐和值绑定，以及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
-| `SqlList` | 在引号和嵌套表达式之外解析选择列表 |
+| `SqlList` | 读取选择列表的首项，保留引号和嵌套表达式 |
 | `SqlScanner` | 为列表拆分和调试 SQL 共用引号边界识别 |
 | `Pagination` | 分页参数校验与大整数总数、末页计算 |
 | `ExpressionFactory` | 保持 now/inc/dec/not/func 的既有表达式格式 |
