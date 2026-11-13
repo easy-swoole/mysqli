@@ -16,6 +16,20 @@ final class QueryBuilderIdentifierRegressionTest extends TestCase
         return trim(preg_replace('/\s+/', ' ', $builder->getLastPrepareQuery()));
     }
 
+    public function testDebugSqlUsesTheQuoteModeSavedAtBuildTime(): void
+    {
+        $sql = <<<'SQL'
+SELECT CONCAT('x\', '?'), ? AS id, ? AS label
+SQL;
+        $builder = (new QueryBuilder())->noBackslashEscapes()->raw($sql, [42, "O'Reilly\\"]);
+        $builder->noBackslashEscapes(false);
+        self::assertSame(<<<'SQL'
+SELECT CONCAT('x\', '?'), 42 AS id, 'O''Reilly\' AS label
+SQL, $builder->getLastQuery());
+        self::assertSame($sql, $builder->getLastPrepareQuery());
+        self::assertSame([42, "O'Reilly\\"], $builder->getLastBindParams());
+    }
+
     #[DataProvider('tableReferences')]
     public function testTableReferencesPreservePrefixAndAliasRules(string $table, string $prefix, string $expected): void
     {

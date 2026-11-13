@@ -133,16 +133,10 @@ final class PacketStream
     /** 为分段负载封装数据包，避免额外复制整条命令。 */
     public function writePacketParts(array $parts, Deadline $deadline, string $operation): void
     {
-        $total = array_sum(array_map('strlen', $parts));
-        foreach (PacketPayload::chunks($parts, self::MAX_PACKET_PAYLOAD) as $chunk) {
+        foreach (PacketPayload::packetChunks($parts, self::MAX_PACKET_PAYLOAD) as $chunk) {
             $header = substr(pack('V', strlen($chunk)), 0, 3) . chr($this->sequence++ & 0xff);
             $this->writeProtocolBytes($header . $chunk, $deadline, $operation);
             unset($chunk);
-        }
-        if ($total % self::MAX_PACKET_PAYLOAD === 0) {
-            // 负载长度恰为最大包长的整数倍时（包括空命令），还需发送一个空包作为结束标记。
-            $header = "\0\0\0" . chr($this->sequence++ & 0xff);
-            $this->writeProtocolBytes($header, $deadline, $operation);
         }
         if ($this->compressionEnabled) {
             // 普通协议包连同四字节包头超过压缩帧的 24 位长度上限时，

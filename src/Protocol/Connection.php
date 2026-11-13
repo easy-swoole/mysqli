@@ -250,16 +250,10 @@ final class Connection
     /** 开始流式响应，并把并发保护延长至 EOF 或显式关闭。 */
     private function startStream(callable $send, Deadline $deadline, bool $binary, string $sql, ?Statement $owner = null): ResultStream
     {
-        if ($this->busy) {
-            throw new Exception('Concurrent operations on active MySQL connection are not allowed');
-        }
-        $this->busy = true;
-        $writeAttempts = $this->stream->writeAttempts();
-        try {
+        return $this->guard(function () use ($send, $deadline, $binary, $sql, $owner): ResultStream {
             $send();
             $columns = $this->readCommandHeader($deadline, $sql, $owner?->completionReleasesSession(), $owner === null);
             if ($columns === null) {
-                $this->busy = false;
                 return ResultStream::completedEmpty();
             }
             // 关闭回调持有预处理语句，避免读取期间因语句销毁而发送关闭命令。
@@ -277,11 +271,7 @@ final class Connection
                     }
                 },
             );
-        } catch (\Throwable $error) {
-            $this->handleOperationFailure($error, $writeAttempts);
-            $this->busy = false;
-            throw $error;
-        }
+        }, streaming: true);
     }
 
     /**
@@ -647,20 +637,26 @@ final class Connection
     /**
      * 阻止同一个连接同时执行多个操作。
      */
-    private function guard(callable $callback): mixed
+    private function guard(callable $callback, bool $streaming = false): mixed
     {
         if ($this->busy) {
             throw new Exception('Concurrent operations on active MySQL connection are not allowed');
         }
         $this->busy = true;
         $writeAttempts = $this->stream->writeAttempts();
+        $streamOwnsConnection = false;
         try {
-            return $callback();
+            $result = $callback();
+            // 结果流有待读取的行时，由其关闭回调释放连接占用。
+            $streamOwnsConnection = $streaming && !$result->isClosed();
+            return $result;
         } catch (\Throwable $error) {
             $this->handleOperationFailure($error, $writeAttempts);
             throw $error;
         } finally {
-            $this->busy = false;
+            if (!$streamOwnsConnection) {
+                $this->busy = false;
+            }
         }
     }
 

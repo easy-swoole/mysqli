@@ -55,10 +55,20 @@ final class PaginationTest extends TestCase
         $template = new class extends QueryBuilder {
             private int $depth = 0;
             public static int $countCalls = 0;
+            public static int $resetCalls = 0;
+            public int $resets = 0;
+
+            public function reset(): QueryBuilder
+            {
+                self::$resetCalls++;
+                $this->resets++;
+                return parent::reset();
+            }
+
             public static array $beforeCountPublication = [];
             public function raw(mixed $sql, mixed $param = []): QueryBuilder
             {
-                self::$beforeCountPublication[] = [$this->getLastPrepareQuery(), $this->getLastBindParams()];
+                self::$beforeCountPublication[] = [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->resets];
                 return parent::raw($sql, $param);
             }
             public function __clone(): void
@@ -74,7 +84,8 @@ final class PaginationTest extends TestCase
         $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
         self::assertSame(1, $client->paginate($template, 'orders')['total']);
         self::assertSame(1, $template::$countCalls);
-        self::assertSame([[null, []]], $template::$beforeCountPublication);
+        self::assertSame([[null, [], 0]], $template::$beforeCountPublication);
+        self::assertSame(2, $template::$resetCalls);
         self::assertSame([1], $client->queries[0][1]);
         self::assertSame([1], $client->queries[1][1]);
     }

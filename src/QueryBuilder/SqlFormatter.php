@@ -9,12 +9,25 @@ final class SqlFormatter
 {
     public static function render(string $str, array $vals): ?string
     {
+        return self::renderWithQuoteMode($str, $vals, false);
+    }
+
+    /** @internal 调试 SQL 使用构建时的引号规则。 */
+    public static function renderWithQuoteMode(string $str, array $vals, bool $noBackslashEscapes): ?string
+    {
         $i = 0;
         // 先匹配已引用的字面量及注释，再匹配实际占位符。
-        $pattern = <<<'REGEX'
-~'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
+        $strings = $noBackslashEscapes
+            ? <<<'REGEX'
+'(?:''|[^'])*'|"(?:""|[^"])*"
+REGEX
+            : <<<'REGEX'
+'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"
 REGEX;
-        return preg_replace_callback($pattern, static function (array $match) use ($vals, &$i): string {
+        $pattern = '~' . $strings . <<<'REGEX'
+|`(?:``|[^`])*`|/\*[\s\S]*?\*/|--[ \t][^\r\n]*|\#[^\r\n]*|\?~
+REGEX;
+        return preg_replace_callback($pattern, static function (array $match) use ($vals, &$i, $noBackslashEscapes): string {
             if ($match[0] !== '?' || !array_key_exists($i, $vals)) {
                 return $match[0];
             }
@@ -28,7 +41,7 @@ REGEX;
             if (is_int($val) || is_float($val)) {
                 return (string)$val;
             }
-            return "'" . addslashes($val) . "'";
+            return "'" . ($noBackslashEscapes ? str_replace("'", "''", $val) : addslashes($val)) . "'";
         }, $str);
     }
 }

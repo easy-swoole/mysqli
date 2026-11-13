@@ -235,7 +235,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。计数与数据分支分别从原模板克隆一次。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。计数与数据分支分别从原模板克隆一次。计数分支的内层 SELECT 是内部编译步骤，只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -486,7 +486,7 @@ $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status 
 
 - 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
 - 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
-- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
+- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。调试 SQL 的占位符识别和字符串引用也使用该查询构建时的规则。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
 ### `selectRaw(string $sql, array $parameters = [])`
@@ -1260,13 +1260,13 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 
 - `Client`：公开查询 API、元数据及成功回调；对外超时参数继续使用秒数。
 - `Client\ExecutionContext`：一次执行的总超时预算、Client 自建 Statement 的清理及成功通知；手工准备的 Statement 仍由调用方管理。
-- `Connection`：命令调度、会话元数据和完整操作的并发保护。
+- `Connection`：命令调度、会话元数据和并发保护。缓冲与流式命令共用操作入口，待读取的结果流负责在关闭时释放连接占用。
 - `Protocol\Authenticator`：解析握手、协商能力、发送 TLS 升级请求及完成认证，共享连接 Deadline。
 - `Protocol\TlsHandshake`：生成并校验 TLS 选项，完成握手和证书验证。
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
 - `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。
-- `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。
+- `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。分片过程同时生成协议要求的末尾空包。
 
 上述辅助类属于内部实现。本轮补齐属性、参数和返回值的原生类型声明，保留既有方法名、参数名、顺序和默认值；构造和析构方法按 PHP 规则不声明返回类型。数据库值及旧接口中支持多种输入的参数保留 `mixed`，避免隐式转换或提前抛出 TypeError 改变调用行为。数组结构和回调签名另以 PHPDoc 标注。
 

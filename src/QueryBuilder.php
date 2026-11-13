@@ -38,10 +38,12 @@ class QueryBuilder
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
     private bool $countOnSnapshot = false;
+    private bool $buildingCountSource = false;
     private bool $noBackslashEscapes = false;
     private ?CompiledQuery $readyToPublish = null;
     // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
     private ?CompiledQuery $lastBuilt = null;
+    private bool $lastBuiltNoBackslashEscapes = false;
 
     const TS_OP_START = 1;
     const TS_OP_COMMIT = 2;
@@ -628,6 +630,9 @@ class QueryBuilder
         $compiled = $this->compiled;
         $readyToPublish = $this->readyToPublish;
         $lastBuilt = $this->lastBuilt;
+        $lastBuiltNoBackslashEscapes = $this->lastBuiltNoBackslashEscapes;
+        $buildingCountSource = $this->buildingCountSource;
+        $this->buildingCountSource = true;
         try {
             return $this->compileCountSource($table, $quotedAlias);
         } finally {
@@ -635,6 +640,8 @@ class QueryBuilder
             $this->compiled = $compiled;
             $this->readyToPublish = $readyToPublish;
             $this->lastBuilt = $lastBuilt;
+            $this->lastBuiltNoBackslashEscapes = $lastBuiltNoBackslashEscapes;
+            $this->buildingCountSource = $buildingCountSource;
         }
     }
 
@@ -759,12 +766,17 @@ class QueryBuilder
     /** 重置构造器 */
     public function reset(): QueryBuilder
     {
+        $this->resetBuildState();
+        return $this;
+    }
+
+    private function resetBuildState(): void
+    {
         if ($this->readyToPublish !== null) {
             $this->compiled = $this->readyToPublish;
             $this->readyToPublish = null;
         }
         $this->pending = PendingQuery::DEFAULTS;
-        return $this;
     }
 
     public static function rawExpression(string $sql, array $parameters = []): Expression
@@ -847,7 +859,7 @@ class QueryBuilder
         if ($query === null || $query->parameters === []) {
             return $query?->sql;
         }
-        return SqlFormatter::render($query->sql, $query->parameters);
+        return SqlFormatter::renderWithQuoteMode($query->sql, $query->parameters, $this->lastBuiltNoBackslashEscapes);
     }
 
     /** 获取子查询 */
@@ -1040,8 +1052,13 @@ class QueryBuilder
     {
         $query = new CompiledQuery($sql, $parameters, $this->pending['queryOptions'], $operation, $needsParentheses);
         $this->lastBuilt = $query;
+        $this->lastBuiltNoBackslashEscapes = $this->noBackslashEscapes;
         $this->readyToPublish = $query;
-        $this->reset();
+        if ($this->buildingCountSource) {
+            $this->resetBuildState();
+        } else {
+            $this->reset();
+        }
         return $this;
     }
 

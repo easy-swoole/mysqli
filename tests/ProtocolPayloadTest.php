@@ -34,6 +34,24 @@ final class ProtocolPayloadTest extends TestCase
         ];
     }
 
+    #[DataProvider('packetChunks')]
+    public function testPacketChunksIncludeTerminatorOnlyAtExactBoundaries(array $parts, array $expected): void
+    {
+        self::assertSame($expected, iterator_to_array(PacketPayload::packetChunks($parts, 4), false));
+    }
+
+    public static function packetChunks(): array
+    {
+        return [
+            'empty payload' => [[], ['']],
+            'empty parts' => [['', ''], ['']],
+            'partial packet' => [['ab', 'c'], ['abc']],
+            'one full packet' => [['ab', 'cd', ''], ['abcd', '']],
+            'two full packets' => [['abc', 'defgh'], ['abcd', 'efgh', '']],
+            'full and partial packets' => [['abcde', 'fg'], ['abcd', 'efg']],
+        ];
+    }
+
     public function testInvalidChunkSizeIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);
