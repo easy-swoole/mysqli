@@ -173,7 +173,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写这两个方法时都需要声明兼容的 `bool|array` 返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
 
-查询超时后，客户端会关闭连接，避免复用存在未读 MySQL 数据包的协议流。
+命令发送前耗尽预算时，客户端抛出超时异常并保留会话。开始发送后发生超时会关闭连接，避免复用存在未读 MySQL 数据包的协议流。
 
 ## 会话安全与超时
 
@@ -486,6 +486,7 @@ $builder->getScalar('orders', QueryBuilder::rawExpression('SUM(CASE WHEN status 
 
 - 字段参数接受单个 SQL 表达式字符串、Expression 或 `null`。Expression 中的参数随 SELECT 合并。
 - 省略字段时沿用 `fields()` 中的第一项；字符串字段列表只在顶层逗号处分隔，函数参数、引号、反引号和块注释中的逗号不会截断表达式，别名及其空白保留。Expression 原样保留绑定参数。
+- 会话开启 `NO_BACKSLASH_ESCAPES` 时，用 `$builder->noBackslashEscapes()` 指定相同的拆分规则。这也适用于 `count()` 拆分 `groupBy()` 的字符串表达式列表。该选项随构造器保留，可用 `noBackslashEscapes(false)` 恢复默认规则。会话 SQL 模式由调用方设置。
 - `getScalar()` 固定 LIMIT 1。两个方法仍返回构造器，需交给 `Client::query()` 执行；`getScalar()` 不会把执行结果自动转换为 PHP 标量。
 
 ### `selectRaw(string $sql, array $parameters = [])`

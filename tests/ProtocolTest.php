@@ -60,6 +60,43 @@ final class ProtocolTest extends TestCase
         }
     }
 
+    public function testDeadlineExhaustedBeforeSendingPreservesTheTransaction(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $command] = self::receivePacket($peer);
+            self::assertSame("\x03START TRANSACTION", $command);
+            self::sendPacket($peer, self::ok(3), 1);
+            [, $command] = self::receivePacket($peer);
+            self::assertSame("\x03ROLLBACK", $command);
+            self::sendPacket($peer, self::ok(), 1);
+            self::receivePacket($peer);
+            $peer->close();
+        });
+        $client->connect();
+        $connection = $client->mysqlClient();
+        $connection->begin_transaction();
+        $deadline = \EasySwoole\Mysqli\Protocol\Deadline::after(0.001);
+        Coroutine::sleep(0.01);
+        foreach ([
+            fn() => $connection->queryWithDeadline('SELECT 1', $deadline),
+            fn() => $connection->iterateWithDeadline('SELECT 1', $deadline),
+            fn() => $connection->prepareWithDeadline('SELECT 1', $deadline),
+        ] as $operation) {
+            try {
+                $operation();
+                self::fail('Expected pre-send timeout');
+            } catch (TimeoutException) {
+                self::assertTrue($connection->inTransaction());
+                self::assertFalse($connection->isTransactionLost());
+            }
+        }
+        self::assertTrue($connection->rollback());
+        $client->close();
+        $this->assertServerCompleted($completed);
+    }
+
     public function testTextAndPreparedBinaryProtocol(): void
     {
         $listener = new Socket(AF_INET, SOCK_STREAM, IPPROTO_IP);

@@ -98,13 +98,12 @@ final class QueryCompiler
             throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
         }
 
-        $conditions = new ConditionCompiler($buffer);
         if ($isInsert) {
             if ($parts->joins !== [] || $parts->joinConditions !== [] || $parts->where !== []
                 || $parts->ordering !== [] || $numRows !== null) {
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
             }
-            $write = new WriteCompiler($buffer, $conditions);
+            $write = new WriteCompiler($buffer, null);
             $inserted = $write->appendData($tableData, true, $fields, $batch);
             if ($statement === 'INSERT') {
                 $write->appendDuplicate($inserted, $parts->updateColumns);
@@ -121,10 +120,11 @@ final class QueryCompiler
             }
         }
 
+        $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
         $select->appendJoins($parts->joins, $parts->joinConditions);
         if ($statement === 'UPDATE') {
-            (new WriteCompiler($buffer, $conditions))->appendData($tableData, false, $fields);
+            (new WriteCompiler($buffer, null))->appendData($tableData, false, $fields);
         }
         $conditions->append('WHERE', $parts->where);
         if ($isSelect) {

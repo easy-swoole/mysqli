@@ -51,6 +51,7 @@
         "lockTable": "public function lockTable(mixed $table): EasySwoole\\Mysqli\\QueryBuilder",
         "max": "public function max(mixed $tableName, EasySwoole\\Mysqli\\Expression|string $column, string $alias = 'aggregate'): EasySwoole\\Mysqli\\QueryBuilder",
         "min": "public function min(mixed $tableName, EasySwoole\\Mysqli\\Expression|string $column, string $alias = 'aggregate'): EasySwoole\\Mysqli\\QueryBuilder",
+        "noBackslashEscapes": "public function noBackslashEscapes(bool $enabled = true): EasySwoole\\Mysqli\\QueryBuilder",
         "not": "public static function not(mixed $col = NULL): array",
         "now": "public static function now(mixed $diff = NULL, mixed $func = 'NOW()'): array",
         "nowait": "public function nowait(): EasySwoole\\Mysqli\\QueryBuilder",

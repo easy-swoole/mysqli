@@ -38,6 +38,7 @@ class QueryBuilder
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
     private bool $countOnSnapshot = false;
+    private bool $noBackslashEscapes = false;
     private ?CompiledQuery $readyToPublish = null;
     // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
     private ?CompiledQuery $lastBuilt = null;
@@ -587,9 +588,13 @@ class QueryBuilder
     {
         // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
         $quotedAlias = TableReference::identifier($alias);
-        $source = $this->countOnSnapshot ? $this : clone $this;
-        $this->countOnSnapshot = false;
-        [$sql, $parameters] = $source->compileCountSource($tableName, $quotedAlias);
+        if ($this->countOnSnapshot) {
+            $this->countOnSnapshot = false;
+            [$sql, $parameters] = $this->compileCountOnSnapshot($tableName, $quotedAlias);
+        } else {
+            $source = clone $this;
+            [$sql, $parameters] = $source->compileCountSource($tableName, $quotedAlias);
+        }
         $this->pending['queryOptions'] = [];
         $this->pending['transactionOp'] = null;
         return $this->raw($sql, $parameters);
@@ -610,9 +615,27 @@ class QueryBuilder
     /** @return array{string, array} */
     private function compileCountSource(mixed $table, string $quotedAlias): array
     {
-        $this->pending = SelectPlanner::countSource($this->pending);
+        $this->pending = SelectPlanner::countSourceWithQuoteMode($this->pending, $this->noBackslashEscapes);
         $this->get($table);
         return [SelectPlanner::countSql($this->getLastPrepareQuery(), $quotedAlias), $this->getLastBindParams()];
+    }
+
+    /** @return array{string, array} */
+    private function compileCountOnSnapshot(mixed $table, string $quotedAlias): array
+    {
+        // 内层 SELECT 是计数计划的中间结果，最终 COUNT 仍从原发布状态开始。
+        $pending = $this->pending;
+        $compiled = $this->compiled;
+        $readyToPublish = $this->readyToPublish;
+        $lastBuilt = $this->lastBuilt;
+        try {
+            return $this->compileCountSource($table, $quotedAlias);
+        } finally {
+            $this->pending = $pending;
+            $this->compiled = $compiled;
+            $this->readyToPublish = $readyToPublish;
+            $this->lastBuilt = $lastBuilt;
+        }
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */
@@ -645,6 +668,13 @@ class QueryBuilder
         return $this->get($tableName, 1, $columns);
     }
 
+    /** 指定拆分 SQL 表达式列表时是否按 NO_BACKSLASH_ESCAPES 解释引号。 */
+    public function noBackslashEscapes(bool $enabled = true): QueryBuilder
+    {
+        $this->noBackslashEscapes = $enabled;
+        return $this;
+    }
+
     /** SELECT 获取某一列的数据 */
     public function getColumn(mixed $tableName, mixed $columns = null, mixed $numRows = null): ?QueryBuilder
     {
@@ -652,7 +682,7 @@ class QueryBuilder
             $columns = $this->pending['fields'];
             if ($columns !== null && $columns !== []) {
                 $first = reset($columns);
-                $columns = $first instanceof Expression ? $first : SqlList::first($first);
+                $columns = $first instanceof Expression ? $first : SqlList::firstItem($first, $this->noBackslashEscapes);
             }
         } elseif (!is_string($columns) && !($columns instanceof Expression)) {
             throw new \TypeError('Column must be a string, Expression or null');

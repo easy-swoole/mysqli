@@ -88,6 +88,12 @@ final class SelectPlanner
      */
     public static function countSource(array $state): array
     {
+        return self::countSourceWithQuoteMode($state, false);
+    }
+
+    /** @param State $state @return State */
+    public static function countSourceWithQuoteMode(array $state, bool $noBackslashEscapes): array
+    {
         $state['ordering'] = [];
         $state['limit'] = null;
         $state['forUpdate'] = false;
@@ -103,7 +109,7 @@ final class SelectPlanner
         if ($state['groups'] !== []) {
             // 分组计数默认只投影分组表达式；显式 * 可供 HAVING 引用其他字段。
             if ($state['fields'] === null || $state['havingConditions'] === []) {
-                $state['fields'] = self::groupProjection($state['groups']) ?? $state['fields'];
+                $state['fields'] = self::groupProjection($state['groups'], $noBackslashEscapes) ?? $state['fields'];
             }
         } elseif ($state['havingConditions'] === []) {
             $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
@@ -112,7 +118,7 @@ final class SelectPlanner
     }
 
     /** 生成仅包含分组表达式的投影；按列位置分组时保留原投影。 */
-    private static function groupProjection(array $groups): ?array
+    private static function groupProjection(array $groups, bool $noBackslashEscapes): ?array
     {
         $last = array_key_last($groups);
         // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
@@ -123,7 +129,7 @@ final class SelectPlanner
             if (preg_match('/\A\s*ROLLUP\s*\((.*)\)\s*\z/is', $group, $rollup) === 1) {
                 $group = $rollup[1];
             }
-            foreach (SqlList::items($group) as $item) {
+            foreach (SqlList::splitItems($group, $noBackslashEscapes) as $item) {
                 if (preg_match('/\A\s*[0-9]+\s*\z/', $item) === 1) {
                     return null;
                 }

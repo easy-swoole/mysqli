@@ -24,6 +24,7 @@ final class PacketStream
     private ?SocketClient $tlsClient = null;
     private bool $tlsEnabled = false;
     private int $sequence = 0;
+    private int $writeAttempts = 0;
     private int $compressedSequence = 0;
     private bool $compressionEnabled = false;
     private string $decompressedBuffer = '';
@@ -61,12 +62,11 @@ final class PacketStream
     /** 将已连接的 TCP 流升级为 TLS；调用前必须已发送 MySQL SSLRequest。 */
     public function enableTls(Config $config, Deadline $deadline): void
     {
-        [$options, $expectedName] = TlsOptions::handshakeConfiguration($config, respectDisabledMode: false);
-        $this->enableTlsWithOptions($options, $deadline, $expectedName);
+        $this->enableTlsWithOptions($config, $deadline, null);
     }
 
     /** @internal 升级连接时使用建连入口生成的选项。 */
-    public function enableTlsWithOptions(array $options, Deadline $deadline, ?string $expectedName): void
+    public function enableTlsWithOptions(array|Config $options, Deadline $deadline, ?string $expectedName): void
     {
         $socket = $this->socket;
         $client = $this->tlsClient;
@@ -281,12 +281,19 @@ final class PacketStream
         throw new ProtocolException(sprintf('MySQL compressed packet sequence mismatch: expected %d, got %d', $expected, $received));
     }
 
+    /** @internal 记录进入 Socket 发送的次数，区分发包前和传输中的超时。 */
+    public function writeAttempts(): int
+    {
+        return $this->writeAttempts;
+    }
+
     /**
      * 在剩余预算内发送全部字节。
      */
     private function sendExactly(string $data, Deadline $deadline, string $operation): void
     {
         $remaining = $deadline->remaining();
+        $this->writeAttempts++;
         $written = $this->socket?->sendAll($data, $remaining);
         if ($written !== strlen($data)) {
             throw $this->ioException($operation, $remaining);

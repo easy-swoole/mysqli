@@ -63,9 +63,14 @@ class Client
      */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
+        return $this->queryWithin($builder, $timeout);
+    }
+
+    private function queryWithin(QueryBuilder $builder, Deadline|float|null $timeout): bool|array
+    {
         $sql = $builder->getLastPrepareQuery();
         if ($this->isTableLock($builder)) {
-            return $this->rawQuery($sql, $timeout);
+            return $this->rawQuery($sql, $timeout instanceof Deadline ? $timeout->remaining() : $timeout);
         }
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
@@ -119,9 +124,16 @@ class Client
         // 两条语句先构建完，避免查询回调或协程切换改变分页条件。
         $countQuery = $query->countQuery($table, '__mysqli_total');
         $dataQuery = $data->limit($offset, $perPage)->get($table);
-        $counts = $this->query($countQuery, $deadline->remaining());
-        $items = $this->query($dataQuery, $deadline->remaining());
+        $counts = $this->queryPagePart($countQuery, $deadline);
+        $items = $this->queryPagePart($dataQuery, $deadline);
         return \EasySwoole\Mysqli\QueryBuilder\Pagination::result($items, $counts[0]['__mysqli_total'], $perPage, $page);
+    }
+
+    private function queryPagePart(QueryBuilder $builder, Deadline $deadline): bool|array
+    {
+        return $this->overrides('query')
+            ? $this->query($builder, $deadline->remaining())
+            : $this->queryWithin($builder, $deadline);
     }
 
     /**
@@ -148,10 +160,16 @@ class Client
 
     private function prepareForExecution(string $sql, Deadline $deadline): Statement
     {
-        // 子类通过原有的秒数参数接收本次预算。
-        return get_class($this) === self::class
-            ? $this->prepareWithDeadline($sql, $deadline)
-            : $this->prepare($sql, $deadline->remaining());
+        return $this->overrides('prepare')
+            ? $this->prepare($sql, $deadline->remaining())
+            : $this->prepareWithDeadline($sql, $deadline);
+    }
+
+    /** 只有实际覆写公开方法时才将截止时间转换成剩余秒数。 */
+    private function overrides(string $method): bool
+    {
+        return static::class !== self::class
+            && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() !== self::class;
     }
 
     private function prepareWithDeadline(string $sql, Deadline $deadline): Statement
@@ -257,7 +275,7 @@ class Client
     }
 
     /** 先创建本次操作的超时预算，再清除元数据，保留无效超时参数的原有行为。 */
-    private function beginExecution(?float $timeout): ExecutionContext
+    private function beginExecution(Deadline|float|null $timeout): ExecutionContext
     {
         $execution = new ExecutionContext($timeout ?? $this->config->getTimeout(),
             function (bool|array $result, float $startedAt): void { $this->notify($result, $startedAt); });

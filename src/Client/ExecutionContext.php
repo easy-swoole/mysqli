@@ -16,10 +16,10 @@ final class ExecutionContext
     private ?Statement $statement = null;
 
     /** @param callable(bool|array<array-key, mixed>, float): void $notify */
-    public function __construct(float $timeout, callable $notify)
+    public function __construct(Deadline|float $timeout, callable $notify)
     {
         $this->startedAt = microtime(true);
-        $this->deadline = Deadline::after($timeout);
+        $this->deadline = $timeout instanceof Deadline ? $timeout : Deadline::after($timeout);
         $this->notify = \Closure::fromCallable($notify);
     }
 

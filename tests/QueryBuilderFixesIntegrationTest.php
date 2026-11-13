@@ -48,6 +48,20 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['display_name'=>"guest, O'Reilly"]], $this->client->query($builder));
     }
 
+    public function testGetColumnUsesExplicitNoBackslashEscapesMode(): void
+    {
+        $fields = <<<'SQL'
+CONCAT('x\', 'y') AS label, id
+SQL;
+        $builder = (new QueryBuilder())->noBackslashEscapes()->fields($fields)->where('id', 1)->getColumn('qb_fix_orders');
+        self::assertSame([['label' => 'x\\y']], $this->client->query($builder));
+        $group = <<<'SQL'
+CONCAT('x\', 'y'), tenantId
+SQL;
+        $builder->groupBy($group)->count('qb_fix_orders');
+        self::assertSame([['aggregate' => 2]], $this->client->query($builder));
+    }
+
     public function testQuotedColumnsAndPrefixedTablesWorkAcrossLikeSelectAndUpdate(): void
     {
         $builder = (new QueryBuilder())->whereLike('`o`.`name`', 'Ali%')->get('qb_fix_orders o', null, 'o.id');

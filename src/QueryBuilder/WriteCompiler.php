@@ -13,7 +13,7 @@ final class WriteCompiler
     private ?array $batchColumns = null;
 
     /** 保留历史构造参数，写入值直接使用子查询引用。 */
-    public function __construct(private readonly SqlBuffer $buffer, ConditionCompiler $conditions) {}
+    public function __construct(private readonly SqlBuffer $buffer, ?ConditionCompiler $conditions) {}
 
     /** @return array{statement: 'INSERT'|'REPLACE', fields: ?array} */
     public static function batchOptions(mixed $options, ?array $selectedFields): array
@@ -53,9 +53,16 @@ final class WriteCompiler
      */
     public static function normalizeBatch(mixed $rows, ?array $fields = null): array
     {
+        [$columns, $rows] = self::prepareBatch($rows, $fields);
+        return ['columns' => $columns, 'rows' => iterator_to_array($rows, false)];
+    }
+
+    /** @return array{array<string, string>, \Generator} */
+    private static function prepareBatch(mixed $rows, ?array $fields): array
+    {
         $rows = self::batchRows($rows, $fields);
         $columns = self::batchReferences($rows->current());
-        return ['columns' => $columns, 'rows' => iterator_to_array(self::alignedRows($rows, $columns), false)];
+        return [$columns, self::alignedRows($rows, $columns)];
     }
 
     private static function batchRows(mixed $rows, ?array $fields): \Generator
@@ -103,12 +110,11 @@ final class WriteCompiler
         $this->batchColumns = null;
         $first = array_key_first($tableData);
         if ($isInsert && ($batch || (is_int($first) && is_array($tableData[$first])))) {
-            $rows = self::batchRows($tableData, $fields);
-            $columns = self::batchReferences($rows->current());
+            [$columns, $rows] = self::prepareBatch($tableData, $fields);
             $this->batchColumns = $columns;
             $this->buffer->sql .= ' (' . implode(', ', $columns) . ')  VALUES ';
             $separator = '';
-            foreach (self::alignedRows($rows, $columns) as $row) {
+            foreach ($rows as $row) {
                 $this->buffer->sql .= $separator . '(';
                 $this->appendPairs($row, $columns, true);
                 $this->buffer->sql .= ')';

@@ -16,13 +16,15 @@ final class TlsHandshake
     /** @param callable(float, int, string): Exception $ioFailure */
     public static function enable(Socket $socket, SocketClient $client, Config $config, Deadline $deadline, callable $ioFailure): void
     {
-        [$options, $expectedName] = TlsOptions::handshakeConfiguration($config, respectDisabledMode: false);
-        self::enableWithOptions($socket, $client, $options, $deadline, $ioFailure, $expectedName);
+        self::enableWithOptions($socket, $client, $config, $deadline, $ioFailure);
     }
 
     /** @internal 使用连接开始时确定的 TLS 配置。 */
-    public static function enableWithOptions(Socket $socket, SocketClient $client, array $options, Deadline $deadline, callable $ioFailure, ?string $expectedName = null): void
+    public static function enableWithOptions(Socket $socket, SocketClient $client, array|Config $options, Deadline $deadline, callable $ioFailure, ?string $expectedName = null): void
     {
+        if ($options instanceof Config) {
+            [$options, $expectedName] = TlsOptions::handshakeConfiguration($options, respectDisabledMode: false);
+        }
         // SWOOLE_51_COMPAT：5.1 在握手时才创建 SSL_CTX，且仅在开启验证时加载 CA。
         // 因此先保存配置，再由 Client::enableSSL() 初始化上下文并提供原生握手错误码。
         // 此处移除 open_ssl 是 enableSSL() 的调用要求，在 6.2 中也不能单独删除。

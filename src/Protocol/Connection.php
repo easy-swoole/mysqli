@@ -254,6 +254,7 @@ final class Connection
             throw new Exception('Concurrent operations on active MySQL connection are not allowed');
         }
         $this->busy = true;
+        $writeAttempts = $this->stream->writeAttempts();
         try {
             $send();
             $columns = $this->readCommandHeader($deadline, $sql, $owner?->completionReleasesSession(), $owner === null);
@@ -277,7 +278,7 @@ final class Connection
                 },
             );
         } catch (\Throwable $error) {
-            $this->handleOperationFailure($error);
+            $this->handleOperationFailure($error, $writeAttempts);
             $this->busy = false;
             throw $error;
         }
@@ -652,19 +653,21 @@ final class Connection
             throw new Exception('Concurrent operations on active MySQL connection are not allowed');
         }
         $this->busy = true;
+        $writeAttempts = $this->stream->writeAttempts();
         try {
             return $callback();
         } catch (\Throwable $error) {
-            $this->handleOperationFailure($error);
+            $this->handleOperationFailure($error, $writeAttempts);
             throw $error;
         } finally {
             $this->busy = false;
         }
     }
 
-    private function handleOperationFailure(\Throwable $error): void
+    private function handleOperationFailure(\Throwable $error, int $writeAttempts): void
     {
-        if ($error instanceof ProtocolException || $error instanceof TimeoutException || !$this->stream->isOpen()) {
+        if ($error instanceof ProtocolException || !$this->stream->isOpen()
+            || ($error instanceof TimeoutException && $this->stream->writeAttempts() !== $writeAttempts)) {
             $this->invalidateConnection();
         }
     }

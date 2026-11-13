@@ -17,9 +17,15 @@ final class SqlList
      */
     public static function items(string $sql): array
     {
+        return self::splitItems($sql, false);
+    }
+
+    /** @internal 按调用方指定的反斜杠规则拆分列表。 */
+    public static function splitItems(string $sql, bool $noBackslashEscapes): array
+    {
         $items = [];
         while ($sql !== '') {
-            $first = self::first($sql);
+            $first = self::firstItem($sql, $noBackslashEscapes);
             $items[] = $first;
             if (strlen($first) >= strlen($sql)) { break; }
             $sql = substr($sql, strlen($first) + 1);
@@ -29,6 +35,12 @@ final class SqlList
 
     /** 保留首个顶层列表项及其原有空白和别名。 */
     public static function first(string $sql): string
+    {
+        return self::firstItem($sql, false);
+    }
+
+    /** @internal 按调用方指定的反斜杠规则读取首项。 */
+    public static function firstItem(string $sql, bool $noBackslashEscapes): string
     {
         $length = strlen($sql);
         $depth = 0;
@@ -42,7 +54,7 @@ final class SqlList
                 continue;
             }
             if ($quote !== null) {
-                if ($character === '\\' && $quote !== '`') { $position++; continue; }
+                if (!$noBackslashEscapes && $character === '\\' && $quote !== '`') { $position++; continue; }
                 if ($character === $quote) {
                     if ($next === $quote) { $position++; }
                     else { $quote = null; }
