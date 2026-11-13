@@ -94,43 +94,47 @@ final class SelectPlanner
         $state['lockInShareMode'] = false;
         $state['selectLockOption'] = '';
         $state['queryOptions'] = array_values(array_diff($state['queryOptions'], ['SQL_CALC_FOUND_ROWS']));
-        if ($state['fields'] === null || $state['fields'] === ['*']) {
-            if ($state['groups'] !== [] && $state['unionBranches'] === []) {
-                $items = [];
-                $groups = $state['groups'];
-                $last = array_key_last($groups);
-                // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
-                $groups[$last] = preg_replace('/\s+WITH\s+ROLLUP\s*\z/i', '', $groups[$last]);
-                foreach ($groups as $group) {
-                    // ROLLUP(...) 是 GROUP BY 的另一种写法，投影只使用括号内的字段。
-                    if (preg_match('/\A\s*ROLLUP\s*\((.*)\)\s*\z/is', $group, $rollup) === 1) {
-                        $group = $rollup[1];
-                    }
-                    array_push($items, ...SqlList::items($group));
+        // 显式投影可能包含聚合；HAVING、DISTINCT 和 UNION 也依赖原投影。
+        if (($state['fields'] !== null && $state['fields'] !== ['*'])
+            || $state['havingConditions'] !== [] || $state['unionBranches'] !== []
+            || array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) !== []) {
+            return $state;
+        }
+        if ($state['groups'] === []) {
+            $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
+            return $state;
+        }
+        $state['fields'] = self::groupProjection($state['groups']) ?? $state['fields'];
+        return $state;
+    }
+
+    /** 生成仅包含分组表达式的投影；按列位置分组时保留原投影。 */
+    private static function groupProjection(array $groups): ?array
+    {
+        $last = array_key_last($groups);
+        // WITH ROLLUP 修饰整条 GROUP BY，仅分组表达式可用作投影。
+        $groups[$last] = preg_replace('/\s+WITH\s+ROLLUP\s*\z/i', '', $groups[$last]);
+        $fields = [];
+        foreach ($groups as $group) {
+            // ROLLUP(...) 写法只取括号内的分组表达式。
+            if (preg_match('/\A\s*ROLLUP\s*\((.*)\)\s*\z/is', $group, $rollup) === 1) {
+                $group = $rollup[1];
+            }
+            foreach (SqlList::items($group) as $item) {
+                if (preg_match('/\A\s*[0-9]+\s*\z/', $item) === 1) {
+                    return null;
                 }
-                $hasOrdinal = false;
-                foreach ($items as $item) {
-                    if (preg_match('/\A\s*[0-9]+\s*\z/', $item) === 1) { $hasOrdinal = true; break; }
-                }
-                if (!$hasOrdinal) {
-                    $state['fields'] = [];
-                    foreach ($items as $item) {
-                        $state['fields'][] = new Expression($item . ' AS `__mysqli_group' . count($state['fields']) . '`');
-                    }
-                }
-            } elseif ($state['unionBranches'] === [] && $state['havingConditions'] === []
-                && array_intersect(['DISTINCT', 'DISTINCTROW'], $state['queryOptions']) === []) {
-                $state['fields'] = [new Expression('1 AS `__mysqli_row`')];
+                $fields[] = new Expression($item . ' AS `__mysqli_group' . count($fields) . '`');
             }
         }
-        return $state;
+        return $fields;
     }
 
     /** 参数保持已构建来源查询中的 SQL 顺序。 */
     public static function countSql(string $sourceSql, string $quotedAlias): string
     {
         return 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($sourceSql)
-            . ' AS `__mysqli_count`';
+            . ' AS `__mysqli_count` LIMIT 1';
     }
 
     public static function aggregateExpression(string $function, string|Expression $column, string $alias, bool $hasUnion): Expression

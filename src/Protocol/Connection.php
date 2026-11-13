@@ -132,10 +132,9 @@ final class Connection
     public function iterate(string $sql, ?float $timeout = null): ResultStream
     {
         $deadline = Deadline::after($timeout ?? $this->timeout);
-        return $this->startStream(function () use ($sql, $deadline): ?array {
+        return $this->startStream(function () use ($sql, $deadline): void {
             $this->assertSupportedSql($sql);
             $this->writeTextCommand(self::COM_QUERY, $sql, $deadline);
-            return $this->readResultHeader($deadline, $sql);
         }, $deadline, false, $sql);
     }
 
@@ -187,9 +186,8 @@ final class Connection
     {
         $this->assertParameterCount($statement, $parameters);
         $deadline = Deadline::after($timeout ?? $this->timeout);
-        return $this->startStream(function () use ($statement, $parameters, $deadline): ?array {
+        return $this->startStream(function () use ($statement, $parameters, $deadline): void {
             $this->writeStatementCommand($statement, $parameters, $deadline);
-            return $this->readResultHeader($deadline, $statement->getSql());
         }, $deadline, true, $statement->getSql(), $statement);
     }
 
@@ -222,27 +220,33 @@ final class Connection
     }
 
     /** 开始流式响应，并把并发保护延长至 EOF 或显式关闭。 */
-    private function startStream(callable $start, Deadline $deadline, bool $binary, string $sql, ?Statement $owner = null): ResultStream
+    private function startStream(callable $send, Deadline $deadline, bool $binary, string $sql, ?Statement $owner = null): ResultStream
     {
         if ($this->busy) {
             throw new Exception('Concurrent operations on active MySQL connection are not allowed');
         }
         $this->busy = true;
         try {
-            $columns = $start();
+            $send();
+            $columns = $this->readResultHeader($deadline, $sql);
+            if ($columns === null) {
+                $this->busy = false;
+                return ResultStream::completedEmpty();
+            }
+            // 关闭回调持有预处理语句，避免读取期间因语句销毁而发送关闭命令。
             return new ResultStream(
-                function () use ($columns, $deadline, $binary, $sql, $owner): ?array {
+                function () use ($columns, $deadline, $binary, $sql): ?array {
                     try {
-                        return $columns === null ? null : $this->readResultRow($deadline, $binary, $sql, $columns);
+                        return $this->readResultRow($deadline, $binary, $sql, $columns);
                     } catch (\Throwable $error) {
                         $this->handleOperationFailure($error);
                         throw $error;
                     }
                 },
-                function (bool $complete, int $rows) use ($columns, $owner): void {
+                function (bool $complete, int $rows) use ($owner): void {
                     try {
                         if (!$complete) { $this->invalidateConnection(); }
-                        elseif ($columns !== null) { $this->affected_rows = $rows; }
+                        else { $this->affected_rows = $rows; }
                     } finally {
                         $this->busy = false;
                     }
@@ -306,7 +310,7 @@ final class Connection
      */
     public function commit(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
-        return $this->finishTransaction('COMMIT', $flags);
+        return $this->query('COMMIT' . $flags->toSqlSuffix()) === true;
     }
 
     /**
@@ -314,29 +318,7 @@ final class Connection
      */
     public function rollback(TransactionCompletionFlags $flags = TransactionCompletionFlags::None): bool
     {
-        return $this->finishTransaction('ROLLBACK', $flags);
-    }
-
-    /**
-     * 按枚举选项提交或回滚，并同步 RELEASE 后的连接状态。
-     */
-    private function finishTransaction(string $command, TransactionCompletionFlags $flags): bool
-    {
-        return $this->guard(function () use ($command, $flags): bool {
-            $deadline = Deadline::after($this->timeout);
-            $release = $flags->releasesConnection();
-            if ($flags === TransactionCompletionFlags::None || $flags === TransactionCompletionFlags::Chain
-                || $flags === TransactionCompletionFlags::NoChain) {
-                // 默认释放方式可在会话中修改，读取和结束事务共用并发保护及超时。
-                $rows = $this->runTextCommand(self::COM_QUERY, 'SELECT @@SESSION.completion_type AS completion_type', $deadline);
-                $release = in_array($rows[0]['completion_type'], ['RELEASE', 2, '2'], true);
-            }
-            $result = $this->runTextCommand(self::COM_QUERY, $command . $flags->toSqlSuffix(), $deadline) === true;
-            if ($result && $release) {
-                $this->invalidateConnection(true);
-            }
-            return $result;
-        });
+        return $this->query('ROLLBACK' . $flags->toSqlSuffix()) === true;
     }
 
     /**
@@ -393,17 +375,13 @@ final class Connection
             if ($command === self::COM_QUERY) {
                 $this->assertSupportedSql($payload);
             }
-            return $this->runTextCommand($command, $payload, Deadline::after($timeout ?? $this->timeout));
+            $deadline = Deadline::after($timeout ?? $this->timeout);
+            $this->writeTextCommand($command, $payload, $deadline);
+            return $this->readResponse($deadline, false, $payload);
         });
     }
 
-    private function runTextCommand(int $command, string $payload, Deadline $deadline): array|bool
-    {
-        $this->writeTextCommand($command, $payload, $deadline);
-        return $this->readResponse($deadline, false, $payload);
-    }
-
-    /** 共用发包顺序；SQL 支持性检查及 Deadline 创建仍由原入口按原时机执行。 */
+    /** 缓冲和流式查询共用文本命令的发包顺序。 */
     private function writeTextCommand(int $command, string $payload, Deadline $deadline): void
     {
         $this->requireConnected();
@@ -464,6 +442,9 @@ final class Connection
         $header = Codec::int1($packet, $headerOffset);
         if ($header === 0x00) {
             $this->parseOk($packet);
+            if ($this->releasesSession($sql)) {
+                $this->invalidateConnection(true);
+            }
             return null;
         }
         if ($header === 0xfb) {
@@ -492,6 +473,13 @@ final class Connection
         }
 
         return $columns;
+    }
+
+    /** 显式 RELEASE 成功后同步关闭本地会话。 */
+    private function releasesSession(string $sql): bool
+    {
+        return preg_match('/\A\s*(?:COMMIT|ROLLBACK)(?:\s+WORK)?(?:\s+AND\s+(?:NO\s+)?CHAIN)?'
+            . '\s+RELEASE\s*;?\s*\z/i', $sql) === 1;
     }
 
     /** 只读取当前行，不缓存其他行；EOF 时同步事务状态。 */

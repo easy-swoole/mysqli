@@ -24,7 +24,7 @@ final class TlsOptions
             'open_ssl' => true,
             'ssl_verify_peer' => in_array($mode, [TlsMode::VerifyCA, TlsMode::VerifyIdentity], true),
             'ssl_allow_self_signed' => false,
-            // SWOOLE_SNI_COMPAT：身份校验与 SNI 分开；5.1.8、6.2.4 仍需 PacketStream 补充分离逻辑。
+            // SWOOLE_SNI_COMPAT：身份校验与 SNI 分开；5.1.8、6.2.4 仍需 TlsHandshake 补充分离逻辑。
             // 此处选项及独立 CertificateIdentity 校验不是停止支持 5.1 后就能直接删除的代码。
             'ssl_verify_host' => false,
             'ssl_host_name' => $serverName,

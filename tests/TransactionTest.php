@@ -8,6 +8,7 @@ use EasySwoole\Mysqli\Client;
 use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
 use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\QueryBuilder;
 use EasySwoole\Mysqli\Exception\Exception;
 use PHPUnit\Framework\TestCase;
 use Swoole\Coroutine;
@@ -344,7 +345,7 @@ final class TransactionTest extends TestCase
     {
         foreach (['commit', 'rollback'] as $method) {
             foreach ([TransactionCompletionFlags::Release, TransactionCompletionFlags::NoChainRelease,
-                TransactionCompletionFlags::None, TransactionCompletionFlags::NoChain, TransactionCompletionFlags::Chain] as $flags) {
+                TransactionCompletionFlags::None, TransactionCompletionFlags::NoChain] as $flags) {
                 $writer = $this->newClient();
                 try {
                     if (!$flags->releasesConnection()) {
@@ -354,6 +355,9 @@ final class TransactionTest extends TestCase
                     $connection->begin_transaction();
                     $writer->rawQuery("UPDATE `{$this->table}` SET value = 30 WHERE id = 2");
                     self::assertTrue($connection->{$method}($flags));
+                    if (!$flags->releasesConnection()) {
+                        self::assertFalse($writer->ping());
+                    }
                     self::assertFalse($connection->isConnected());
                     self::assertFalse($connection->inTransaction());
                     self::assertFalse($writer->ping());
@@ -386,6 +390,54 @@ final class TransactionTest extends TestCase
                 $this->admin->rawQuery("UPDATE `{$this->table}` SET value = 0 WHERE id = 2");
             } finally {
                 $writer->close();
+            }
+        }
+    }
+
+    public function testDefaultReleaseWorksWithZeroSelectLimitAcrossExecutionPaths(): void
+    {
+        foreach (['commit', 'rollback'] as $method) {
+            foreach (['protocol', 'raw', 'builder', 'statement', 'rawIterate', 'iterate'] as $path) {
+                $writer = $this->newClient();
+                try {
+                    $connection = $writer->mysqlClient();
+                    $writer->rawQuery('SET SESSION completion_type = 2');
+                    $writer->rawQuery('SET SESSION sql_select_limit = 0');
+                    self::assertTrue($connection->begin_transaction());
+                    $builder = new QueryBuilder();
+                    $builder->{$method}();
+                    $sql = strtoupper($method);
+                    switch ($path) {
+                        case 'protocol':
+                            self::assertTrue($connection->{$method}());
+                            break;
+                        case 'raw':
+                            self::assertTrue($writer->rawQuery($sql));
+                            break;
+                        case 'builder':
+                            self::assertTrue($writer->query($builder));
+                            break;
+                        case 'statement':
+                            $statement = $writer->prepare($sql);
+                            try { self::assertTrue($statement->execute()); }
+                            finally { $statement->close(); }
+                            break;
+                        case 'rawIterate':
+                            self::assertSame([], iterator_to_array($writer->rawIterate($sql)));
+                            break;
+                        case 'iterate':
+                            self::assertSame([], iterator_to_array($writer->iterate($builder)));
+                            break;
+                    }
+                    self::assertFalse($writer->ping(), $path);
+                    self::assertFalse($connection->isConnected(), $path);
+                    self::assertFalse($connection->isTransactionLost(), $path);
+                    self::assertTrue($writer->connect());
+                    self::assertNotSame($connection, $writer->mysqlClient());
+                    self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
+                } finally {
+                    $writer->close();
+                }
             }
         }
     }

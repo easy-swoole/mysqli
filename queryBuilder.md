@@ -557,6 +557,7 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
+- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。带 `HAVING` 的计数同样保留原投影，以便引用字段或别名。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -1067,6 +1068,8 @@ try {
 ```
 
 - `$builder` 必须已经构建。方法在准备语句前读取 SQL 和参数，返回 `ResultStream` 供逐行读取。将结果转成数组仍会占用完整结果所需内存。
+- 构造器生成的表锁命令使用 `Client::query()` 执行。传给 `iterate()` 时会抛出 `InvalidArgumentException`。
+- 命令只返回 OK 时，结果流在返回前已完成，遍历得到零行。此时调用 `close()` 不会关闭会话。
 - Prepare、Execute、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
 - 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前 break、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
 - 流结束前连接保持独占，不能在同一 Client 上发起查询、Prepare、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在 fetch 时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。

@@ -620,7 +620,6 @@ final class ProtocolTest extends TestCase
                 self::receivePacket($peer);
                 self::sendPacket($peer, $response, 1);
             }
-            self::sendCompletionType($peer, 'NO_CHAIN', 3);
             [, $commit] = self::receivePacket($peer);
             self::assertSame("\x03COMMIT", $commit);
             self::sendPacket($peer, self::ok(), 1);
@@ -675,10 +674,6 @@ final class ProtocolTest extends TestCase
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             foreach ($commands as [$method, $flags, $sql]) {
-                if (in_array($flags, [TransactionCompletionFlags::None, TransactionCompletionFlags::Chain,
-                    TransactionCompletionFlags::NoChain], true)) {
-                    self::sendCompletionType($peer, 'NO_CHAIN');
-                }
                 [, $packet] = self::receivePacket($peer);
                 self::assertSame("\x03" . $sql, $packet);
                 self::sendPacket($peer, self::ok(), 1);
@@ -715,12 +710,11 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
-    public function testDefaultCompletionReleaseRequiresNewSessionImmediately(): void
+    public function testDefaultCompletionSendsOnlyCommitAndDetectsDisconnectOnIo(): void
     {
         [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
-            self::sendCompletionType($peer, 'RELEASE', 3);
             [, $command] = self::receivePacket($peer);
             self::assertSame("\x03COMMIT", $command);
             self::sendPacket($peer, self::ok(), 1);
@@ -737,6 +731,12 @@ final class ProtocolTest extends TestCase
         $client->connect();
         $old = $client->mysqlClient();
         self::assertTrue($old->commit());
+        try {
+            $client->rawQuery('SELECT 1');
+            self::fail('Expected I/O to detect the closed session');
+        } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+            self::assertStringContainsString('MySQL query failed', $error->getMessage());
+        }
         self::assertFalse($old->isConnected());
         self::assertFalse($old->isTransactionLost());
         $this->assertConnectRequired(fn() => $client->rawQuery('SELECT 1'));
@@ -749,7 +749,7 @@ final class ProtocolTest extends TestCase
 
     public function testBuilderTableLocksUseTextProtocolAndKeepSuccessCallback(): void
     {
-        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             foreach (['LOCK TABLES `users` READ', 'UNLOCK TABLES'] as $sql) {
@@ -760,11 +760,24 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer);
             $peer->close();
         });
+        $client = new class($config) extends Client {
+            public function rawQuery(string $query, ?float $timeout = null): bool|array
+            {
+                throw new \LogicException('Builder execution must not dispatch to rawQuery()');
+            }
+        };
         $client->connect();
         $notified = [];
         $client->onQuery(static function (bool $result) use (&$notified): void { $notified[] = $result; });
-        self::assertTrue($client->query((new QueryBuilder())->lockTable('users')));
-        self::assertTrue($client->query((new QueryBuilder())->unlockTable()));
+        foreach ([(new QueryBuilder())->lockTable('users'), (new QueryBuilder())->unlockTable()] as $builder) {
+            try {
+                $client->iterate($builder);
+                self::fail('Table locks must use the buffered API');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('query()', $error->getMessage());
+            }
+            self::assertTrue($client->query($builder));
+        }
         self::assertSame([true, true], $notified);
         $client->close();
         $this->assertServerCompleted($completed);
@@ -1026,15 +1039,6 @@ final class ProtocolTest extends TestCase
         }
         self::receivePacket($peer);
         self::sendPacket($peer, self::ok(), 1);
-    }
-
-    private static function sendCompletionType(Socket $peer, string $value, int $status = 2): void
-    {
-        [, $command] = self::receivePacket($peer);
-        self::assertSame("\x03SELECT @@SESSION.completion_type AS completion_type", $command);
-        self::sendResultHeader($peer, 'completion_type', 253, false);
-        self::sendPacket($peer, chr(strlen($value)) . $value, 4);
-        self::sendPacket($peer, self::eof($status), 5);
     }
 
     private function assertServerCompleted(Channel $completed): void

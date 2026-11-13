@@ -195,7 +195,8 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame(['clone', 'get'], $template::$events);
         self::assertSame([1, 42], $template->getLastBindParams());
         self::assertStringNotContainsString('ORDER BY', $template->getLastPrepareQuery());
-        self::assertStringNotContainsString('LIMIT', $template->getLastPrepareQuery());
+        self::assertSame(1, substr_count($template->getLastPrepareQuery(), 'LIMIT'));
+        self::assertStringEndsWith('AS `__mysqli_count` LIMIT 1', $template->getLastPrepareQuery());
 
     }
 

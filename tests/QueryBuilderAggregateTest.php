@@ -136,9 +136,11 @@ final class QueryBuilderAggregateTest extends TestCase
             ->limit(0, 10)->skipLocked()->withTotalCount()->count(tableName: 'orders');
         self::assertStringStartsWith('SELECT COUNT(*) AS `aggregate` FROM (SELECT', $this->sql($builder));
         self::assertStringContainsString('WHERE `tenantId` = ?', $this->sql($builder));
-        foreach (['ORDER BY', 'LIMIT', 'FOR UPDATE', 'SKIP LOCKED', 'SQL_CALC_FOUND_ROWS'] as $removed) {
+        foreach (['ORDER BY', 'FOR UPDATE', 'SKIP LOCKED', 'SQL_CALC_FOUND_ROWS'] as $removed) {
             self::assertStringNotContainsString($removed, $builder->getLastPrepareQuery());
         }
+        self::assertSame(1, substr_count($builder->getLastPrepareQuery(), 'LIMIT'));
+        self::assertStringEndsWith('AS `__mysqli_count` LIMIT 1', $builder->getLastPrepareQuery());
         self::assertSame([7], $builder->getLastBindParams());
         self::assertNull($builder->getLastTransactionOp());
         self::assertSame([], $builder->getLastQueryOptions());
@@ -150,7 +152,7 @@ final class QueryBuilderAggregateTest extends TestCase
     public function testCountPreservesDistinctAndTheSelectedDataset(): void
     {
         $builder = (new QueryBuilder())->distinct()->fields(['status'])->where('tenantId', 7)->count('orders', 'total');
-        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT DISTINCT status FROM `orders` WHERE `tenantId` = ?) AS `__mysqli_count`', $this->sql($builder));
+        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT DISTINCT status FROM `orders` WHERE `tenantId` = ?) AS `__mysqli_count` LIMIT 1', $this->sql($builder));
         self::assertSame([7], $builder->getLastBindParams());
     }
 
@@ -177,10 +179,10 @@ final class QueryBuilderAggregateTest extends TestCase
         self::assertStringNotContainsString('LOCK IN SHARE MODE', $builder->getLastPrepareQuery());
     }
 
-    public function testCountWithImplicitGroupedFieldsCountsGroupsInsteadOfSelectingStar(): void
+    public function testCountWithHavingPreservesImplicitProjection(): void
     {
         $builder = (new QueryBuilder())->where('tenantId', 7)->groupBy('status')->having('COUNT(*)', 2, '>')->count('orders');
-        self::assertMatchesRegularExpression('/FROM \(SELECT status AS `[^`]+` FROM `orders` WHERE `tenantId` = \? GROUP BY status HAVING COUNT\(\*\) > \?\)/', $this->sql($builder));
+        self::assertMatchesRegularExpression('/FROM \(SELECT \* FROM `orders` WHERE `tenantId` = \? GROUP BY status HAVING COUNT\(\*\) > \?\)/', $this->sql($builder));
         self::assertSame([7, 2], $builder->getLastBindParams());
     }
 
@@ -227,7 +229,8 @@ final class QueryBuilderAggregateTest extends TestCase
         $builder = (new QueryBuilder())->fromSub($source, 's')->where('s.id', 7, '>')->limit(1)->count(null);
         self::assertStringContainsString('FROM (SELECT id FROM `users` WHERE `active` = ? ORDER BY id DESC LIMIT 3) AS `s` WHERE `s`.`id` > ?', $this->sql($builder));
         self::assertSame([true, 7], $builder->getLastBindParams());
-        self::assertStringNotContainsString('LIMIT 1', $builder->getLastPrepareQuery());
+        self::assertSame(2, substr_count($builder->getLastPrepareQuery(), 'LIMIT'));
+        self::assertStringEndsWith('AS `__mysqli_count` LIMIT 1', $builder->getLastPrepareQuery());
     }
 
     public function testAggregateHelpersQuoteIdentifiersAndMatchTheGenericFunctions(): void

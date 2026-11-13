@@ -31,12 +31,21 @@ final class ResultStream implements \IteratorAggregate
         $this->finish = \Closure::fromCallable($finish);
     }
 
+    /** @internal OK 响应已经读取完毕，流只提供一次空遍历。 */
+    public static function completedEmpty(): self
+    {
+        $stream = new self(static fn(): ?array => null, static function (): void {});
+        $stream->finish(true);
+        return $stream;
+    }
+
     public function getIterator(): \Traversable
     {
-        if ($this->started || $this->closed) {
+        if ($this->started || ($this->closed && !$this->complete)) {
             throw new \LogicException('A result stream can only be iterated once');
         }
         $this->started = true;
+        if ($this->complete) { return; }
         try {
             while (!$this->closed) {
                 $this->fetching = true;
@@ -67,7 +76,7 @@ final class ResultStream implements \IteratorAggregate
     public function isComplete(): bool { return $this->complete; }
     public function getRowsRead(): int { return $this->rowsRead; }
 
-    /** @internal 完整读取后执行，参数是行数；提前停止及读取错误不会触发。 */
+    /** @internal 完整读取后执行并传入行数；若 OK 已经读取完毕，注册时立即执行。 */
     public function onComplete(callable $callback): self
     {
         if ($this->complete) {
@@ -78,7 +87,7 @@ final class ResultStream implements \IteratorAggregate
         return $this;
     }
 
-    /** @internal 完整读取、提前停止和读取失败后均执行；参数表示是否读到 EOF。 */
+    /** @internal 完整读取、提前停止和读取失败后均执行；参数表示响应是否已完整读取。 */
     public function onClose(callable $callback): self
     {
         if ($this->closed) {

@@ -68,7 +68,7 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['aggregate'=>6]],$this->client->query($builder));
         $builder->fields(['tenantId'])->distinct()->orderByDesc('tenantId')->limit(1)->count('qb_fix_orders');
         self::assertSame([['aggregate'=>2]],$this->client->query($builder));
-        $builder->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
+        $builder->fields('tenantId')->groupBy('tenantId')->having('SUM(score)',40,'>')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>1]],$this->client->query($builder));
         $builder->groupBy('1')->count('qb_fix_orders');
         self::assertSame([['aggregate'=>4]],$this->client->query($builder));
@@ -78,6 +78,57 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
                 ->orderByDesc('tenantId')->limit(1)->count('qb_fix_orders');
             self::assertSame([['aggregate'=>$expected]],$this->client->query($builder));
         }
+    }
+
+    public function testDistinctRollupCountKeepsTheOriginalProjection(): void
+    {
+        $this->client->rawQuery("SET SESSION sql_mode = ''");
+        $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_rollup (region INT NULL, id INT NOT NULL)');
+        $this->client->rawQuery('INSERT INTO qb_fix_rollup VALUES (NULL,1),(2,2)');
+        $template = (new QueryBuilder())->distinct()->groupBy('region WITH ROLLUP');
+        $rows = $this->client->query((clone $template)->get('qb_fix_rollup'));
+        self::assertCount(3, $rows);
+        self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_rollup')));
+    }
+
+    public function testGroupedHavingCanUseColumnsFromTheOriginalProjection(): void
+    {
+        $this->client->rawQuery("SET SESSION sql_mode = ''");
+        $template = (new QueryBuilder())->groupBy('tenantId')->having('id', 0, '>');
+        $rows = $this->client->query((clone $template)->get('qb_fix_orders'));
+        self::assertCount(2, $rows);
+        self::assertSame([['aggregate' => count($rows)]], $this->client->query($template->count('qb_fix_orders')));
+    }
+
+    public function testPaginationReturnsCountWithZeroSessionSelectLimit(): void
+    {
+        $this->client->rawQuery('SET SESSION sql_select_limit = 0');
+        $template = (new QueryBuilder())->fields('id')->orderByAsc('id');
+        $page = $this->client->paginate($template, 'qb_fix_orders', 1, 2);
+        self::assertSame([['id' => 2]], $page['items']);
+        self::assertSame(4, $page['total']);
+    }
+
+    public function testClosingACompletedWriteStreamKeepsTheTransaction(): void
+    {
+        $connection = $this->client->mysqlClient();
+        $connection->begin_transaction();
+        $streams = [
+            fn() => $this->client->rawIterate('UPDATE qb_fix_orders SET score = score + 1 WHERE id = 1'),
+            fn() => $this->client->iterate((new QueryBuilder())->where('id', 2)->update('qb_fix_orders', ['score' => 22])),
+        ];
+        foreach ($streams as $create) {
+            $stream = $create();
+            self::assertTrue($stream->isComplete());
+            self::assertFalse($connection->isBusy());
+            self::assertSame(1, $this->client->getLastAffectRows());
+            self::assertSame([], iterator_to_array($stream));
+            $stream->close();
+            self::assertTrue($connection->inTransaction());
+            self::assertFalse($connection->isTransactionLost());
+        }
+        self::assertTrue($connection->rollback());
+        self::assertSame([['score' => 10]], $this->client->rawQuery('SELECT score FROM qb_fix_orders WHERE id = 1'));
     }
 
     public function testAggregatesAndParameterizedFromSubComposeInSqlOrder(): void

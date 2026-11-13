@@ -31,7 +31,7 @@ final class QueryBuilderRegressionTest extends TestCase
     {
         $builder = (new QueryBuilder())->where('status', 'paid')
             ->groupBy('region')->groupBy('city with rollup')->count('sales');
-        self::assertSame('SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, city AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY region, city with rollup) AS `__mysqli_count`', $this->sql($builder));
+        self::assertSame('SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, city AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY region, city with rollup) AS `__mysqli_count` LIMIT 1', $this->sql($builder));
         self::assertSame(['paid'], $builder->getLastBindParams());
     }
 
@@ -39,7 +39,7 @@ final class QueryBuilderRegressionTest extends TestCase
     {
         $builder = (new QueryBuilder())->where('status', 'paid')
             ->groupBy("ROLLUP(region, COALESCE(city, 'a,b'))")->count('sales');
-        self::assertSame("SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, COALESCE(city, 'a,b') AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY ROLLUP(region, COALESCE(city, 'a,b'))) AS `__mysqli_count`", $this->sql($builder));
+        self::assertSame("SELECT COUNT(*) AS `aggregate` FROM (SELECT region AS `__mysqli_group0`, COALESCE(city, 'a,b') AS `__mysqli_group1` FROM `sales` WHERE `status` = ? GROUP BY ROLLUP(region, COALESCE(city, 'a,b'))) AS `__mysqli_count` LIMIT 1", $this->sql($builder));
         self::assertSame(['paid'], $builder->getLastBindParams());
     }
 

@@ -64,9 +64,8 @@ class Client
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
         $sql = $builder->getLastPrepareQuery();
-        $operation = $builder->getLastTransactionOp();
-        if ($operation === QueryBuilder::TS_OP_LOCK_TABLE || $operation === QueryBuilder::TS_OP_UNLOCK_TABLE) {
-            return $this->rawQuery($sql, $timeout);
+        if ($this->isTableLock($builder)) {
+            return $this->executeText($sql, $timeout);
         }
         $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
@@ -82,6 +81,9 @@ class Client
      */
     public function iterate(QueryBuilder $builder, ?float $timeout = null): ResultStream
     {
+        if ($this->isTableLock($builder)) {
+            throw new \InvalidArgumentException('Table lock commands must be executed with query()');
+        }
         $execution = $this->beginExecution($timeout);
         $sql = $builder->getLastPrepareQuery();
         $parameters = $builder->getLastBindParams();
@@ -129,12 +131,7 @@ class Client
      */
     public function rawQuery(string $query,?float $timeout = null): bool|array
     {
-        $execution = $this->beginExecution($timeout);
-        return $execution->buffered(function () use ($execution, $query): bool|array {
-            $result = $this->connection()->query($query, $execution->remaining());
-            $this->captureMetadata();
-            return $result;
-        });
+        return $this->executeText($query, $timeout);
     }
 
     /**
@@ -155,12 +152,6 @@ class Client
     public function mysqlClient(): Connection|null
     {
         return $this->mysqlClient;
-    }
-
-    /** 取出客户端持有的协议连接；连接和事务状态由协议层检查。 */
-    private function connection(): Connection
-    {
-        return $this->mysqlClient ?? throw new Exception('MySQL connection is not open; call connect() first');
     }
 
     /**
@@ -207,6 +198,28 @@ class Client
             $this->close();
         } catch (\Throwable) {
         }
+    }
+
+    private function isTableLock(QueryBuilder $builder): bool
+    {
+        $operation = $builder->getLastTransactionOp();
+        return $operation === QueryBuilder::TS_OP_LOCK_TABLE || $operation === QueryBuilder::TS_OP_UNLOCK_TABLE;
+    }
+
+    private function executeText(string $query, ?float $timeout): bool|array
+    {
+        $execution = $this->beginExecution($timeout);
+        return $execution->buffered(function () use ($execution, $query): bool|array {
+            $result = $this->connection()->query($query, $execution->remaining());
+            $this->captureMetadata();
+            return $result;
+        });
+    }
+
+    /** 取出客户端持有的协议连接；连接和事务状态由协议层检查。 */
+    private function connection(): Connection
+    {
+        return $this->mysqlClient ?? throw new Exception('MySQL connection is not open; call connect() first');
     }
 
     /**

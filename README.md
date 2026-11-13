@@ -209,7 +209,7 @@ $client->mysqlClient()->rollback(TransactionCompletionFlags::NoChainNoRelease);
 $client->mysqlClient()->commit(TransactionCompletionFlags::Release);
 ```
 
-CHAIN 可开始新事务，RELEASE 成功后本地连接同步关闭。`None`、`Chain` 和 `NoChain` 采用当前会话的默认释放行为。调用 `commit()` 或 `rollback()` 时，这三个选项会先在同一个超时预算内读取 `completion_type`。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
+CHAIN 可开始新事务。显式 `RELEASE` 成功后本地连接同步关闭。省略释放选项时，驱动只发送事务结束命令，由 MySQL 按当前会话的 `completion_type` 决定行为。如果服务端随后关闭会话，驱动在后续 I/O 发现断线时报告错误。需要明确结束且保留连接时使用 `NoChainNoRelease`。选项语义参照 [MySQL 事务语法](https://dev.mysql.com/doc/refman/8.0/en/commit.html)。
 
 文本查询和预处理结果中的 DATE 均返回 `YYYY-MM-DD`，DATETIME/TIMESTAMP 均返回完整的 `YYYY-MM-DD HH:MM:SS`。TIME、DATETIME、TIMESTAMP 按字段小数精度（0～6）保留相应位数，包括值为零的小数，例如 TIME(3) 的 `00:00:00.000`。TIME 保留负号和超过 24 小时的小时数，NULL 仍返回 null。
 
@@ -252,6 +252,8 @@ try {
 ```
 
 - `$builder` 必须已经构建。方法在准备语句前读取 SQL 和参数，返回 `ResultStream` 供逐行读取。将结果转成数组仍会占用完整结果所需内存。
+- 构造器生成的表锁命令使用 `Client::query()` 执行。传给 `iterate()` 时会抛出 `InvalidArgumentException`。
+- 命令只返回 OK 时，结果流在返回前已完成，遍历得到零行。此时调用 `close()` 不会关闭会话。
 - 预处理、执行、逐行读取和自动 Statement 清理共用一个总超时。消费者处理每行的时间也计入该预算，处理较慢时相应设置超时或改用分批读取。
 - 完整读到 EOF 后保留连接，并自动释放该方法创建的 Statement；提前退出循环、消费者抛异常、显式关闭或丢弃未读流会关闭连接，避免残留协议数据。
 - 流结束前连接保持独占，不能在同一 Client 上发起查询、创建预处理语句、事务或关闭连接。需要并行操作时使用其他 Client；其他协程正在读取时，调用流的 `close()` 会抛并发异常，等本次读取结束后再关闭。
@@ -306,7 +308,7 @@ try {
 }
 ```
 
-- 流只能遍历一次，不能 rewind 后重读；`isComplete()` 仅表示已经读到 EOF，`isClosed()` 也可能表示提前关闭或失败。`getRowsRead()` 返回流已经交付的行数。
+- 流只能遍历一次，不能 rewind 后重读；`isComplete()` 表示已经读到 EOF 或完整 OK 响应，`isClosed()` 也可能表示提前关闭或失败。`getRowsRead()` 返回流已经交付的行数。
 - 流式读取避免累积所有行，但单行及其逻辑数据包仍需完整解码；一个超大 BLOB 本身仍可能需要较多内存。
 - 普通 `foreach ($stream as $row)` 提前退出会自动关闭；若显式持有 `getIterator()` 的返回对象，结束后必须主动 `close()`，不要等待迭代器最终销毁。
 - 正常结束后的 `close()` 可重复调用；其他协程正在读取该流时不能关闭。事务中提前关闭的恢复规则见 `rawIterate()`，对所有流入口都适用。
@@ -763,6 +765,7 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
+- `DISTINCT`、`DISTINCTROW` 和 UNION 计数保留原投影，按原结果的列组合去重。带 `HAVING` 的计数同样保留原投影，以便引用字段或别名。外层 COUNT 使用 `LIMIT 1`，确保返回一行。
 - 忽略整体 ORDER BY、LIMIT 和行锁；UNION 分支已经构建的局部排序、分页仍属于分支结果，不会删除。WHERE、JOIN、HAVING、DISTINCT 和 UNION 的参数保留。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 复杂选择列表，尤其 JOIN 的 `*` 或同名列，应先用 `fields()` 给各结果列起唯一别名，确保它们可以作为派生表列名。自定义 `$alias` 是结果列名，不是 SQL 片段。
@@ -1235,9 +1238,9 @@ $builder->where('id', $id)->nowait()->get('orders');
 
 | 标记或位置 | 保留原因 | 停止支持 5.1 后的处理 |
 | --- | --- | --- |
-| `SWOOLE_51_COMPAT`，`PacketStream::enableTls()` 初始化 | 5.1 在握手时才创建 SSL_CTX，且只有开启验证才加载 CA；因此握手前始终保持验证开启 | 可重新评估初始化流程。当前 `Client::enableSSL()` 还负责可靠提供原生错误码；只要继续使用该方法，保存配置前移除 `open_ssl` 的步骤在 6.2 中也必须保留，不能单独删除 |
+| `SWOOLE_51_COMPAT`，`TlsHandshake::enable()` 初始化 | 5.1 在握手时才创建 SSL_CTX，且只有开启验证才加载 CA；因此握手前始终保持验证开启 | 可重新评估初始化流程。当前 `Client::enableSSL()` 还负责可靠提供原生错误码；只要继续使用该方法，保存配置前移除 `open_ssl` 的步骤在 6.2 中也必须保留，不能单独删除 |
 | `SWOOLE_51_BUILD`，Dockerfile 的 `5.*` 分支 | 为 5.1 构建显式添加 `--enable-openssl` | 确认矩阵不再构建任何 5.x 版本后，可以删除该 `case` 分支，继续校验目标运行时具有 OpenSSL/TLS 能力 |
-| `SWOOLE_SNI_COMPAT`，TLS 握手恢复、`verifyTlsCertificate()`、`TlsOptions` | 已验证 5.1.8 和 6.2.4 都会根据 SNI 执行原生主机名检查，需要分开实现 VerifyCA 和 VerifyIdentity | 继续保留。只有目标 Swoole 已正确支持 SNI 与身份校验分离，并通过相应用例后，才能简化此流程；停止支持 5.1 本身不足以删除这些分支 |
+| `SWOOLE_SNI_COMPAT`，`TlsHandshake` 的握手恢复与证书复核、`TlsOptions` | 已验证 5.1.8 和 6.2.4 都会根据 SNI 执行原生主机名检查，需要分开实现 VerifyCA 和 VerifyIdentity | 继续保留。只有目标 Swoole 已正确支持 SNI 与身份校验分离，并通过相应用例后，才能简化此流程；停止支持 5.1 本身不足以删除这些分支 |
 | `method_exists()`、TLS 常量检查 | 检查扩展是否编译了所需 OpenSSL 方法和协议能力 | 属于通用能力检查，继续保留 |
 
 ```bash

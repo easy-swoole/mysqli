@@ -106,7 +106,7 @@ final class SelectPlannerTest extends TestCase
             $distinct = SelectPlanner::countSource($this->state(['fields' => $fields, 'queryOptions' => ['DISTINCT']]));
             self::assertSame($fields, $distinct['fields']);
         }
-        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT ? AS id) AS `__mysqli_count`',
+        self::assertSame('SELECT COUNT(*) AS `total` FROM (SELECT ? AS id) AS `__mysqli_count` LIMIT 1',
             SelectPlanner::countSql('SELECT ? AS id', '`total`'));
     }
 

@@ -34,25 +34,19 @@ final class ExecutionContext
     }
 
     /**
-     * 缓冲查询在 finally 中释放自建语句，执行异常和成功回调异常均原样传播。
+     * 缓冲查询在通知成功之前释放自建语句，执行异常和成功回调异常均原样传播。
      * @param callable(): (bool|array<array-key, mixed>) $operation
      * @return bool|array<array-key, mixed>
      */
     public function buffered(callable $operation): bool|array
     {
-        $failed = false;
         try {
             $result = $operation();
         } catch (\Throwable $error) {
-            $failed = true;
+            $this->discardOwnedStatement();
             throw $error;
-        } finally {
-            if ($failed) {
-                $this->discardOwnedStatement();
-            } else {
-                $this->closeOwnedStatement();
-            }
         }
+        $this->closeOwnedStatement();
         $this->complete($result);
         return $result;
     }
