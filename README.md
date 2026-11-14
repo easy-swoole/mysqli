@@ -852,6 +852,18 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。执行使用预处理 SQL 和绑定参数。字段列表拆分和调试 SQL 生成均按无注释的 SQL 处理。多语句和直接 CALL 限制同样适用。
 - 调试 SQL 以可还原双精度值的科学计数法展示有限的 PHP 浮点数。
 
+### `getLastCompiledQuery(): ?CompiledQuery`
+
+```php
+$builder->raw('SELECT ? AS name', ["O'Reilly"]);
+$compiled = $builder->getLastCompiledQuery();
+$builder->raw('SELECT 1');
+echo $compiled->toDebugSql();
+```
+
+- 首次发布查询前返回 `null`。发布后返回与 `getLastPrepareQuery()` 和 `getLastBindParams()` 对应的只读结果。可直接读取 `$compiled->sql` 和 `$compiled->parameters`，重新使用构造器后仍可保留原结果。
+- `toDebugSql()` 使用该结果保存的引号规则按需展开参数。没有参数时直接返回 SQL。
+- 子类覆写 `reset()` 时，调用 `parent::reset()` 前，`getLastQuery()` 已能显示本次调试 SQL，`getLastCompiledQuery()` 仍读取上一次发布的结果。
 
 ### `forceIndex($indexes)`
 
@@ -1306,13 +1318,13 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 
 ## QueryBuilder 内部职责
 
-`QueryBuilder` 提供带原生类型声明的公开链式构建方法；编译逻辑位于 `src/QueryBuilder/`，内部协作类不作为业务 API 使用。
+`QueryBuilder` 提供公开链式构建方法，并通过 `CompiledQuery` 提供可独立保留的只读查询结果。编译逻辑由 `src/QueryBuilder/` 中的内部协作类处理。
 
 | 类 | 职责 |
 | --- | --- |
 | `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
-| `CompiledQuery` | 只读的最近成功结果：SQL、绑定参数、查询选项和事务标记 |
+| `CompiledQuery` | 公开只读结果，保存 SQL、绑定参数、查询选项、事务标记和引号模式，按需生成调试 SQL |
 | `SelectPlanner` | 解析 SELECT 的表来源与投影，构建聚合表达式和外层 COUNT SQL |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
 | `QueryCompiler` | 按 SQL 顺序编译子句并绑定参数。普通 SELECT 和 COUNT 共用查询主体，SELECT 再追加外层排序、分页和行锁 |

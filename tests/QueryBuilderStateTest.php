@@ -268,31 +268,65 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame('LOCK TABLES `app_records` WRITE', $builder->getLastPrepareQuery());
     }
 
+    public function testPublishedCompiledQueryRetainsSqlParametersAndQuoteMode(): void
+    {
+        $builder = new QueryBuilder();
+        self::assertNull($builder->getLastCompiledQuery());
+        $sql = 'SELECT ? AS "name?", ? AS "suffix' . chr(92) . '"';
+        $parameters = ["O'Reilly", 'a' . chr(92) . 'b'];
+        $builder->noBackslashEscapes()->ansiQuotes()->raw($sql, $parameters);
+        $first = $builder->getLastCompiledQuery();
+        $debug = 'SELECT \'O\'\'Reilly\' AS "name?", \'a' . chr(92) . 'b\' AS "suffix' . chr(92) . '"';
+        self::assertSame($builder->getLastPrepareQuery(), $first->sql);
+        self::assertSame($builder->getLastBindParams(), $first->parameters);
+        self::assertSame($debug, $first->toDebugSql());
+        self::assertSame($builder->getLastQuery(), $first->toDebugSql());
+
+        $builder->noBackslashEscapes(false)->ansiQuotes(false)->raw('SELECT 2 AS value');
+        $second = $builder->getLastCompiledQuery();
+        self::assertNotSame($first, $second);
+        self::assertSame('SELECT 2 AS value', $second->toDebugSql());
+        self::assertSame($sql, $first->sql);
+        self::assertSame($parameters, $first->parameters);
+        self::assertSame($debug, $first->toDebugSql());
+    }
+
     public function testDebugSqlIsAvailableBeforeVirtualResetPublishesThePreparedSnapshot(): void
     {
         $builder = new class extends QueryBuilder {
             public array $observations = [];
             public function reset(): QueryBuilder
             {
-                $before = [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery()];
+                $before = [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(), $this->getLastCompiledQuery()];
                 parent::reset();
-                $this->observations[] = [$before, [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery()]];
+                $this->observations[] = [$before, [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(), $this->getLastCompiledQuery()]];
                 return $this;
             }
         };
         $builder->where('id', 1)->get('records');
         self::assertNull($builder->observations[0][0][0]);
         self::assertSame([], $builder->observations[0][0][1]);
+        self::assertNull($builder->observations[0][0][3]);
         self::assertStringContainsString('`id` = 1', $builder->observations[0][0][2]);
         self::assertSame($builder->getLastPrepareQuery(), $builder->observations[0][1][0]);
         self::assertSame([1], $builder->observations[0][1][1]);
         self::assertSame($builder->observations[0][0][2], $builder->observations[0][1][2]);
+        $firstCompiled = $builder->getLastCompiledQuery();
+        self::assertSame($firstCompiled, $builder->observations[0][1][3]);
         $first = $builder->getLastPrepareQuery();
         $builder->where('id', 2)->get('records');
         self::assertSame($first, $builder->observations[1][0][0]);
         self::assertSame([1], $builder->observations[1][0][1]);
         self::assertStringContainsString('`id` = 2', $builder->observations[1][0][2]);
         self::assertSame([2], $builder->observations[1][1][1]);
+        self::assertSame($firstCompiled, $builder->observations[1][0][3]);
+        self::assertSame($builder->getLastCompiledQuery(), $builder->observations[1][1][3]);
+        foreach ($builder->observations as $build) {
+            foreach ($build as [$sql, $parameters, , $compiled]) {
+                self::assertSame($sql, $compiled?->sql);
+                self::assertSame($parameters, $compiled?->parameters ?? []);
+            }
+        }
     }
 
     public function testInternalPublicationDoesNotCallAnOverriddenDebugGetter(): void

@@ -1028,7 +1028,7 @@ $builder->raw('SELECT * FROM users WHERE age > ? AND name = ?', [18, 'Alice']);
 // 在协程内通过 $client->query($builder) 执行。
 ```
 
-`raw()` 的参数替换及状态清理规则见前文对应方法；它不会继承旧查询或失败编译的参数。`getLastQuery()` 只用于查看和调试；执行时使用预处理 SQL 和绑定参数。
+`raw()` 的参数替换及状态清理规则见前文对应方法。用 `getLastQuery()` 查看本次构建的调试 SQL。需要留存已发布的查询时，用 `getLastCompiledQuery()` 获取只读结果，再调用其 `toDebugSql()` 按构建时的引号规则展开。执行时使用预处理 SQL 和绑定参数。
 
 ## 事务语句
 

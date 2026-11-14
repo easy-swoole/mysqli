@@ -21,6 +21,7 @@
         "getField": "public function getField(): ?array",
         "getFromSub": "public function getFromSub(EasySwoole\\Mysqli\\QueryBuilder $subquery, string $alias, mixed $numRows = NULL, mixed $columns = NULL): EasySwoole\\Mysqli\\QueryBuilder",
         "getLastBindParams": "public function getLastBindParams(): array",
+        "getLastCompiledQuery": "public function getLastCompiledQuery(): ?EasySwoole\\Mysqli\\QueryBuilder\\CompiledQuery",
         "getLastPrepareQuery": "public function getLastPrepareQuery(): ?string",
         "getLastQuery": "public function getLastQuery(): mixed",
         "getLastQueryOptions": "public function getLastQueryOptions(): array",

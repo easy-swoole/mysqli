@@ -17,7 +17,6 @@ use EasySwoole\Mysqli\QueryBuilder\{
     SelectPlanner,
     SortDirection,
     SqlBuffer,
-    SqlFormatter,
     SqlList,
     TableLockMode,
     TableReference,
@@ -868,6 +867,12 @@ class QueryBuilder
 
     // 构建结果
 
+    /** 获取最近一次已发布的只读编译结果。 */
+    public function getLastCompiledQuery(): ?CompiledQuery
+    {
+        return $this->compiled;
+    }
+
     /** 获取构建的SQL */
     public function getLastPrepareQuery(): ?string
     {
@@ -901,12 +906,7 @@ class QueryBuilder
     /** 按需生成最近一次构建的调试 SQL。 */
     public function getLastQuery(): mixed
     {
-        $query = $this->lastBuilt;
-        if ($query === null || $query->parameters === []) {
-            return $query?->sql;
-        }
-        return SqlFormatter::renderForMode($query->sql, $query->parameters,
-            ...$query->quoteMode);
+        return $this->lastBuilt?->toDebugSql();
     }
 
     /** 获取子查询 */
