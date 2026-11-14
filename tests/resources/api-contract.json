@@ -6565,7 +6565,7 @@
             "final": true,
             "abstract": false,
             "methods": {
-                "compile": {
+                "compileWrite": {
                     "visibility": "public",
                     "static": false,
                     "final": false,
@@ -6651,8 +6651,7 @@
                         }
                     ],
                     "returnType": [
-                        "int",
-                        "null"
+                        "void"
                     ]
                 }
             }
@@ -7102,35 +7101,7 @@
             "kind": "class",
             "final": true,
             "abstract": false,
-            "methods": {
-                "render": {
-                    "visibility": "public",
-                    "static": true,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "str",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
-                        },
-                        {
-                            "name": "vals",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
-                        }
-                    ],
-                    "returnType": null
-                }
-            }
+            "methods": {}
         },
         "EasySwoole\\Mysqli\\QueryBuilder\\SqlList": {
             "kind": "class",

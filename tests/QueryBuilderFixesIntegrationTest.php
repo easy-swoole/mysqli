@@ -78,6 +78,18 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
         self::assertSame([['value' => $value]], $this->client->rawQuery($builder->getLastQuery()));
     }
 
+    public function testRepeatedRawOrderingAppendsAroundAnOverwrittenPlainField(): void
+    {
+        $sort = 'FIELD(status, ?) DESC';
+        $builder = (new QueryBuilder())->orderByRaw($sort, ['a/b'])
+            ->orderByDesc('id')->orderByRaw($sort, ['a/b'])->orderByAsc('id')
+            ->get('qb_fix_orders', null, 'id');
+        self::assertStringContainsString('ORDER BY FIELD(status, ?) DESC, id ASC, FIELD(status, ?) DESC',
+            $builder->getLastPrepareQuery());
+        self::assertSame(['a/b', 'a/b'], $builder->getLastBindParams());
+        self::assertSame([2, 1, 3, 4], array_column($this->client->query($builder), 'id'));
+    }
+
     public function testGetColumnPreservesCompleteFunctionAndAlias(): void
     {
         $builder = (new QueryBuilder())->fields(["CONCAT(COALESCE(name, 'guest'), ', ', status) AS display_name"])

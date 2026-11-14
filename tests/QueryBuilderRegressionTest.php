@@ -106,6 +106,38 @@ final class QueryBuilderRegressionTest extends TestCase
         self::assertSame(['open', 'archived'], $builder->getLastBindParams());
     }
 
+    public function testFieldOrderingKeysPreserveDistinctDoublesAtLowSerializePrecision(): void
+    {
+        $first = 1.0000000000000002;
+        $second = 1.0000000000000004;
+        $precision = ini_get('serialize_precision');
+        ini_set('serialize_precision', '14');
+        try {
+            $builder = (new QueryBuilder())->orderBy('score', 'ASC', [$first, 'pending'])
+                ->orderBy('score', 'ASC', [$second, 'pending'])
+                ->orderBy('score', 'DESC', [$first, 'pending'])->get('orders');
+            self::assertSame('SELECT * FROM `orders` ORDER BY FIELD (score, ?, ?) DESC, FIELD (score, ?, ?) ASC', $this->sql($builder));
+            self::assertSame([$first, 'pending', $second, 'pending'], $builder->getLastBindParams());
+        } finally {
+            ini_set('serialize_precision', $precision);
+        }
+    }
+
+    public function testFieldOrderingSnapshotsReferencedValuesBeforeCloning(): void
+    {
+        $preferred = 'paid';
+        $priorities = [&$preferred, 'pending'];
+        $template = (new QueryBuilder())->orderBy('status', 'ASC', $priorities);
+        $copy = clone $template;
+        $preferred = 'failed';
+
+        $copy->orderBy('status', 'DESC', ['paid', 'pending'])->get('orders');
+        self::assertSame('SELECT * FROM `orders` ORDER BY FIELD (status, ?, ?) DESC', $this->sql($copy));
+        self::assertSame(['paid', 'pending'], $copy->getLastBindParams());
+        self::assertSame('SELECT * FROM `orders` ORDER BY FIELD (status, ?, ?) ASC', $this->sql($template->get('orders')));
+        self::assertSame(['paid', 'pending'], $template->getLastBindParams());
+    }
+
     public function testLimitedAndSortedUnionBranchesAreParenthesized(): void
     {
         $limited = (new QueryBuilder())->where('status', 'limited')->orderByDesc('id')->get('archive', 2, 'id');

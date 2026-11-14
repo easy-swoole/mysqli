@@ -7,17 +7,6 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 /** @internal 生成调试展示 SQL，不修改可执行 SQL 或参数。 */
 final class SqlFormatter
 {
-    public static function render(string $str, array $vals): ?string
-    {
-        return self::renderWithQuoteMode($str, $vals, false);
-    }
-
-    /** @internal 调试 SQL 使用构建时的引号规则。 */
-    public static function renderWithQuoteMode(string $str, array $vals, bool $noBackslashEscapes): ?string
-    {
-        return self::renderForMode($str, $vals, $noBackslashEscapes, false);
-    }
-
     public static function renderForMode(string $str, array $vals, bool $noBackslashEscapes, bool $ansiQuotes): string
     {
         $index = 0;

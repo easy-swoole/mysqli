@@ -376,7 +376,7 @@ $builder->orderByRaw('FIELD(status, ?, ?) DESC', ['paid', 'pending'])
 
 - 传完整排序项，可在可信片段内写明 ASC/DESC；方法不会自动追加方向，不传 `ORDER BY` 关键字。
 - 外部值使用参数绑定，字段和方向仍由可信代码或白名单决定；绑定 `?` 不能代替字段标识符。
-- 可与普通 `orderBy()` 混用，按调用顺序排列；UNION 主构造器上的排序作用于整体结果。构建完成或 `reset()` 后清除。
+- 每次调用都追加一个排序项，可与普通 `orderBy()` 混用。UNION 主构造器上的排序作用于整体结果。构建完成或 `reset()` 后清除。
 
 ### `whereColumn($first, $second, $operator = '=', $cond = 'AND')` / `orWhereColumn()`
 
@@ -786,7 +786,7 @@ $builder->orderBy('status', 'ASC', ['awaiting/payment', 'paid+confirmed'])->get(
 - 第三个参数为字符串时按正则表达式值绑定，不直接拼进 SQL；不手动添加 SQL 引号或转义单引号。无效正则由数据库报错。
 - 第三个参数为非空数组时生成 FIELD 自定义顺序，所有成员按原值绑定，不过滤引号、斜杠、加号等字符。成员只能是标量或 null；空数组、嵌套数组、对象会在修改排序前报错。
 - 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
-- 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
+- 普通排序重复设置同一字段时，在原位置更新方向。自定义排序只有字段与参数相同时才覆盖。FIELD 列表在调用时按值保存，浮点参数按完整双精度值区分。构建完成后清除排序。
 - `orderBy()` 和 `groupBy()` 按传入的文本拼接表达式。字段名使用代码常量或白名单。使用表别名时按 SQL 中的别名限定字段，引用带前缀的实际表时填写完整表名。
 - `orderBy('RAND()', SortDirection::Desc)` 生成 `ORDER BY RAND() DESC`。只需写 `ORDER BY RAND()` 时，可用 `orderByRaw('RAND()')`。
 

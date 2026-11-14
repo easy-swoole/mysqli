@@ -146,7 +146,7 @@ final class SelectCompiler
         return implode(', ', $rendered);
     }
 
-    /** @return array{0: string|array<array-key, string>|null, 1: array{field: string|array<array-key, string>|null, direction: string, params: list<scalar|null>}} */
+    /** @return array{0: string, 1: array{field: string, direction: string, params: list<scalar|null>}} */
     public static function order(mixed $orderByField, mixed $orderbyDirection, mixed $customFieldsOrRegExp, mixed $tableName): array
     {
         $orderbyDirection = $orderbyDirection instanceof SortDirection ? $orderbyDirection->value : strtoupper(trim($orderbyDirection));
@@ -156,11 +156,11 @@ final class SelectCompiler
         }
         $orderParams = [];
         if (is_array($customFieldsOrRegExp)) {
-            $orderParams = array_values($customFieldsOrRegExp);
-            foreach ($orderParams as $value) {
+            foreach ($customFieldsOrRegExp as $value) {
                 if ($value !== null && !is_scalar($value)) {
                     throw new \InvalidArgumentException('Custom sort values must be scalar values or null');
                 }
+                $orderParams[] = $value;
             }
             if ($orderParams === []) {
                 throw new \InvalidArgumentException('Custom sort values must not be empty');
@@ -173,7 +173,9 @@ final class SelectCompiler
         } elseif ($customFieldsOrRegExp !== null) {
             throw new Exception("Wrong custom field or Regular Expression: {$customFieldsOrRegExp} for column {$orderByField} in table {$tableName}");
         }
-        $orderKey = $orderParams === [] ? $orderByField : serialize([$orderByField, $orderParams]);
+        // 浮点键使用原始双精度字节，并用数组与普通字符串参数区分。
+        $keyParams = array_map(static fn($value) => is_float($value) ? [pack('E', $value)] : $value, $orderParams);
+        $orderKey = $keyParams === [] ? 'field:' . $orderByField : 'params:' . serialize([$orderByField, $keyParams]);
         return [$orderKey, ['field' => $orderByField, 'direction' => $orderbyDirection, 'params' => $orderParams]];
-        }
+    }
 }

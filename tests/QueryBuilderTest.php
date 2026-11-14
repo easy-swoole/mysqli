@@ -26,7 +26,7 @@ final class QueryBuilderTest extends TestCase
     {
         $this->builder->whereIn('id', [1, 2])->whereNotIn('status', [3])
             ->whereNull('deleted_at')->whereNotNull('name')
-            ->whereBetween('price', [10, 20])->orderByAsc('price')->orderByDesc('id')->get('items');
+            ->whereBetween('price', ['min' => 10, 'max' => 20])->orderByAsc('price')->orderByDesc('id')->get('items');
         $legacy = (new QueryBuilder())->where('id', [1, 2], 'IN')->where('status', [3], 'NOT IN')
             ->where('deleted_at', null, 'IS')->where('name', null, 'IS NOT')
             ->where('price', [10, 20], 'BETWEEN')->orderBy('price', 'ASC')->orderBy('id', 'DESC')->get('items');

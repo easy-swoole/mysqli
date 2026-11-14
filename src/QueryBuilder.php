@@ -200,7 +200,7 @@ class QueryBuilder
         if (count($bounds) !== 2) {
             throw new \InvalidArgumentException('BETWEEN requires exactly two bounds');
         }
-        return $this->where($column, array_values($bounds), 'BETWEEN', $cond);
+        return $this->where($column, $bounds, 'BETWEEN', $cond);
     }
 
     /** pattern 由调用方提供，% 和 _ 保持 SQL 通配符含义。 */
@@ -244,8 +244,7 @@ class QueryBuilder
     public function orderByRaw(string $sql, array $parameters = []): QueryBuilder
     {
         $expression = new Expression($sql, $parameters);
-        $key = 'raw:' . serialize([$sql, $expression->getParameters()]);
-        $this->pending['ordering'][$key] = ['field' => $expression, 'direction' => '', 'params' => []];
+        $this->pending['ordering'][] = ['field' => $expression, 'direction' => '', 'params' => []];
         return $this;
     }
 
@@ -1111,7 +1110,7 @@ class QueryBuilder
         $this->pending['tableName'] = $reference['name'];
         $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
         $state = $this->pending;
-        (new QueryCompiler())->compile(
+        (new QueryCompiler())->compileWrite(
             $buffer, PendingQuery::parts($state), $statement, $numRows ?? $state['limit'],
             $tableData, $fields ?? $state['fields'], $batch
         );

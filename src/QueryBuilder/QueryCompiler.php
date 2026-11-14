@@ -179,7 +179,7 @@ final class QueryCompiler
     }
 
     /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
-    public function compile(
+    public function compileWrite(
         SqlBuffer $buffer,
         QueryParts $parts,
         string $statement,
@@ -187,7 +187,7 @@ final class QueryCompiler
         mixed $tableData,
         ?array $fields,
         bool $batch
-    ): ?int {
+    ): void {
         if ($parts->groups !== [] || $parts->having !== [] || $parts->unions !== []
             || $parts->forUpdate || $parts->lockInShareMode) {
             throw new \InvalidArgumentException('GROUP BY, HAVING, UNION and row locks require SELECT');
@@ -202,7 +202,7 @@ final class QueryCompiler
                 throw new \InvalidArgumentException('INSERT and REPLACE do not support JOIN, WHERE, ORDER BY or LIMIT');
             }
             (new WriteCompiler($buffer))->appendInsert($tableData, $fields, $batch, $parts->updateColumns);
-            return null;
+            return;
         }
 
         if ($parts->joins !== [] && ($parts->ordering !== [] || $numRows !== null)) {
@@ -221,6 +221,5 @@ final class QueryCompiler
         $conditions->append('WHERE', $parts->where);
         $select->appendOrder($parts->ordering);
         $select->appendLimit($numRows);
-        return null;
     }
 }
