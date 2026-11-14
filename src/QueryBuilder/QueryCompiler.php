@@ -141,7 +141,10 @@ final class QueryCompiler
         $select->appendLimit($numRows);
         $operation = null;
         if ($parts->forUpdate) {
-            $buffer->sql .= $parts->selectLockOption ? ' FOR UPDATE ' . $parts->selectLockOption : ' FOR UPDATE';
+            $buffer->sql .= ' FOR UPDATE';
+            if ($parts->selectLockOption !== '') {
+                $buffer->sql .= ' ' . $parts->selectLockOption;
+            }
             $operation = QueryBuilder::TS_OP_LOCK_FOR_UPDATE;
         } elseif ($parts->lockInShareMode) {
             $buffer->sql .= ' LOCK IN SHARE MODE';

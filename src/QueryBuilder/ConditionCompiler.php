@@ -96,7 +96,8 @@ final class ConditionCompiler
         if ($value === ConditionValue::Raw) {
             return;
         }
-        switch (strtolower($operator)) {
+        $operatorType = strtolower(trim($operator));
+        switch ($operatorType) {
             case 'not in':
             case 'in':
                 $comparison = ' ' . $operator . ' (';
@@ -124,7 +125,7 @@ final class ConditionCompiler
                 $this->buffer->sql .= $operator . $this->pair('', $value);
                 break;
             default:
-                if ($conditionField !== null && ComparisonOperator::tryFrom($operator) !== null
+                if ($conditionField !== null && ComparisonOperator::tryFrom($operatorType) !== null
                     && is_array($value) && strpos($conditionField, '?') === false) {
                     throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} can not be array");
                 }

@@ -39,8 +39,13 @@ final class SqlFormatter
         if (is_bool($value)) {
             return (string)(int)$value;
         }
-        if (is_int($value) || is_float($value)) {
+        if (is_int($value)) {
             return (string)$value;
+        }
+        if (is_float($value)) {
+            // 17 位有效数字可往返还原双精度值，指数写法让 MySQL 按浮点字面量解析。
+            $literal = sprintf('%.17H', $value);
+            return str_contains($literal, 'E') ? $literal : $literal . 'E0';
         }
         return "'" . ($noBackslashEscapes ? str_replace("'", "''", $value) : addslashes($value)) . "'";
     }

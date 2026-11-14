@@ -12,7 +12,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
  *   unionBranches: list<array>, havingConditions: list<array>,
  *   ordering: array<array-key, array>, groups: list<mixed>, queryOptions: list<string>,
  *   updateColumns: ?array, tableName: mixed,
- *   forUpdate: bool, lockInShareMode: bool, selectLockOption: string|false,
+ *   forUpdate: bool, lockInShareMode: bool, selectLockOption: string,
  *   limit: mixed, fields: ?array, forceIndexes: list<string>, useIndexes: list<string>,
  *   ignoreIndexes: list<string>,
  *   fromSource: null|array{sql: string, params: array, alias: string}

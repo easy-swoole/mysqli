@@ -968,6 +968,81 @@ final class ProtocolTest extends TestCase
         $this->assertServerCompleted($completed);
     }
 
+    public function testHandshakeRejectionClosesTheTransportAndAllowsRetry(): void
+    {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::sendPacket($peer, self::handshake(), 0);
+            self::receivePacket($peer);
+            self::sendPacket($peer, "\xff" . pack('v', 1045) . '#28000Access denied', 2);
+            self::assertSame('', $peer->recv(1, 1.0));
+            $peer->close();
+
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $command] = self::receivePacket($peer);
+            self::assertSame("\x01", $command);
+            $peer->close();
+        });
+        $connection = new \EasySwoole\Mysqli\Protocol\Connection($config);
+        try {
+            try {
+                $connection->connect();
+                self::fail('Expected access denial during handshake');
+            } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                self::assertSame(1045, $connection->connect_errno);
+                self::assertSame($error->getMessage(), $connection->connect_error);
+                self::assertFalse($connection->isConnected());
+                self::assertFalse($connection->isBusy());
+            }
+
+            self::assertTrue($connection->connect());
+            self::assertSame(0, $connection->connect_errno);
+            self::assertSame('', $connection->connect_error);
+        } finally {
+            $connection->close();
+        }
+        $this->assertServerCompleted($completed);
+    }
+
+    public function testExplicitReconnectClearsThePreviousSessionsQueryError(): void
+    {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            self::receivePacket($peer);
+            self::sendPacket($peer, "\xff" . pack('v', 4031) . '#HY000The client was disconnected by the server because of inactivity.', 0);
+            $peer->close();
+
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $command] = self::receivePacket($peer);
+            self::assertSame("\x01", $command);
+            $peer->close();
+        });
+        $client->connect();
+        $connection = $client->mysqlClient();
+        try {
+            try {
+                $client->rawQuery('SELECT 1');
+                self::fail('Expected idle disconnect');
+            } catch (\EasySwoole\Mysqli\Exception\Exception $error) {
+                self::assertSame(4031, $error->getCode());
+                self::assertSame(4031, $connection->errno);
+                self::assertStringContainsString('inactivity', $connection->error);
+            }
+
+            self::assertTrue($client->connect());
+            self::assertSame($connection, $client->mysqlClient());
+            self::assertTrue($connection->isConnected());
+            self::assertSame(0, $connection->errno);
+            self::assertSame('', $connection->error);
+        } finally {
+            $client->close();
+        }
+        $this->assertServerCompleted($completed);
+    }
+
     public function testIdleDisconnectReportsServerErrorAndPreservesTransactionLost(): void
     {
         foreach ([false, true] as $compress) {

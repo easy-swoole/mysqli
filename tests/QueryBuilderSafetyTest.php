@@ -95,6 +95,24 @@ final class QueryBuilderSafetyTest extends TestCase
         $builder->getLastQuery();
     }
 
+    public function testDebugSqlPreservesDoublePrecision(): void
+    {
+        $precision = ini_get('precision');
+        ini_set('precision', '14');
+        try {
+            foreach ([1.2345678901234567, 1.0, -0.0, PHP_FLOAT_MAX, PHP_FLOAT_MIN, 5e-324] as $value) {
+                $builder = (new QueryBuilder())->raw('SELECT ?', [$value]);
+                $literal = substr($builder->getLastQuery(), strlen('SELECT '));
+                self::assertStringContainsString('E', $literal);
+                self::assertSame(pack('e', $value), pack('e', (float) $literal));
+                self::assertSame('SELECT ?', $builder->getLastPrepareQuery());
+                self::assertSame([$value], $builder->getLastBindParams());
+            }
+        } finally {
+            ini_set('precision', $precision);
+        }
+    }
+
     public function testTablePrefixDoesNotTurnAnEmptyWriteTargetIntoATableName(): void
     {
         $builder = (new QueryBuilder())->setPrefix('app_')->where('id', 1)->update('', ['status' => 'open']);

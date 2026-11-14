@@ -2289,39 +2289,6 @@
                         "void"
                     ]
                 },
-                "enableTls": {
-                    "visibility": "public",
-                    "static": false,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "config",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "EasySwoole\\Mysqli\\Config"
-                            ]
-                        },
-                        {
-                            "name": "deadline",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "EasySwoole\\Mysqli\\Protocol\\Deadline"
-                            ]
-                        }
-                    ],
-                    "returnType": [
-                        "void"
-                    ]
-                },
                 "isCompressionEnabled": {
                     "visibility": "public",
                     "static": false,
@@ -3185,30 +3152,7 @@
             "kind": "class",
             "final": true,
             "abstract": false,
-            "methods": {
-                "fromConfig": {
-                    "visibility": "public",
-                    "static": true,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "config",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "EasySwoole\\Mysqli\\Config"
-                            ]
-                        }
-                    ],
-                    "returnType": [
-                        "array"
-                    ]
-                }
-            }
+            "methods": {}
         },
         "EasySwoole\\Mysqli\\QueryBuilder": {
             "kind": "class",

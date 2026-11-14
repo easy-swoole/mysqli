@@ -11,16 +11,11 @@ use EasySwoole\Mysqli\TlsVersion;
 /** @internal 生成受支持的 TLS 选项，在发送任何凭据前完成配置校验。 */
 final class TlsOptions
 {
-    public static function fromConfig(Config $config): array
-    {
-        return self::forHandshake($config, $config->getTlsMode(), self::expectedName($config));
-    }
-
     /** @internal 为一次握手固定模式、SNI 选项和证书身份。 */
-    public static function handshakeConfiguration(Config $config, bool $respectDisabledMode = true): array
+    public static function handshakeConfiguration(Config $config): array
     {
         $mode = $config->getTlsMode();
-        if ($respectDisabledMode && $mode === TlsMode::Disabled) {
+        if ($mode === TlsMode::Disabled) {
             return [null, null];
         }
         $name = self::expectedName($config);

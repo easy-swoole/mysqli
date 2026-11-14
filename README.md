@@ -179,7 +179,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 断线后，后续命令会报错。事务外可显式调用 `connect()`，在当前 `Connection` 对象上建立新会话。新会话使用 `Config` 指定的数据库，若需要切换数据库或设置会话参数，应在新会话上重新执行。失败的 SQL 由调用方决定是否重试。
 
-服务端发送空闲断线错误时，客户端关闭本地连接并保留 MySQL 错误码 `4031`。
+服务端发送空闲断线错误时，客户端关闭本地连接，并通过 `Connection::errno` 和 `Connection::error` 保留错误码 `4031` 及消息。下一次显式 `connect()` 建立新会话时清除旧错误。
 
 预处理语句绑定到创建它的连接和服务端会话。该会话断开或重连后，执行旧 Statement 会抛出 `LogicException`，需要重新准备语句；事务丢失保护生效时优先抛出 `TransactionLostException`。关闭已失效的 Statement 不会关闭新会话中的语句。
 
@@ -218,6 +218,8 @@ CHAIN 可开始新事务。通过事务枚举显式指定 `RELEASE` 时，成功
 同一个连接同时只允许一个操作，包括建立连接、关闭 Statement 和关闭连接。并发调用会抛出异常，正在进行的操作仍可继续完成。可以在当前操作结束后重试关闭 Statement；需要并发查询时，应使用不同的客户端连接。
 
 `connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
+
+`prepare()` 向服务端发送预处理命令时会清除旧的 `Connection::errno` 和 `Connection::error`。本次预处理若收到服务端错误，这两个属性记录本次错误。
 
 `Connection::set_charset(string $charset): bool` 使用连接的默认查询超时。需要单独指定本次超时时，可调用 `$connection->query('SET NAMES utf8mb4', 1.0)`。
 
@@ -429,12 +431,11 @@ $builder->groupBy('userId')
     ->having('SUM(amount)', 100, ComparisonOperator::GreaterThan, ConditionConjunction::And)
     ->having('COUNT(*)', 5, ComparisonOperator::GreaterThanOrEqual, ConditionConjunction::Or)->get('orders');
 
-// 保留旧的关联数组写法；数组键中的运算符覆盖第三个参数。
-$builder->groupBy('userId')->having('COUNT(*)', ['>=' => 5], ComparisonOperator::Equal)->get('orders');
+$builder->groupBy('userId')->having('SUM(amount)', [100, 200], 'BETWEEN')->get('orders', null, 'userId');
 ```
 
 - `$operator` / `$cond` 的枚举、字符串及默认值规则与普通 `where()` 一致；`orHaving()` 固定以 OR 连接。首个 HAVING 条件不输出前置连接符。
-- 旧的关联数组条件继续使用字符串键，例如 `['>=' => 5]`；PHP 枚举对象不能作为数组键。数组内运算符仍按旧规则覆盖 `$operator`，不要同时传入互相矛盾的两套写法。
+- 通过 `$operator` 指定运算符。`BETWEEN` 接收两个边界值，`IN` 接收值列表，均按数组元素顺序绑定。
 - HAVING 分组回调内使用 `having()` 等 HAVING 方法，可直接传这些枚举；值、原始条件和参数顺序规则不变。
 
 ### `join($joinTable, $joinCondition, JoinType|string $joinType = '')`
@@ -457,7 +458,6 @@ $builder->join('users', '', JoinType::Natural)->fields(['id'])->get('orders');
 | `Natural` | `'NATURAL'` |
 
 - 默认仍为原字符串 `''`；既有大小写和首尾空白处理不变，例如 `' left outer '` 仍可用。固定类型字符串通过枚举的 `tryFrom()` 校验；无效类型在追加 JOIN 前报错。
-- 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
 - 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。使用表前缀时先调用 `setPrefix()`，再添加 JOIN。数据库限定的表名保留原数据库和表名。
 - JOIN 的结果列由调用方用 `fields()` 显式指定。多个表返回同名列时，请分别起别名，例如 `o.id AS order_id` 和 `u.id AS user_id`。如果使用 `*` 或 `表别名.*`，列由 MySQL 展开，构造器不会推断列名或替同名列生成别名。
@@ -836,6 +836,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 
 - `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。执行使用预处理 SQL 和绑定参数。字段列表拆分和调试 SQL 生成均按无注释的 SQL 处理。多语句和直接 CALL 限制同样适用。
+- 调试 SQL 以可还原双精度值的科学计数法展示有限的 PHP 浮点数。
 
 
 ### `forceIndex($indexes)`
@@ -1077,6 +1078,7 @@ $builder->orderBy('status', 'ASC', ['awaiting/payment', 'paid+confirmed'])->get(
 - 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
 - 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
 - `orderBy()` 和 `groupBy()` 按传入的文本拼接表达式。字段名使用代码常量或白名单。使用表别名时按 SQL 中的别名限定字段，引用带前缀的实际表时填写完整表名。
+- `orderBy('RAND()', SortDirection::Desc)` 生成 `ORDER BY RAND() DESC`。只需写 `ORDER BY RAND()` 时，可用 `orderByRaw('RAND()')`。
 
 ```php
 use EasySwoole\Mysqli\QueryBuilder\SortDirection;
@@ -1185,6 +1187,7 @@ $builder->skipLocked()->setSelectLockOption(LockWaitPolicy::Default)->get('order
 ```
 
 - 只设置等待策略，不自动开启 FOR UPDATE；可与 `forUpdate()` / `selectForUpdate()` 配合。枚举 `Default` 或字符串 `''` 在本方法中都会清除旧策略。
+- `forUpdate(false)` 同时关闭排他锁并清除等待策略。
 - 已知策略字符串归一化及未知可信尾部的兼容规则与 `selectForUpdate()` 相同；不要将请求参数直接用作锁选项。
 
 ### `setLockTableMode(TableLockMode|string $method)` / `lockTable($table)`
@@ -1257,7 +1260,7 @@ $builder->where('id', $id)->nowait()->get('orders');
 
 | 标记或位置 | 保留原因 | 停止支持 5.1 后的处理 |
 | --- | --- | --- |
-| `SWOOLE_51_COMPAT`，`TlsHandshake::enable()` 初始化 | 5.1 在握手时才创建 SSL_CTX，且只有开启验证才加载 CA；因此握手前始终保持验证开启 | 可重新评估初始化流程。当前 `Client::enableSSL()` 还负责可靠提供原生错误码；只要继续使用该方法，保存配置前移除 `open_ssl` 的步骤在 6.2 中也必须保留，不能单独删除 |
+| `SWOOLE_51_COMPAT`，`TlsHandshake::enableWithOptions()` 初始化 | 5.1 在握手时才创建 SSL_CTX，且只有开启验证才加载 CA；因此握手前始终保持验证开启 | 可重新评估初始化流程。当前 `Client::enableSSL()` 还负责可靠提供原生错误码；只要继续使用该方法，保存配置前移除 `open_ssl` 的步骤在 6.2 中也必须保留，不能单独删除 |
 | `SWOOLE_51_BUILD`，Dockerfile 的 `5.*` 分支 | 为 5.1 构建显式添加 `--enable-openssl` | 确认矩阵不再构建任何 5.x 版本后，可以删除该 `case` 分支，继续校验目标运行时具有 OpenSSL/TLS 能力 |
 | `SWOOLE_SNI_COMPAT`，`TlsHandshake` 的握手恢复与证书复核、`TlsOptions` | 已验证 5.1.8 和 6.2.4 都会根据 SNI 执行原生主机名检查，需要分开实现 VerifyCA 和 VerifyIdentity | 继续保留。只有目标 Swoole 已正确支持 SNI 与身份校验分离，并通过相应用例后，才能简化此流程；停止支持 5.1 本身不足以删除这些分支 |
 | `method_exists()`、TLS 常量检查 | 检查扩展是否编译了所需 OpenSSL 方法和协议能力 | 属于通用能力检查，继续保留 |
@@ -1279,7 +1282,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 - `Client\ExecutionContext`：一次执行的总超时预算、Client 自建 Statement 的清理及成功通知；手工准备的 Statement 仍由调用方管理。
 - `Connection`：命令调度、会话元数据和并发保护。缓冲与流式命令共用操作入口，待读取的结果流负责在关闭时释放连接占用。
 - `Protocol\Authenticator`：解析握手、协商能力、发送 TLS 升级请求及完成认证，共享连接 Deadline。
-- `Protocol\TlsHandshake`：生成并校验 TLS 选项，完成握手和证书验证。
+- `Protocol\TlsOptions` 由建连入口调用一次，生成并校验 TLS 选项。`Protocol\TlsHandshake` 使用这些选项完成握手和证书验证。
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
 - `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。

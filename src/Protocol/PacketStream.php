@@ -9,7 +9,6 @@ use EasySwoole\Mysqli\Exception\ProtocolException;
 use EasySwoole\Mysqli\Exception\TimeoutException;
 use Swoole\Coroutine\Socket;
 use Swoole\Coroutine\Client as SocketClient;
-use EasySwoole\Mysqli\Config;
 
 /** @internal 负责 Socket 收发、数据包封装、压缩及包序号管理。 */
 final class PacketStream
@@ -30,12 +29,12 @@ final class PacketStream
     private string $decompressedBuffer = '';
     private int $decompressedOffset = 0;
 
+    /** 在 Connection 清理上一会话后打开传输。 */
     public function connect(string $host, int $port, Deadline $deadline, bool $tls = false): void
     {
         if (\Swoole\Coroutine::getCid() < 0) {
             throw new Exception('The coroutine MySQL client must run inside a Swoole coroutine');
         }
-        $this->close();
         $timeout = $deadline->remaining();
         $ipv6 = filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
         if ($tls) {
@@ -59,14 +58,8 @@ final class PacketStream
         }
     }
 
-    /** 将已连接的 TCP 流升级为 TLS；调用前必须已发送 MySQL SSLRequest。 */
-    public function enableTls(Config $config, Deadline $deadline): void
-    {
-        $this->enableTlsWithOptions($config, $deadline, null);
-    }
-
     /** @internal 升级连接时使用建连入口生成的选项。 */
-    public function enableTlsWithOptions(array|Config $options, Deadline $deadline, ?string $expectedName): void
+    public function enableTlsWithOptions(array $options, Deadline $deadline, ?string $expectedName): void
     {
         $socket = $this->socket;
         $client = $this->tlsClient;

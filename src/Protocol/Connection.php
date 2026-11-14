@@ -61,6 +61,7 @@ final class Connection
             return true;
         }
         $this->invalidateConnection();
+        $this->resetMetadata();
         $this->connect_error = '';
         $this->connect_errno = 0;
         $deadline = $deadline->cappedBy($this->config->getMaxConnectTime());
@@ -85,7 +86,6 @@ final class Connection
         } catch (\Throwable $error) {
             $this->connect_errno = $error->getCode();
             $this->connect_error = $error->getMessage();
-            $this->invalidateConnection();
             throw $error;
         }
     }
@@ -159,6 +159,7 @@ final class Connection
             $this->assertSupportedSql($sql);
             $deadline = $this->resolveDeadline($timeout);
             $this->requireConnected();
+            $this->resetError();
             $this->stream->beginCommand();
             $this->stream->writePacket(chr(self::COM_STMT_PREPARE) . $sql, $deadline, 'prepare');
             $packet = $this->stream->readPacket($deadline, 'prepare');
@@ -635,7 +636,12 @@ final class Connection
 
     private function handleOperationFailure(\Throwable $error, int $writeAttempts): void
     {
-        if ($error instanceof ProtocolException || !$this->stream->isOpen()
+        if (!$this->stream->isOpen()) {
+            $this->state->disconnected();
+            return;
+        }
+        // 握手完成前的失败也要关闭传输，包括服务端拒绝认证且尚未断开时。
+        if (!$this->state->isConnected() || $error instanceof ProtocolException
             || ($error instanceof TimeoutException && $this->stream->writeAttempts() !== $writeAttempts)) {
             $this->invalidateConnection();
         }
@@ -657,10 +663,15 @@ final class Connection
      */
     private function resetMetadata(): void
     {
-        $this->error = '';
-        $this->errno = 0;
+        $this->resetError();
         $this->insert_id = 0;
         $this->affected_rows = 0;
+    }
+
+    private function resetError(): void
+    {
+        $this->error = '';
+        $this->errno = 0;
     }
 
     /**

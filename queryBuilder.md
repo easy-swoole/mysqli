@@ -259,12 +259,11 @@ $builder->groupBy('userId')
     ->having('SUM(amount)', 100, ComparisonOperator::GreaterThan, ConditionConjunction::And)
     ->having('COUNT(*)', 5, ComparisonOperator::GreaterThanOrEqual, ConditionConjunction::Or)->get('orders');
 
-// 保留旧的关联数组写法；数组键中的运算符覆盖第三个参数。
-$builder->groupBy('userId')->having('COUNT(*)', ['>=' => 5], ComparisonOperator::Equal)->get('orders');
+$builder->groupBy('userId')->having('SUM(amount)', [100, 200], 'BETWEEN')->get('orders', null, 'userId');
 ```
 
 - `$operator` / `$cond` 的枚举、字符串及默认值规则与普通 `where()` 一致；`orHaving()` 固定以 OR 连接。首个 HAVING 条件不输出前置连接符。
-- 旧的关联数组条件继续使用字符串键，例如 `['>=' => 5]`；PHP 枚举对象不能作为数组键。数组内运算符仍按旧规则覆盖 `$operator`，不要同时传入互相矛盾的两套写法。
+- 通过 `$operator` 指定运算符。`BETWEEN` 接收两个边界值，`IN` 接收值列表，均按数组元素顺序绑定。
 - HAVING 分组回调内使用 `having()` 等 HAVING 方法，可直接传这些枚举；值、原始条件和参数顺序规则不变。
 
 ### `join($joinTable, $joinCondition, JoinType|string $joinType = '')`
@@ -287,7 +286,6 @@ $builder->join('users', '', JoinType::Natural)->fields(['id'])->get('orders');
 | `Natural` | `'NATURAL'` |
 
 - 默认仍为原字符串 `''`；既有大小写和首尾空白处理不变，例如 `' left outer '` 仍可用。固定类型字符串通过枚举的 `tryFrom()` 校验；无效类型在追加 JOIN 前报错。
-- 旧字符串 `'OUTER'` 继续接受，但没有对应新增枚举；这里只保留原字符串构建兼容，最终 JOIN 组合必须符合目标数据库语法，枚举不新增 SQL 方言支持。
 - `Natural` 按两侧同名列连接，`$joinCondition` 必须传空字符串 `''`，不生成 ON；不允许非空条件、USING 或追加 `joinWhere()` / `joinOn()` / ON 条件组。旧字符串 `'NATURAL'` 同样使用这条规则。
 - 其他类型的 `$joinCondition` 接受 ON / USING 条件或 Expression。使用表前缀时先调用 `setPrefix()`，再添加 JOIN。数据库限定的表名保留原数据库和表名。
 - JOIN 的结果列由调用方用 `fields()` 显式指定。多个表返回同名列时，请分别起别名，例如 `o.id AS order_id` 和 `u.id AS user_id`。如果使用 `*` 或 `表别名.*`，列由 MySQL 展开，构造器不会推断列名或替同名列生成别名。
@@ -620,6 +618,7 @@ $builder->where('unused', 7)->raw('SELECT ? AS value', [99]);
 
 - `$sql` 为单条可信 SQL 字符串。`$param` 为位置参数数组，按传入顺序绑定，默认空数组。构建成功后清除待构建设置。
 - 构建后交给 `Client::query()` 执行。`getLastQuery()` 在读取时生成调试 SQL，仅供查看。字段列表拆分和调试 SQL 生成均按无注释的 SQL 处理。多语句和直接 CALL 限制同样适用。
+- 调试 SQL 以可还原双精度值的科学计数法展示有限的 PHP 浮点数。
 
 
 ### `setQueryOption($options)`：语句选项
@@ -789,6 +788,7 @@ $builder->orderBy('status', 'ASC', ['awaiting/payment', 'paid+confirmed'])->get(
 - 参数按最终 SQL 顺序合并：SELECT、JOIN、WHERE、HAVING、UNION 各分支，再到整体 ORDER BY，不受条件方法调用先后影响。
 - 同一字段加同一正则重复设置时覆盖方向，不同正则保留为不同排序项；构建完成后自动重置。
 - `orderBy()` 和 `groupBy()` 按传入的文本拼接表达式。字段名使用代码常量或白名单。使用表别名时按 SQL 中的别名限定字段，引用带前缀的实际表时填写完整表名。
+- `orderBy('RAND()', SortDirection::Desc)` 生成 `ORDER BY RAND() DESC`。只需写 `ORDER BY RAND()` 时，可用 `orderByRaw('RAND()')`。
 
 ```php
 use EasySwoole\Mysqli\QueryBuilder\SortDirection;
@@ -988,6 +988,7 @@ $builder->skipLocked()->setSelectLockOption(LockWaitPolicy::Default)->get('order
 ```
 
 - 只设置等待策略，不自动开启 FOR UPDATE；可与 `forUpdate()` / `selectForUpdate()` 配合。枚举 `Default` 或字符串 `''` 在本方法中都会清除旧策略。
+- `forUpdate(false)` 同时关闭排他锁并清除等待策略。
 - 已知策略字符串归一化及未知可信尾部的兼容规则与 `selectForUpdate()` 相同；不要将请求参数直接用作锁选项。
 
 ### `setLockTableMode(TableLockMode|string $method)` / `lockTable($table)`

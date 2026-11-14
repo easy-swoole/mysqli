@@ -125,6 +125,28 @@ final class MetadataTest extends TestCase
         return $cases;
     }
 
+    public function testSuccessfulPrepareClearsThePreviousPrepareError(): void
+    {
+        $connection = $this->client->mysqlClient();
+        try {
+            $this->client->prepare("SELECT missing_column FROM `{$this->table}`");
+            self::fail('Expected invalid column error');
+        } catch (Exception $error) {
+            self::assertSame(1054, $error->getCode());
+            self::assertSame(1054, $connection->errno);
+            self::assertStringContainsString('missing_column', $connection->error);
+        }
+
+        $statement = $this->client->prepare("SELECT value FROM `{$this->table}`");
+        try {
+            self::assertSame(0, $connection->errno);
+            self::assertSame('', $connection->error);
+            self::assertSame([], $statement->execute());
+        } finally {
+            $statement->close();
+        }
+    }
+
     public function testFailedStatementClearsPreviousMetadata(): void
     {
         self::assertTrue($this->client->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('before error')"));

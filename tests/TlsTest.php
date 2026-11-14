@@ -103,7 +103,7 @@ CNF);
                   ['tlsCertFile' => self::$directory . '/server.pem'],
                   ['tlsServerName' => "bad\0host"], ['tlsServerName' => 'bad host']] as $options) {
             try {
-                TlsOptions::fromConfig(new Config($options + ['tlsMode' => TlsMode::VerifyIdentity]));
+                TlsOptions::handshakeConfiguration(new Config($options + ['tlsMode' => TlsMode::VerifyIdentity]));
                 self::fail('Invalid TLS configuration must not fall back to plaintext');
             } catch (\InvalidArgumentException|\ValueError $error) {
                 self::assertNotEmpty($error->getMessage());

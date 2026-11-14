@@ -79,8 +79,13 @@ final class QueryBuilderEnumTest extends TestCase
             $this->buildResult((new QueryBuilder())->join('users u', 'u.id=o.userId', JoinType::Default)->get('orders o')));
         self::assertSame($this->buildResult((new QueryBuilder())->join('users u', 'u.id=o.userId', JoinType::LeftOuter)->get('orders o')),
             $this->buildResult((new QueryBuilder())->join('users u', 'u.id=o.userId', ' left outer ')->get('orders o')));
-        $legacyOuter = (new QueryBuilder())->join('users u', 'u.id=o.userId', ' outer ')->get('orders o');
-        self::assertStringContainsString('OUTER JOIN users u', $legacyOuter->getLastPrepareQuery());
+    }
+
+    public function testStandaloneOuterJoinIsRejected(): void
+    {
+        $this->expectException(\EasySwoole\Mysqli\Exception\Exception::class);
+        $this->expectExceptionMessage('Wrong JOIN type: OUTER');
+        (new QueryBuilder())->join('users u', 'u.id=o.userId', ' outer ');
     }
 
     public function testNaturalJoinDoesNotGenerateOnAndRejectsExplicitConditions(): void
@@ -189,16 +194,13 @@ final class QueryBuilderEnumTest extends TestCase
         }
     }
 
-    public function testHavingArrayOperatorOverrideStillAcceptsAnEnumArgument(): void
+    public function testHavingComparisonAndListOperatorsUseTheExplicitArgument(): void
     {
-        $actual = (new QueryBuilder())->groupBy('userId')->having('SUM(amount)', ['>=' => 100], ComparisonOperator::Equal)
-            ->orHaving('COUNT(*)', ['<>' => 2], ComparisonOperator::GreaterThan)->get('orders');
-        $expected = (new QueryBuilder())->groupBy('userId')->having('SUM(amount)', ['>=' => 100], '=')
-            ->orHaving('COUNT(*)', ['<>' => 2], '>')->get('orders');
-        self::assertSame($this->buildResult($expected), $this->buildResult($actual));
-        self::assertSame([100, 2], $actual->getLastBindParams());
-        self::assertStringContainsString('SUM(amount) >= ?', $actual->getLastPrepareQuery());
-        self::assertStringContainsString('COUNT(*) <> ?', $actual->getLastPrepareQuery());
+        $builder = (new QueryBuilder())->groupBy('userId')->having('SUM(amount)', 100, ComparisonOperator::GreaterThanOrEqual)
+            ->orHaving('COUNT(*)', [2, 3], ' iN ')->get('orders', null, 'userId');
+        self::assertSame([100, 2, 3], $builder->getLastBindParams());
+        self::assertStringContainsString('SUM(amount) >= ?', $builder->getLastPrepareQuery());
+        self::assertStringContainsString('COUNT(*)  iN  ( ?, ? )', $builder->getLastPrepareQuery());
     }
 
     public function testOrdinaryConditionStringsKeepTheirOriginalCaseWhitespaceAndExtensions(): void
@@ -326,6 +328,8 @@ final class QueryBuilderEnumTest extends TestCase
 
         $configured = (new QueryBuilder())->setSelectLockOption(LockWaitPolicy::SkipLocked)->forUpdate()->get('orders');
         self::assertSame($this->buildResult((new QueryBuilder())->skipLocked()->get('orders')), $this->buildResult($configured));
+        $reconfigured = (new QueryBuilder())->skipLocked()->forUpdate(false)->nowait()->get('orders');
+        self::assertSame($this->buildResult((new QueryBuilder())->nowait()->get('orders')), $this->buildResult($reconfigured));
     }
 
     public function testLockStringsNormalizeKnownPoliciesAndPreserveLegacyRawSuffixes(): void

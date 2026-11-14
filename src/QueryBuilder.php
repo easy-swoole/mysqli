@@ -158,13 +158,7 @@ class QueryBuilder
     /** WHERE 条件。 */
     public function where(mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $operator = $this->comparisonOperator($operator);
-        $cond = $this->conditionConjunction($cond, false);
-        if (count($this->pending['whereConditions']) == 0) {
-            $cond = '';
-        }
-        $this->pending['whereConditions'][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
-        return $this;
+        return $this->addValueCondition($this->pending['whereConditions'], $whereProp, $whereValue, $operator, $cond);
     }
 
     /** 通过 OR 连接的 WHERE 条件。 */
@@ -290,17 +284,7 @@ class QueryBuilder
     /** HAVING 聚合筛选条件。 */
     public function having(mixed $havingProp, mixed $havingValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $operator = $this->comparisonOperator($operator);
-        $cond = $this->conditionConjunction($cond, false);
-        if (is_array($havingValue) && ($key = key($havingValue)) != "0") {
-            $operator = $this->comparisonOperator($key);
-            $havingValue = $havingValue[$key];
-        }
-        if (count($this->pending['havingConditions']) == 0) {
-            $cond = '';
-        }
-        $this->pending['havingConditions'][] = [$cond, $havingProp, $operator, $this->snapshotSubqueryValue($havingValue)];
-        return $this;
+        return $this->addValueCondition($this->pending['havingConditions'], $havingProp, $havingValue, $operator, $cond);
     }
 
     /** 通过 OR 连接的 HAVING 条件。 */
@@ -340,7 +324,7 @@ class QueryBuilder
     public function join(mixed $joinTable, mixed $joinCondition, JoinType|string $joinType = ''): QueryBuilder
     {
         $joinType = $joinType instanceof JoinType ? $joinType->value : strtoupper(trim($joinType));
-        if (JoinType::tryFrom($joinType) === null && $joinType !== 'OUTER') {
+        if (JoinType::tryFrom($joinType) === null) {
             throw new Exception('Wrong JOIN type: ' . $joinType);
         }
         $parameters = [];
@@ -371,11 +355,8 @@ class QueryBuilder
     /** 为关联表的 ON 子句追加 AND 条件。 */
     public function joinWhere(mixed $whereJoin, mixed $whereProp, mixed $whereValue = ConditionValue::Raw, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
-        $operator = $this->comparisonOperator($operator);
-        $cond = $this->conditionConjunction($cond, false);
         $index = $this->joinIndex((string)$whereJoin);
-        $this->pending['joins'][$index]['on'][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
-        return $this;
+        return $this->addValueCondition($this->pending['joins'][$index]['on'], $whereProp, $whereValue, $operator, $cond, on: true);
     }
 
     /** 为关联表的 ON 子句追加 OR 条件。 */
@@ -461,7 +442,7 @@ class QueryBuilder
             }
         } else {
             $this->pending['forUpdate'] = false;
-            $this->pending['selectLockOption'] = false;
+            $this->pending['selectLockOption'] = '';
         }
         return $this;
     }
@@ -1001,6 +982,23 @@ class QueryBuilder
         return $comparison->value;
     }
 
+    private function addValueCondition(
+        array &$conditions,
+        mixed $field,
+        mixed $value,
+        ComparisonOperator|string $operator,
+        ConditionConjunction|string $cond,
+        bool $on = false,
+    ): QueryBuilder {
+        $conditions[] = [
+            $on || $conditions !== [] ? $this->conditionConjunction($cond, false) : '',
+            $field,
+            $this->comparisonOperator($operator),
+            $this->snapshotSubqueryValue($value),
+        ];
+        return $this;
+    }
+
     private function addRawCondition(array &$conditions, string $sql, array $parameters, ConditionConjunction|string $cond): QueryBuilder
     {
         $concat = $this->conditionConjunction($cond);
@@ -1084,7 +1082,7 @@ class QueryBuilder
         $next = $option instanceof LockWaitPolicy ? $option->value
             : (LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option);
         $current = $this->pending['selectLockOption'];
-        if ($current !== false && $current !== '' && $next !== '' && $current !== $next) {
+        if ($current !== '' && $next !== '' && $current !== $next) {
             throw new \InvalidArgumentException('Clear the current FOR UPDATE option before setting a different one');
         }
         return $next;

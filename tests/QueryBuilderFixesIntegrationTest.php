@@ -33,12 +33,49 @@ final class QueryBuilderFixesIntegrationTest extends TestCase
 
     protected function tearDown(): void { $this->client?->close(); }
 
+    public function testHavingBoundsAndWriteExpressionsIgnoreArrayPointers(): void
+    {
+        $increment = QueryBuilder::inc(5);
+        $status = QueryBuilder::func('CONCAT(status, ?)', ['!']);
+        next($increment);
+        next($status);
+        $update = (new QueryBuilder())->where('id', 2)
+            ->update('qb_fix_orders', ['score' => $increment, 'status' => $status]);
+        self::assertSame(['!', 2], $update->getLastBindParams());
+        self::assertTrue($this->client->query($update));
+        self::assertSame([['score' => 25, 'status' => 'a/b!']],
+            $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 2'));
+
+        $bounds = [35, 40];
+        next($bounds);
+        $query = (new QueryBuilder())->join('qb_fix_users u', 'o.id=u.id')
+            ->joinWhere('qb_fix_users u', 'u.tenantId', [1, 2], ' In ')
+            ->where('o.id', [1, 2, 3], ' in ')
+            ->groupBy('o.tenantId')->having('SUM(o.score)', $bounds, ' BeTwEeN ')
+            ->get('qb_fix_orders o', null, 'o.tenantId');
+        self::assertSame([1, 2, 1, 2, 3, 35, 40], $query->getLastBindParams());
+        self::assertStringContainsString(' BeTwEeN ', $query->getLastPrepareQuery());
+        self::assertSame([['tenantId' => 1]], $this->client->query($query));
+    }
+
     public function testCustomFieldOrderingPreservesPunctuationAndWorksWithAnsiQuotes(): void
     {
         $builder = (new QueryBuilder())->orderBy('status', 'ASC', ['paid+', 'a/b', "O'Reilly", '中文'])
             ->get('qb_fix_orders', null, 'id');
         self::assertSame([1,2,3,4], array_column($this->client->query($builder), 'id'));
         self::assertSame(['paid+', 'a/b', "O'Reilly", '中文'], $builder->getLastBindParams());
+    }
+
+    public function testRandomOrderKeepsDirectionAndDebugSqlPreservesDoubleValues(): void
+    {
+        $builder = (new QueryBuilder())->orderBy('RAND()', 'DESC')->get('qb_fix_orders', 2, 'id');
+        self::assertStringContainsString('ORDER BY RAND() DESC', $builder->getLastPrepareQuery());
+        self::assertCount(2, $this->client->query($builder));
+
+        $value = 1.2345678901234567;
+        $builder->raw('SELECT ? AS value', [$value]);
+        self::assertSame([['value' => $value]], $this->client->query($builder));
+        self::assertSame([['value' => $value]], $this->client->rawQuery($builder->getLastQuery()));
     }
 
     public function testGetColumnPreservesCompleteFunctionAndAlias(): void

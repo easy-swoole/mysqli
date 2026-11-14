@@ -185,7 +185,7 @@ final class WriteCompiler
                 $this->buffer->sql .= '?';
                 continue;
             }
-            $key = key($value);
+            $key = array_key_first($value);
             $val = $value[$key];
             switch ($key) {
                 case '[I]':

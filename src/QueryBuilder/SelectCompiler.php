@@ -89,13 +89,10 @@ final class SelectCompiler
             if ($prop instanceof Expression) {
                 $this->buffer->sql .= $prop->getSql() . ($value !== '' ? ' ' . $value : '');
                 $this->buffer->bindAll($prop->getParameters());
-                $this->buffer->bindAll($order['params']);
-            } elseif (strtolower(str_replace(" ", "", $prop)) == 'rand()') {
-                $this->buffer->sql .= 'rand()';
             } else {
                 $this->buffer->sql .= $prop . ' ' . $value;
-                $this->buffer->bindAll($order['params']);
             }
+            $this->buffer->bindAll($order['params']);
         }
         $this->buffer->sql .= ' ';
     }

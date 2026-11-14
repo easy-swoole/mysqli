@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\{Expression, QueryBuilder};
+use EasySwoole\Mysqli\QueryBuilder\ConditionConjunction;
 use PHPUnit\Framework\TestCase;
 
 final class QueryBuilderConditionsTest extends TestCase
@@ -47,6 +48,21 @@ final class QueryBuilderConditionsTest extends TestCase
             ->where('`app`.`users`.`odd``name`', 'value')->get('app.users');
         self::assertSame('SELECT * FROM `app`.`users` WHERE `app`.`users`.`deleted_at` IS NULL AND `app`.`users`.`odd``name` = ?', $this->sql($builder));
         self::assertSame(['value'], $builder->getLastBindParams());
+    }
+
+    public function testValueConditionsKeepTheFirstConjunctionOnlyAfterTheInitialOn(): void
+    {
+        $admins = QueryBuilder::subQuery()->where('role', 'admin')->get('users', null, 'id');
+        $builder = (new QueryBuilder())->orHaving('COUNT(*)', 2, '>')
+            ->orWhere('o.status', 'paid')->where('o.region', 'cn', cond: ConditionConjunction::Or)
+            ->join('users u', 'u.id=o.userId')->joinOrWhere('users u', 'u.id', $admins, 'IN')
+            ->groupBy('o.status')->having('SUM(o.total)', 50, '>=', ConditionConjunction::And);
+        $admins->where('role', 'guest')->get('users', null, 'id');
+
+        $builder->get('orders o', null, 'o.status');
+        self::assertSame('SELECT o.status FROM orders o JOIN users u on (u.id=o.userId) OR u.id IN ((SELECT id FROM `users` WHERE `role` = ?)) WHERE `o`.`status` = ? OR `o`.`region` = ? GROUP BY o.status HAVING COUNT(*) > ? AND SUM(o.total) >= ?',
+            $this->sql($builder));
+        self::assertSame(['admin', 'paid', 'cn', 2, 50], $builder->getLastBindParams());
     }
 
     public function testHavingGroupsNestAndKeepBindingOrder(): void

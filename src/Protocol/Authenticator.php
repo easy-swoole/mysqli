@@ -34,15 +34,6 @@ final class Authenticator
         $this->acceptOk = \Closure::fromCallable($acceptOk);
     }
 
-    /**
-     * 解析握手信息并发送认证请求。
-     */
-    public function authenticate(string $handshake, Deadline $deadline): void
-    {
-        [$options, $expectedName] = TlsOptions::handshakeConfiguration($this->config);
-        $this->authenticateWithOptions($handshake, $deadline, $options, $expectedName);
-    }
-
     /** @internal 握手和身份校验沿用建连入口确定的配置。 */
     public function authenticateWithOptions(string $handshake, Deadline $deadline, ?array $tlsOptions, ?string $expectedName): void
     {

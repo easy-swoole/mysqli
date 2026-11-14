@@ -51,7 +51,7 @@ final class TlsVersionTest extends TestCase
     #[DataProvider('supportedVersions')]
     public function testVersionsPreserveTlsProtocolFlags(array $versions, int $expected): void
     {
-        $options = TlsOptions::fromConfig(new Config([
+        [$options] = TlsOptions::handshakeConfiguration(new Config([
             'tlsMode' => TlsMode::Required,
             'tlsVersions' => $versions,
         ]));
@@ -74,27 +74,27 @@ final class TlsVersionTest extends TestCase
 
     public function testUnknownStringIsStoredUntilTlsOptionsValidation(): void
     {
-        $config = new Config(['tlsVersions' => ['TLSv1']]);
+        $config = new Config(['tlsMode' => TlsMode::Required, 'tlsVersions' => ['TLSv1']]);
         self::assertSame(['TLSv1'], $config->getTlsVersions());
         $config->setTlsVersions(['TLSv1.4']);
         self::assertSame(['TLSv1.4'], $config->getTlsVersions());
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Only TLSv1.2 and TLSv1.3 are supported');
-        TlsOptions::fromConfig($config);
+        TlsOptions::handshakeConfiguration($config);
     }
 
     #[DataProvider('invalidVersions')]
     public function testInvalidVersionsFailAtTlsOptionsBoundary(array $versions, bool $setter, string $message): void
     {
-        $config = new Config($setter ? [] : ['tlsVersions' => $versions]);
+        $config = new Config(['tlsMode' => TlsMode::Required, 'tlsVersions' => $versions]);
         if ($setter) {
             $config->setTlsVersions($versions);
         }
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage($message);
-        TlsOptions::fromConfig($config);
+        TlsOptions::handshakeConfiguration($config);
     }
 
     public static function invalidVersions(): array

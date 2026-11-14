@@ -7,6 +7,7 @@ namespace EasySwoole\Mysqli\Tests;
 use EasySwoole\Mysqli\{Config, TlsMode};
 use EasySwoole\Mysqli\Exception\{Exception, ProtocolException, TimeoutException, UnsupportedOperationException};
 use EasySwoole\Mysqli\Protocol\{Authenticator, Connection, Deadline, PacketStream, Statement};
+use EasySwoole\Mysqli\Protocol\TlsOptions;
 use PHPUnit\Framework\TestCase;
 
 final class AuthenticatorTest extends TestCase
@@ -21,7 +22,7 @@ final class AuthenticatorTest extends TestCase
                 throw new Exception('forwarded server error', 1045);
             }, static function (): void { self::fail('An error packet must not update OK status'); });
 
-        try { $authenticator->authenticate($packet, Deadline::after(1.0)); self::fail('Expected server error'); }
+        try { $authenticator->authenticateWithOptions($packet, Deadline::after(1.0), null, null); self::fail('Expected server error'); }
         catch (Exception $error) {
             self::assertSame(1045, $error->getCode());
             self::assertSame('forwarded server error', $error->getMessage());
@@ -33,19 +34,21 @@ final class AuthenticatorTest extends TestCase
     {
         $authenticator = $this->authenticator(new Config());
         foreach ([0, 9] as $version) {
-            try { $authenticator->authenticate(chr($version), Deadline::after(1.0)); self::fail('Expected protocol rejection'); }
+            try { $authenticator->authenticateWithOptions(chr($version), Deadline::after(1.0), null, null); self::fail('Expected protocol rejection'); }
             catch (Exception $error) { self::assertSame("Unsupported MySQL protocol version {$version}", $error->getMessage()); }
         }
         $this->expectException(ProtocolException::class);
-        $authenticator->authenticate("\x0a8.4.0\0", Deadline::after(1.0));
+        $authenticator->authenticateWithOptions("\x0a8.4.0\0", Deadline::after(1.0), null, null);
     }
 
     public function testRequiredTlsCannotFallBackBeforeSendingCredentials(): void
     {
-        $authenticator = $this->authenticator(new Config(['tlsMode' => TlsMode::Required, 'password' => 'secret']));
+        $config = new Config(['tlsMode' => TlsMode::Required, 'password' => 'secret']);
+        $authenticator = $this->authenticator($config);
+        [$options, $expectedName] = TlsOptions::handshakeConfiguration($config);
         $this->expectException(Exception::class);
         $this->expectExceptionMessage('MySQL server does not support TLS; plaintext fallback is disabled');
-        $authenticator->authenticate(self::handshake('caching_sha2_password'), Deadline::after(1.0));
+        $authenticator->authenticateWithOptions(self::handshake('caching_sha2_password'), Deadline::after(1.0), $options, $expectedName);
     }
 
     public function testUnsupportedPluginFailsBeforeWritingAuthenticationPacket(): void
@@ -53,7 +56,7 @@ final class AuthenticatorTest extends TestCase
         $authenticator = $this->authenticator(new Config(['password' => 'secret']));
         $this->expectException(Exception::class);
         $this->expectExceptionMessage('Unsupported MySQL authentication plugin unsupported_plugin');
-        $authenticator->authenticate(self::handshake('unsupported_plugin'), Deadline::after(1.0));
+        $authenticator->authenticateWithOptions(self::handshake('unsupported_plugin'), Deadline::after(1.0), null, null);
     }
 
     public function testAuthenticationUsesOriginalExpiredDeadline(): void
@@ -62,7 +65,7 @@ final class AuthenticatorTest extends TestCase
         usleep(2000);
         $authenticator = $this->authenticator(new Config(['password' => 'secret']));
         $this->expectException(TimeoutException::class);
-        $authenticator->authenticate(self::handshake('mysql_native_password'), $deadline);
+        $authenticator->authenticateWithOptions(self::handshake('mysql_native_password'), $deadline, null, null);
     }
 
     public function testBufferedAndStreamingParameterValidationStayBeforeIo(): void
