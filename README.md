@@ -513,6 +513,20 @@ $builder->fields(['id'])->selectRaw('COALESCE(name, ?) AS name', ['匿名'])->ge
 - SELECT 表达式参数排在 JOIN、WHERE、HAVING、UNION 分支和 ORDER BY 参数之前，与方法调用先后无关。构建完成或 `reset()` 后清除。
 - 只传选择列表中的表达式，不传 `SELECT` 关键字或整条查询；有计算列时建议显式写别名。
 
+### `hasWhere(): bool`
+
+```php
+$builder = new QueryBuilder();
+$builder->where('id', 42);
+$builder->hasWhere(); // true
+$builder->update('orders', ['status' => 'paid']);
+$builder->hasWhere(); // false
+```
+
+- 在构建 SQL 前读取当前是否已添加 WHERE 条件。普通条件、原始条件和非空 WHERE 分组都返回 `true`。只有 JOIN ON 或 HAVING 时返回 `false`。
+- `whereRaw('1 = 1')` 也返回 `true`。匹配范围由调用方决定。`update()` 和 `delete()` 仍可构建全表操作。
+- 新构造器、显式 `reset()` 后和成功构建 SQL 后都返回 `false`。上次构建的 SQL 仍可通过 `getLastPrepareQuery()` 读取。本方法只读取状态。
+
 ### `whereRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND')`
 
 ```php

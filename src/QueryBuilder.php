@@ -140,6 +140,12 @@ class QueryBuilder
 
     // WHERE 条件
 
+    /** 判断待构建查询是否已添加 WHERE 条件。 */
+    public function hasWhere(): bool
+    {
+        return $this->pending['whereConditions'] !== [];
+    }
+
     public function whereRaw(string $sql, array $parameters = [], ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         return $this->addRawCondition($this->pending['whereConditions'], $sql, $parameters, $cond);

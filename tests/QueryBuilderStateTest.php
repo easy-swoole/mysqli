@@ -33,6 +33,41 @@ final class QueryBuilderStateTest extends TestCase
         self::assertNull($builder->reset()->getField());
     }
 
+    public function testHasWhereOnlyReadsPendingWhereConditions(): void
+    {
+        $builder = new QueryBuilder();
+        self::assertFalse($builder->hasWhere());
+        $builder->join('users u', 'u.id=o.userId')->joinWhere('users u', 'u.enabled', true);
+        self::assertFalse($builder->hasWhere());
+        $builder->having('COUNT(*)', 1, '>');
+        self::assertFalse($builder->hasWhere());
+
+        $builder->where('o.id', 42);
+        self::assertTrue($builder->hasWhere());
+        self::assertNull($builder->getLastPrepareQuery());
+        self::assertFalse($builder->reset()->hasWhere());
+        self::assertTrue($builder->whereRaw('1 = 1')->hasWhere());
+        self::assertFalse($builder->reset()->hasWhere());
+
+        $builder->whereGroup(static fn(QueryBuilder $group) => $group->where('id', 42));
+        self::assertTrue($builder->hasWhere());
+        $builder->get('orders');
+        $sql = $builder->getLastPrepareQuery();
+        self::assertStringContainsString('WHERE', $sql);
+        self::assertFalse($builder->hasWhere());
+        self::assertSame($sql, $builder->reset()->getLastPrepareQuery());
+        self::assertFalse($builder->hasWhere());
+    }
+
+    public function testUpdateAndDeleteCanStillBeBuiltWithoutWhere(): void
+    {
+        $builder = new QueryBuilder();
+        $builder->update('orders', ['status' => 'archived']);
+        self::assertSame('UPDATE `orders` SET `status` = ?', $builder->getLastPrepareQuery());
+        self::assertSame(['archived'], $builder->getLastBindParams());
+        self::assertSame('DELETE FROM `orders`', $builder->delete('orders')->getLastPrepareQuery());
+    }
+
     public function testGetOnePassesResolvedFieldsToAnOverriddenGet(): void
     {
         $builder = new class extends QueryBuilder {
