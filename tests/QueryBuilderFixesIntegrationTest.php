@@ -145,6 +145,7 @@ SQL;
     {
         $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_audit_scores (id INT PRIMARY KEY, score INT)');
         $this->client->rawQuery('INSERT INTO qb_fix_audit_scores VALUES (1, 51), (2, 72)');
+        $this->client->rawQuery('ALTER TABLE qb_fix_orders ADD COLUMN displayName VARCHAR(100) NULL, ADD COLUMN `État` VARCHAR(20) NULL');
         $score = QueryBuilder::subQuery()->where('id', 1)->get('qb_fix_audit_scores', null, 'score');
         $builder = new class($score) extends QueryBuilder {
             public array $calls = [];
@@ -165,14 +166,24 @@ SQL;
             }
         };
         $builder->upsert('qb_fix_orders', [
-            ['id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0],
-        ], ['status' => 'adjusted']);
+            ['id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0, 'displayName' => 'new display name', 'État' => 'open'],
+        ], ['status' => 'adjusted', 'displayname', 'état']);
 
         self::assertSame(['onDuplicate', 'insertAll'], $builder->calls);
-        self::assertSame([1, 1, 'Alice', 'paid', 0, 'adjusted', 1], $builder->getLastBindParams());
+        self::assertSame([1, 1, 'Alice', 'paid', 0, 'new display name', 'open', 'adjusted', 1], $builder->getLastBindParams());
         self::assertTrue($this->client->query($builder));
-        self::assertSame([['score' => 51, 'status' => 'adjusted']],
-            $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 1'));
+        self::assertSame([['score' => 51, 'status' => 'adjusted', 'displayName' => 'new display name', 'État' => 'open']],
+            $this->client->rawQuery('SELECT score, status, displayName, `État` FROM qb_fix_orders WHERE id = 1'));
+    }
+
+    public function testMysqlRejectsAnImplicitUpdateColumnAbsentFromTheInsert(): void
+    {
+        $builder = (new QueryBuilder())->upsert('qb_fix_orders', [
+            ['id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0],
+        ], ['missing']);
+        $this->expectException(\EasySwoole\Mysqli\Exception\Exception::class);
+        $this->expectExceptionCode(1054);
+        $this->client->query($builder);
     }
 
     public function testDistinctRollupCountKeepsTheOriginalProjection(): void

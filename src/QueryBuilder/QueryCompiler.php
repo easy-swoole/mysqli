@@ -121,7 +121,7 @@ final class QueryCompiler
             }
         }
 
-        $select->appendJoins($parts->joins, $parts->joinConditions);
+        $select->appendJoins($parts->joins);
         $conditions->append('WHERE', $parts->where);
         $select->appendGroups($parts->groups);
         $conditions->append('HAVING', $parts->having);
@@ -211,7 +211,7 @@ final class QueryCompiler
 
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
-        $select->appendJoins($parts->joins, $parts->joinConditions);
+        $select->appendJoins($parts->joins);
         if ($statement === 'UPDATE') {
             (new WriteCompiler($buffer))->appendUpdate($tableData, $fields);
         }

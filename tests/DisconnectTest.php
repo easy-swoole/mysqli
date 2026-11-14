@@ -37,6 +37,8 @@ final class DisconnectTest extends TestCase
 
     public function testPingDetectsServerSideDisconnectAndRequiresExplicitReconnect(): void
     {
+        $connection = $this->victim->mysqlClient();
+        $oldStatement = $this->victim->prepare('SELECT ? AS id');
         $oldConnectionId = $this->connectionId($this->victim);
         $this->kill($oldConnectionId);
 
@@ -45,6 +47,18 @@ final class DisconnectTest extends TestCase
 
         $this->assertVictimRequiresConnect();
         $this->victim->connect();
+        self::assertSame($connection, $this->victim->mysqlClient());
+        $newStatement = $this->victim->prepare('SELECT ? AS id');
+        try {
+            $oldStatement->execute([7]);
+            self::fail('The old statement must expire after reconnect');
+        } catch (\LogicException $error) {
+            self::assertStringContainsString('expired MySQL session', $error->getMessage());
+        } finally {
+            $oldStatement->close();
+        }
+        self::assertSame([['id' => 8]], $newStatement->execute([8]));
+        $newStatement->close();
         $newConnectionId = $this->connectionId($this->victim);
         self::assertNotSame($oldConnectionId, $newConnectionId);
         self::assertTrue($this->victim->ping());

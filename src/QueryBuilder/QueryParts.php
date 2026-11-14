@@ -12,8 +12,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 final class QueryParts
 {
     /**
-     * @param array<array-key, JoinNode> $joins
-     * @param array<int, array<array-key, ConditionNode>> $joinConditions
+     * @param list<JoinNode> $joins
      * @param array<array-key, ConditionNode> $where
      * @param array<array-key, mixed> $groups
      * @param array<array-key, ConditionNode> $having
@@ -22,7 +21,6 @@ final class QueryParts
      */
     public function __construct(
         public readonly array $joins,
-        public readonly array $joinConditions,
         public readonly array $where,
         public readonly array $groups,
         public readonly array $having,

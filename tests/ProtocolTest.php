@@ -778,7 +778,7 @@ final class ProtocolTest extends TestCase
         self::assertFalse($old->isTransactionLost());
         $this->assertConnectRequired(fn() => $client->rawQuery('SELECT 1'));
         self::assertTrue($client->connect());
-        self::assertNotSame($old, $client->mysqlClient());
+        self::assertSame($old, $client->mysqlClient());
         self::assertTrue($client->rawQuery('SELECT 1'));
         $client->close();
         $this->assertServerCompleted($completed);

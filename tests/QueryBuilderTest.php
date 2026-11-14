@@ -227,13 +227,15 @@ final class QueryBuilderTest extends TestCase
             static fn(QueryBuilder $q) => $q->nowait()->skipLocked(),
             static fn(QueryBuilder $q) => $q->setSelectLockOption(' skip locked ')->selectForUpdate(true, 'nowait'),
             static fn(QueryBuilder $q) => $q->nowait()->setSelectLockOption('SKIP LOCKED'),
+            static fn(QueryBuilder $q) => $q->selectForUpdate(true, 'OF o NOWAIT')->skipLocked(),
+            static fn(QueryBuilder $q) => $q->skipLocked()->selectForUpdate(true, 'OF o NOWAIT'),
         ] as $configure) {
             $builder = new QueryBuilder();
             try {
                 $configure($builder);
                 self::fail('Expected conflicting wait policies to be rejected');
             } catch (\InvalidArgumentException $error) {
-                self::assertSame('NOWAIT and SKIP LOCKED cannot be combined', $error->getMessage());
+                self::assertStringContainsString('Clear the current FOR UPDATE option', $error->getMessage());
             }
             $builder->reset()->nowait()->get('items');
             self::assertStringEndsWith('FOR UPDATE NOWAIT', $builder->getLastPrepareQuery());

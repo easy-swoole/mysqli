@@ -357,7 +357,14 @@ class QueryBuilder
             $conditionKey = (string)$joinTable;
             $joinTable = TableReference::resolve($joinTable, $this->prefix, quoteBare: false)['sql'];
         }
-        $this->pending['joins'][] = [$joinType, $joinTable, $joinCondition, $conditionKey, $parameters];
+        $this->pending['joins'][] = [
+            'type' => $joinType,
+            'source' => $joinTable,
+            'condition' => $joinCondition,
+            'key' => $conditionKey,
+            'parameters' => $parameters,
+            'on' => [],
+        ];
         return $this;
     }
 
@@ -367,7 +374,7 @@ class QueryBuilder
         $operator = $this->comparisonOperator($operator);
         $cond = $this->conditionConjunction($cond, false);
         $index = $this->joinIndex((string)$whereJoin);
-        $this->pending['joinConditions'][$index][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
+        $this->pending['joins'][$index]['on'][] = [$cond, $whereProp, $operator, $this->snapshotSubqueryValue($whereValue)];
         return $this;
     }
 
@@ -380,9 +387,9 @@ class QueryBuilder
     public function joinOn(string $table, string $first, string $second, ComparisonOperator|string $operator = '=', ConditionConjunction|string $cond = 'AND'): QueryBuilder
     {
         $index = $this->joinIndex($table);
-        $conditions = $this->pending['joinConditions'][$index] ?? [];
+        $conditions = $this->pending['joins'][$index]['on'];
         $this->addColumnCondition($conditions, $first, $second, $operator, $cond, true);
-        $this->pending['joinConditions'][$index] = $conditions;
+        $this->pending['joins'][$index]['on'] = $conditions;
         return $this;
     }
 
@@ -1034,7 +1041,7 @@ class QueryBuilder
     {
         $index = null;
         foreach ($this->pending['joins'] as $position => $join) {
-            if ($join[3] !== $table) {
+            if ($join['key'] !== $table) {
                 continue;
             }
             if ($index !== null) {
@@ -1053,9 +1060,9 @@ class QueryBuilder
     private function addJoinGroup(string $table, callable $callback, string $concat): QueryBuilder
     {
         $index = $this->joinIndex($table);
-        $conditions = $this->pending['joinConditions'][$index] ?? [];
+        $conditions = $this->pending['joins'][$index]['on'];
         $this->addConditionGroup($conditions, $callback, $concat, 'whereConditions', 'ON', true);
-        $this->pending['joinConditions'][$index] = $conditions;
+        $this->pending['joins'][$index]['on'] = $conditions;
         return $this;
     }
 
@@ -1077,9 +1084,8 @@ class QueryBuilder
         $next = $option instanceof LockWaitPolicy ? $option->value
             : (LockWaitPolicy::tryFrom(strtoupper(trim($option)))?->value ?? $option);
         $current = $this->pending['selectLockOption'];
-        if (($current === LockWaitPolicy::Nowait->value && $next === LockWaitPolicy::SkipLocked->value)
-            || ($current === LockWaitPolicy::SkipLocked->value && $next === LockWaitPolicy::Nowait->value)) {
-            throw new \InvalidArgumentException('NOWAIT and SKIP LOCKED cannot be combined');
+        if ($current !== false && $current !== '' && $next !== '' && $current !== $next) {
+            throw new \InvalidArgumentException('Clear the current FOR UPDATE option before setting a different one');
         }
         return $next;
     }

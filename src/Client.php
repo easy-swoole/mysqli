@@ -41,13 +41,9 @@ class Client
      */
     public function connect(?float $timeout = null): bool
     {
-        if ($this->mysqlClient?->isBusy()) {
-            throw new Exception('Concurrent operations on one MySQL connection are not allowed');
-        }
-        if ($this->mysqlClient?->isConnected()) {
+        if ($this->mysqlClient !== null) {
             return $this->mysqlClient->connect($timeout);
         }
-        $this->mysqlClient?->assertTransactionUsable();
         $this->mysqlClient = new Connection($this->config);
         try {
             return $this->mysqlClient->connect($timeout);

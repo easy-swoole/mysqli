@@ -177,7 +177,7 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 ## 会话安全与超时
 
-断线后，后续命令会报错。事务外可显式调用 `connect()` 建立新会话。新会话使用 `Config` 指定的数据库，若需要切换数据库或设置会话参数，应在新会话上重新执行。失败的 SQL 由调用方决定是否重试。
+断线后，后续命令会报错。事务外可显式调用 `connect()`，在当前 `Connection` 对象上建立新会话。新会话使用 `Config` 指定的数据库，若需要切换数据库或设置会话参数，应在新会话上重新执行。失败的 SQL 由调用方决定是否重试。
 
 服务端发送空闲断线错误时，客户端关闭本地连接并保留 MySQL 错误码 `4031`。
 
@@ -673,7 +673,7 @@ $builder->onDuplicate([
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。显式值为子查询时，先用无别名的 `QueryBuilder::subQuery()` 构建，再传给 `onDuplicate()` 保存其 SQL 和参数。
 - 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。混用隐式列和自定义表达式时，用实际目标表名限定表达式读取的目标列，例如 `orders.baseline`。插入行别名也包含该列时，未限定的 `baseline` 会导致 MySQL 报列名歧义。构造器原样使用 `Expression` 和 `func()` 的 SQL。
 - `upsert()` 要求非空行数据和非空更新列。本次重复键更新通过 `$updateColumns` 指定。构建依次调用 `onDuplicate()` 和 `insertAll()`，子类可覆写这两个方法。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
-- 按插入值更新的字段必须在过滤后保留。固定值或表达式更新列由 `$updateColumns` 指定。
+- 按插入值更新的字段必须在过滤后保留。MySQL 按自己的列名规则解析行别名，例如插入列 `displayName` 可以通过 `displayname` 更新。固定值或表达式更新列由 `$updateColumns` 指定。
 - 重复键更新仅用于 INSERT。与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
@@ -1173,7 +1173,7 @@ $builder->skipLocked()->selectForUpdate(true, LockWaitPolicy::Default)->get('ord
 
 - `selectForUpdate()` 和 `lockInShareMode()` 的 `$isLock` 接受布尔值，默认 `true`。`Default` 不附加等待选项，`Nowait` 对应 NOWAIT，`SkipLocked` 对应 SKIP LOCKED。
 - 传入 `LockWaitPolicy::Default` 或空字符串 `''` 会清除已设置的等待策略。省略 `$option` 或传入 `null` 时沿用已配置的等待策略。`selectForUpdate(false)` / `forUpdate(false)` 取消排他锁及等待选项。
-- `NOWAIT` 和 `SKIP LOCKED` 二选一。设置另一种策略前，先显式清除当前策略。
+- `NOWAIT` 和 `SKIP LOCKED` 二选一。设置其他等待策略或自定义锁定尾部前，先显式清除当前选项。自定义尾部一次写明锁定范围和等待策略，例如 `OF o NOWAIT`。
 - 已知策略字符串继续接受，并按大小写无关及去除首尾空白的结果映射，例如 `' nowait '` 输出 NOWAIT。未知字符串尾部按旧接口原样保留，例如已有的 `OF ...` 片段；只能来自可信代码，是否能执行由目标服务端决定，不代表支持了新的数据库方言。
 - 方法仅构建 SQL，不开启事务或立即申请锁；在同一客户端连接的业务事务中执行。SELECT 锁标记和等待策略在构建完成或 `reset()` 后清除。
 

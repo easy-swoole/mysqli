@@ -490,7 +490,7 @@ final class TransactionTest extends TestCase
                     self::assertFalse($connection->isConnected(), $path);
                     self::assertFalse($connection->isTransactionLost(), $path);
                     self::assertTrue($writer->connect());
-                    self::assertNotSame($connection, $writer->mysqlClient());
+                    self::assertSame($connection, $writer->mysqlClient());
                     self::assertSame([['v' => 1]], $writer->rawQuery('SELECT 1 AS v'));
                 } finally {
                     $writer->close();

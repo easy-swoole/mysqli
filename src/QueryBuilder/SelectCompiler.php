@@ -7,7 +7,7 @@ use EasySwoole\Mysqli\Expression;
 
 /**
  * @internal 编译 JOIN、GROUP、UNION、ORDER 及 LIMIT 子句。
- * @phpstan-type JoinNode array{0: string, 1: string, 2: mixed, 3: string, 4: array<array-key, mixed>}
+ * @phpstan-type JoinNode array{type: string, source: string, condition: mixed, key: string, parameters: array<array-key, mixed>, on: list<ConditionNode>}
  * @phpstan-type UnionNode array{0: string|null, 1: array<array-key, mixed>, 2: mixed, 3: bool}
  * @phpstan-type OrderNode array{field: string|Expression, direction: string, params: array<array-key, mixed>}
  * @phpstan-import-type ConditionNode from ConditionCompiler
@@ -17,14 +17,15 @@ final class SelectCompiler
     public function __construct(private readonly SqlBuffer $buffer, private readonly ConditionCompiler $conditions) {}
 
     /**
-     * @param array<array-key, JoinNode>|null $joins
-     * @param array<int, array<array-key, ConditionNode>>|null $joinConditions
+     * @param list<JoinNode> $joins
      */
-    public function appendJoins(mixed $joins, mixed $joinConditions): void
+    public function appendJoins(mixed $joins): void
     {
-        foreach ($joins ?? [] as $index => [$joinType, $joinStr, $joinCondition, , $parameters]) {
+        foreach ($joins as [
+            'type' => $joinType, 'source' => $joinStr, 'condition' => $joinCondition,
+            'parameters' => $parameters, 'on' => $extra,
+        ]) {
             $this->buffer->bindAll($parameters);
-            $extra = $joinConditions[$index] ?? [];
             $using = is_string($joinCondition) && preg_match('/\A\s*USING\s*\(/i', $joinCondition) === 1;
             if ($joinType === JoinType::Natural->value) {
                 if (!is_string($joinCondition) || trim($joinCondition) !== '' || $extra !== []) {

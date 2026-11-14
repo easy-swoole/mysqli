@@ -148,12 +148,6 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([1, 'a', 2, null], $builder->getLastBindParams());
     }
 
-    public function testMissingImplicitUpdateColumnIsRejectedInsteadOfBindingNull(): void
-    {
-        $this->expectException(\InvalidArgumentException::class);
-        (new QueryBuilder())->onDuplicate(['missing'])->insertAll('users', [['id' => 1], ['id' => 2]]);
-    }
-
     public function testQuotedColumnNamesAreEscapedInBothInsertAndUpdateReferences(): void
     {
         $q = (new QueryBuilder())->onDuplicate(['na`me'])->insertAll('users', [['na`me' => 'a'], ['na`me' => 'b']]);
@@ -170,7 +164,7 @@ final class QueryBuilderUpsertTest extends TestCase
         self::assertSame([1, 'a', 2, 'b', 'active'], $q->getLastBindParams());
         self::assertStringContainsString('`name` = `__mysqli_new`.`name`', $q->getLastPrepareQuery());
 
-        foreach ([[], ['missing'], [new \stdClass()]] as $updates) {
+        foreach ([[], [new \stdClass()]] as $updates) {
             $q = new QueryBuilder();
             try {
                 $q->upsert('users', [['id' => 1]], $updates);

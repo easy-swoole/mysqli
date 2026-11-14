@@ -6736,17 +6736,6 @@
                             ]
                         },
                         {
-                            "name": "joinConditions",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": [
-                                "array"
-                            ]
-                        },
-                        {
                             "name": "where",
                             "byReference": false,
                             "variadic": false,
@@ -6914,15 +6903,6 @@
                     "parameters": [
                         {
                             "name": "joins",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
-                        },
-                        {
-                            "name": "joinConditions",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,

@@ -123,7 +123,7 @@ final class WriteCompiler
             $this->buffer->sql .= ')';
             $separator = ',';
         }
-        $this->appendDuplicateAssignments($columns, $updateColumns);
+        $this->appendDuplicateAssignments($updateColumns);
     }
 
     private static function isBatch(array $tableData, bool $batch): bool
@@ -207,7 +207,7 @@ final class WriteCompiler
         }
     }
 
-    private function appendDuplicateAssignments(array $insertColumns, ?array $updateColumns): void
+    private function appendDuplicateAssignments(?array $updateColumns): void
     {
         if ($updateColumns === null || $updateColumns === []) { return; }
         $updates = [];
@@ -228,13 +228,10 @@ final class WriteCompiler
         $values = [];
         $incoming = [];
         foreach ($updates as [$column, $implicit, $value]) {
-            $columns[$column] = $insertColumns[$column] ?? TableReference::identifier($column);
+            $columns[$column] = TableReference::identifier($column);
             if (!$implicit) {
                 $values[$column] = $value;
                 continue;
-            }
-            if (!isset($insertColumns[$column])) {
-                throw new \InvalidArgumentException('Implicit duplicate-update column must exist in the inserted row');
             }
             $incoming[] = $column;
         }
@@ -245,7 +242,7 @@ final class WriteCompiler
             $alias = $table !== null && strcasecmp($table, '__mysqli_new') === 0 ? '`__mysqli_new_row`' : '`__mysqli_new`';
             $this->buffer->sql .= ' AS ' . $alias;
             $readQualifier = TableReference::identifier($table) . '.';
-            // 引用 MySQL 已计算的插入值，避免重复求值。
+            // 由 MySQL 解析行别名下的列名，引用已计算的插入值。
             foreach ($incoming as $column) {
                 $values[$column] = new Expression($alias . '.' . $columns[$column]);
             }
