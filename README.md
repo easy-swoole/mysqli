@@ -1329,7 +1329,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
 - `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。
-- `ResultDecoder`：解码列、结果行及 OK、EOF、ERR 报文。连接根据解码结果更新会话。
+- `ResultDecoder`：解码 Prepare 成功响应、列、结果行及 OK、EOF、ERR 报文。连接根据解码结果更新会话。
 - `ParameterEncoder`、`PacketPayload`：参数编码和有界发送分片。分片过程同时生成协议要求的末尾空包。
 
 上述辅助类属于内部实现。本轮补齐属性、参数和返回值的原生类型声明，保留既有方法名、参数名、顺序和默认值；构造和析构方法按 PHP 规则不声明返回类型。数据库值及旧接口中支持多种输入的参数保留 `mixed`，避免隐式转换或提前抛出 TypeError 改变调用行为。数组结构和回调签名另以 PHPDoc 标注。

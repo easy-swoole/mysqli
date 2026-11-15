@@ -21,6 +21,21 @@ final class ResultDecoder
         return [$affectedRows, $insertId, Codec::int2($packet, $offset)];
     }
 
+    /** @return array{int, int, int, int} 语句 ID、列数、参数数、警告数 */
+    public static function parsePrepareOk(string $packet): array
+    {
+        if (($packet[0] ?? '') !== "\0") {
+            throw new ProtocolException('Malformed COM_STMT_PREPARE response');
+        }
+        $offset = 1;
+        $statementId = Codec::int4($packet, $offset);
+        $columnCount = Codec::int2($packet, $offset);
+        $parameterCount = Codec::int2($packet, $offset);
+        $offset++; // 跳过保留字节。
+        $warningCount = Codec::int2($packet, $offset);
+        return [$statementId, $columnCount, $parameterCount, $warningCount];
+    }
+
     /** 从结果集结束包解码服务端状态。 */
     public static function parseEofStatus(string $packet): int
     {
@@ -50,10 +65,10 @@ final class ResultDecoder
     {
         $offset = 0;
         for ($i = 0; $i < 4; $i++) {
-            Codec::lenencString($packet, $offset);
+            Codec::skipLenencString($packet, $offset);
         }
         $name = Codec::lenencString($packet, $offset) ?? '';
-        Codec::lenencString($packet, $offset);
+        Codec::skipLenencString($packet, $offset);
         Codec::lenencInt($packet, $offset);
         Codec::int2($packet, $offset);
         Codec::int4($packet, $offset);

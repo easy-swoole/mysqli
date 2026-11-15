@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\Exception\Exception;
+use EasySwoole\Mysqli\Exception\ProtocolException;
 use EasySwoole\Mysqli\Protocol\Codec;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -84,6 +85,14 @@ final class CodecTest extends TestCase
         ];
     }
 
+    #[DataProvider('invalidStringLengths')]
+    public function testSkippingInvalidLengthEncodedStringIsRejected(string $packet): void
+    {
+        $offset = 0;
+        $this->expectException(ProtocolException::class);
+        Codec::skipLenencString($packet, $offset);
+    }
+
     public function testSmallLengthEncodedIntegersAndStringsRemainCompatible(): void
     {
         foreach ([0, 250, 251, 65535, 65536, 16777215, 16777216] as $value) {
@@ -97,9 +106,15 @@ final class CodecTest extends TestCase
             $offset = 0;
             self::assertSame($value, Codec::lenencString($packet, $offset));
             self::assertSame(strlen($packet), $offset);
+            $offset = 0;
+            Codec::skipLenencString($packet, $offset);
+            self::assertSame(strlen($packet), $offset);
         }
         $offset = 0;
         self::assertNull(Codec::lenencString("\xfb", $offset));
+        self::assertSame(1, $offset);
+        $offset = 0;
+        Codec::skipLenencString("\xfb", $offset);
         self::assertSame(1, $offset);
     }
 }

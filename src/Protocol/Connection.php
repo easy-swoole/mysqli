@@ -46,14 +46,16 @@ final class Connection
      */
     public function connect(?float $timeout = null): bool
     {
-        return $this->guard(fn(): bool => $this->connectInternal(Deadline::after($timeout ?? $this->config->getMaxConnectTime())));
+        return $this->guard(fn(): bool => $this->connectInternal($timeout));
     }
 
     /**
      * 在截止时间内完成建连、认证和字符集设置。
      */
-    private function connectInternal(Deadline $deadline): bool
+    private function connectInternal(?float $timeout): bool
     {
+        $maxConnectTime = $this->config->getMaxConnectTime();
+        $deadline = Deadline::after($timeout ?? $maxConnectTime);
         $this->assertTransactionUsable();
         if ($this->isConnected()) {
             return true;
@@ -62,7 +64,9 @@ final class Connection
         $this->resetMetadata();
         $this->connect_error = '';
         $this->connect_errno = 0;
-        $deadline = $deadline->cappedBy($this->config->getMaxConnectTime());
+        if ($timeout !== null) {
+            $deadline = $deadline->cappedBy($maxConnectTime);
+        }
         try {
             [$tlsOptions, $expectedName] = TlsOptions::handshakeConfiguration($this->config);
             $this->stream->connect($this->config->getHost(), $this->config->getPort(), $deadline, $tlsOptions !== null);
@@ -160,15 +164,7 @@ final class Connection
             $this->stream->writePacket(chr(self::COM_STMT_PREPARE) . $sql, $deadline, 'prepare');
             $packet = $this->stream->readPacket($deadline, 'prepare');
             $this->throwIfError($packet, $sql);
-            if (($packet[0] ?? '') !== "\0") {
-                throw new ProtocolException('Malformed COM_STMT_PREPARE response');
-            }
-            $offset = 1;
-            $statementId = Codec::int4($packet, $offset);
-            $columnCount = Codec::int2($packet, $offset);
-            $parameterCount = Codec::int2($packet, $offset);
-            $offset++;
-            $warningCount = Codec::int2($packet, $offset);
+            [$statementId, $columnCount, $parameterCount, $warningCount] = ResultDecoder::parsePrepareOk($packet);
 
             $this->consumeDefinitions($parameterCount, $deadline);
             $this->consumeDefinitions($columnCount, $deadline);

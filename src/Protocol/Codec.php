@@ -144,6 +144,20 @@ final class Codec
         return $value;
     }
 
+    /** 校验并跳过长度编码字符串，不复制字符串内容。 */
+    public static function skipLenencString(string $data, int &$offset): void
+    {
+        $length = self::lenencInt($data, $offset);
+        if ($length === null) {
+            return;
+        }
+        if (!is_int($length)) {
+            throw new ProtocolException('Malformed MySQL length-encoded string');
+        }
+        self::requireBytes($data, $offset, $length);
+        $offset += $length;
+    }
+
     /**
      * 将整数编码为 MySQL 长度编码格式。
      */

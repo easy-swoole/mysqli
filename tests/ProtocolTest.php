@@ -198,7 +198,7 @@ final class ProtocolTest extends TestCase
 
                 [, $prepare] = self::receivePacket($peer);
                 self::assertSame("\x16SELECT ? AS answer", $prepare);
-                self::sendPacket($peer, "\0" . pack('VvvCv', 7, 1, 1, 0, 0), 1);
+                self::sendPacket($peer, "\0" . pack('VvvCv', 7, 1, 1, 0, 2), 1);
                 self::sendPacket($peer, self::column('parameter', 3), 2);
                 self::sendPacket($peer, self::eof(), 3);
                 self::sendPacket($peer, self::column('answer', 8), 4);
@@ -236,6 +236,7 @@ final class ProtocolTest extends TestCase
         $client->connect();
         self::assertSame([['answer' => 42]], $client->rawQuery('SELECT 42 AS answer'));
         $statement = $client->prepare('SELECT ? AS answer');
+        self::assertSame(2, $statement->getWarningCount());
         self::assertSame([['answer' => 42]], $statement->execute([42]));
         self::assertSame([['answer' => 43]], $statement->execute([43]));
         self::assertSame([['answer' => 44]], iterator_to_array($statement->iterate([44])));
