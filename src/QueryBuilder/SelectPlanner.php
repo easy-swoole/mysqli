@@ -8,7 +8,7 @@ use EasySwoole\Mysqli\Expression;
 use EasySwoole\Mysqli\QueryBuilder;
 
 /**
- * @internal 无状态 SELECT 查询规划；公开构造器保留工厂及可重写方法的调用。
+ * @internal 无状态 SELECT 查询规划。
  */
 final class SelectPlanner
 {

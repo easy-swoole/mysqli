@@ -111,23 +111,6 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame('DELETE FROM `orders`', $builder->delete('orders')->getLastPrepareQuery());
     }
 
-    public function testGetOnePassesResolvedFieldsToAnOverriddenGet(): void
-    {
-        $builder = new class extends QueryBuilder {
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                return parent::get($tableName, $numRows, [...(array)($columns ?? '*'), 'audit_id']);
-            }
-        };
-
-        $builder->fields('id')->getOne('users');
-        self::assertSame('SELECT  id, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
-        $builder->fields('id')->getOne('users', null);
-        self::assertSame('SELECT  id, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
-        $builder->fields('id')->getOne('users', '*');
-        self::assertSame('SELECT  *, audit_id FROM `users` LIMIT 1', $builder->getLastPrepareQuery());
-    }
-
     public function testClonesStayIndependentAfterWhereHelpersAndWhenHelpersRunOnTheClone(): void
     {
         $helpers = [
@@ -229,55 +212,6 @@ final class QueryBuilderStateTest extends TestCase
         self::assertStringNotContainsString('later_', $builder->getLastPrepareQuery());
     }
 
-    public function testSubclassConstructorAndCloneNeedNotCallParentForStateIsolation(): void
-    {
-        $original = new class extends QueryBuilder {
-            public int $constructCalls = 0;
-            public int $cloneCalls = 0;
-            public function __construct() { $this->constructCalls++; }
-            public function __clone(): void { $this->cloneCalls++; $this->where('clone_marker', 99); }
-        };
-        $original->whereRaw('active = ?', [1])->whereGroup(static fn(QueryBuilder $q) => $q->where('owner', 2));
-        $fork = clone $original;
-        $fork->where('fork_only', 3)->get('records');
-        $original->get('records');
-        self::assertSame(1, $original->constructCalls);
-        self::assertSame(1, $fork->constructCalls);
-        self::assertSame(0, $original->cloneCalls);
-        self::assertSame(1, $fork->cloneCalls);
-        self::assertSame([1, 2], $original->getLastBindParams());
-        self::assertSame([1, 2, 99, 3], $fork->getLastBindParams());
-        self::assertStringNotContainsString('clone_marker', $original->getLastPrepareQuery());
-        $class = $original::class;
-        $fresh = new $class();
-        self::assertSame([], $fresh->getLastBindParams());
-        self::assertSame('SELECT  * FROM `records`', $fresh->get('records')->getLastPrepareQuery());
-    }
-
-    public function testCountCompilesDirectlyWithoutCloningOrDispatchingGet(): void
-    {
-        $template = new class extends QueryBuilder {
-            public static array $events = [];
-            public function __clone(): void
-            {
-                self::$events[] = 'clone';
-                $this->where('clone_marker', 42)->orderByDesc('ignored')->limit(99);
-            }
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                self::$events[] = 'get';
-                return parent::get($tableName, $numRows, $columns);
-            }
-        };
-        $template->whereRaw('active = ?', [1])->count('records');
-        self::assertSame([], $template::$events);
-        self::assertSame([1], $template->getLastBindParams());
-        self::assertStringNotContainsString('ORDER BY', $template->getLastPrepareQuery());
-        self::assertSame(1, substr_count($template->getLastPrepareQuery(), 'LIMIT'));
-        self::assertStringEndsWith('AS `__mysqli_count` LIMIT 1', $template->getLastPrepareQuery());
-
-    }
-
     public function testCompletedOutputsAndReturnedParameterArraysStayIndependentAcrossClones(): void
     {
         $original = (new QueryBuilder())->distinct()->where('id', 1)->get('records');
@@ -332,102 +266,6 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame($sql, $first->sql);
         self::assertSame($parameters, $first->parameters);
         self::assertSame($debug, $first->toDebugSql());
-    }
-
-    public function testDebugSqlIsAvailableBeforeVirtualResetPublishesThePreparedSnapshot(): void
-    {
-        $builder = new class extends QueryBuilder {
-            public array $observations = [];
-            public function reset(): QueryBuilder
-            {
-                $before = [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(), $this->getLastCompiledQuery()];
-                parent::reset();
-                $this->observations[] = [$before, [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(), $this->getLastCompiledQuery()]];
-                return $this;
-            }
-        };
-        $builder->where('id', 1)->get('records');
-        self::assertNull($builder->observations[0][0][0]);
-        self::assertSame([], $builder->observations[0][0][1]);
-        self::assertNull($builder->observations[0][0][3]);
-        self::assertStringContainsString('`id` = 1', $builder->observations[0][0][2]);
-        self::assertSame($builder->getLastPrepareQuery(), $builder->observations[0][1][0]);
-        self::assertSame([1], $builder->observations[0][1][1]);
-        self::assertSame($builder->observations[0][0][2], $builder->observations[0][1][2]);
-        $firstCompiled = $builder->getLastCompiledQuery();
-        self::assertSame($firstCompiled, $builder->observations[0][1][3]);
-        $first = $builder->getLastPrepareQuery();
-        $builder->where('id', 2)->get('records');
-        self::assertSame($first, $builder->observations[1][0][0]);
-        self::assertSame([1], $builder->observations[1][0][1]);
-        self::assertStringContainsString('`id` = 2', $builder->observations[1][0][2]);
-        self::assertSame([2], $builder->observations[1][1][1]);
-        self::assertSame($firstCompiled, $builder->observations[1][0][3]);
-        self::assertSame($builder->getLastCompiledQuery(), $builder->observations[1][1][3]);
-        foreach ($builder->observations as $build) {
-            foreach ($build as [$sql, $parameters, , $compiled]) {
-                self::assertSame($sql, $compiled?->sql);
-                self::assertSame($parameters, $compiled?->parameters ?? []);
-            }
-        }
-    }
-
-    public function testInternalPublicationDoesNotCallAnOverriddenDebugGetter(): void
-    {
-        $builder = new class extends QueryBuilder {
-            public int $debugCalls = 0;
-            public function getLastQuery(): mixed { $this->debugCalls++; return 'view:' . parent::getLastQuery(); }
-        };
-        $builder->where('id', 1)->get('records');
-        self::assertSame(0, $builder->debugCalls);
-        $builder->reset();
-        self::assertSame(0, $builder->debugCalls);
-        self::assertStringStartsWith('view:SELECT', $builder->getLastQuery());
-        self::assertSame(1, $builder->debugCalls);
-        $builder->raw('SELECT ? AS value', [2]);
-        self::assertSame(1, $builder->debugCalls);
-    }
-
-    public function testUnpublishedDebugSqlSurvivesAFailedBuildAndExplicitPendingDiscard(): void
-    {
-        $builder = new class extends QueryBuilder {
-            public bool $publish = true;
-            public function reset(): QueryBuilder { return $this->publish ? parent::reset() : $this; }
-            public function discardPending(): QueryBuilder { return parent::reset(); }
-        };
-        $builder->raw('SELECT ? AS previous', [0]);
-        $published = $builder->getLastPrepareQuery();
-        $builder->publish = false;
-        $builder->where('id', 1)->get('records');
-        $debug = $builder->getLastQuery();
-        self::assertSame($published, $builder->getLastPrepareQuery());
-        self::assertStringContainsString('`id` = 1', $debug);
-        try { $builder->where('bad', [2])->get('records'); self::fail('Expected invalid comparison'); }
-        catch (Exception) { }
-        $builder->discardPending();
-        self::assertSame($debug, $builder->getLastQuery());
-        self::assertSame($published, $builder->getLastPrepareQuery());
-        self::assertSame([0], $builder->getLastBindParams());
-    }
-
-    public function testNewWritesDoNotUseParametersFromAnUnpublishedBuild(): void
-    {
-        $builder = new class extends QueryBuilder {
-            public bool $publish = false;
-            public function reset(): QueryBuilder { return $this->publish ? parent::reset() : $this; }
-        };
-        foreach ([
-            static fn(QueryBuilder $q) => $q->insert('users', ['id' => 42]),
-            static fn(QueryBuilder $q) => $q->update('users', ['id' => 42]),
-            static fn(QueryBuilder $q) => $q->where('id', 42)->delete('users'),
-        ] as $build) {
-            $builder->publish = false;
-            $builder->raw('SELECT ?', [7]);
-            $builder->publish = true;
-            $build($builder);
-            self::assertSame([42], $builder->getLastBindParams());
-            self::assertStringContainsString('42', $builder->getLastQuery());
-        }
     }
 
     public function testFromSubUnionInAndExistsCaptureBuiltQueriesWhenAttached(): void

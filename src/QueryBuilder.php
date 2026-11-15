@@ -38,11 +38,6 @@ class QueryBuilder
     private ?CompiledQuery $compiled = null;
     private bool $noBackslashEscapes = false;
     private bool $ansiQuotes = false;
-    private ?CompiledQuery $readyToPublish = null;
-    // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
-    private ?CompiledQuery $lastBuilt = null;
-    /** @var (\Closure(QueryBuilder, CompiledQuery, mixed, mixed): void)|null */
-    private ?\Closure $capturePage = null;
 
     const TS_OP_START = 1;
     const TS_OP_COMMIT = 2;
@@ -576,49 +571,24 @@ class QueryBuilder
     /** SELECT查询 */
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
-        $this->readyToPublish = null;
-        $capturePage = $this->capturePage;
-        $this->capturePage = null;
-        $query = $this->compileSelect($tableName, $numRows, $columns);
-        $capturePage?->__invoke($this, $query, $tableName, $columns);
+        [, $query] = $this->compileSelect($tableName, $numRows, $columns);
         return $this->publishBuild($query);
     }
 
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
     public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
     {
-        return $this->buildCount($tableName, $alias);
-    }
-
-    /** @internal 从模板创建计数查询。 */
-    public function countQuery(?string $table, string $alias): QueryBuilder
-    {
-        return (clone $this)->buildCount($table, $alias);
+        [$query] = $this->compileSelect($tableName, countAlias: $alias, includeData: false);
+        return $this->publishBuild($query);
     }
 
     /**
-     * @internal 在同一次 get() 编译中取得分页的计数和数据语句。
+     * @internal 从同一份待构建状态生成计数和数据语句。
      * @return array{CompiledQuery, CompiledQuery}
      */
     final public function compilePage(?string $table, int $offset, int $perPage, string $alias): array
     {
-        $quotedAlias = TableReference::identifier($alias);
-        $page = clone $this;
-        $queries = null;
-        // 在 get() 已应用子类筛选、且尚未通过 reset() 清空状态时构建 COUNT。
-        $page->capturePage = static function (QueryBuilder $builder, CompiledQuery $data, mixed $tableName, mixed $columns)
-            use (&$queries, $quotedAlias): void {
-            $queries = [$builder->compileSelect($tableName, columns: $columns, quotedCountAlias: $quotedAlias), $data];
-        };
-        try {
-            $data = $page->limit($offset, $perPage)->get($table)->compiled;
-        } finally {
-            $page->capturePage = null;
-        }
-        if ($queries === null || $queries[1] !== $data) {
-            throw new \LogicException('Pagination requires the SELECT built by QueryBuilder::get()');
-        }
-        return $queries;
+        return $this->compileSelect($table, [$offset, $perPage], countAlias: $alias);
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */
@@ -749,10 +719,6 @@ class QueryBuilder
     /** 重置构造器 */
     public function reset(): QueryBuilder
     {
-        if ($this->readyToPublish !== null) {
-            $this->compiled = $this->readyToPublish;
-            $this->readyToPublish = null;
-        }
         $this->pending = PendingQuery::DEFAULTS;
         return $this;
     }
@@ -795,7 +761,7 @@ class QueryBuilder
     /** 创建一个子查询 */
     public static function subQuery(string|null $subQueryAlias = null): QueryBuilder
     {
-        return new static(true, $subQueryAlias);
+        return new self(true, $subQueryAlias);
     }
 
     // 构建结果
@@ -839,7 +805,7 @@ class QueryBuilder
     /** 按需生成最近一次构建的调试 SQL。 */
     public function getLastQuery(): mixed
     {
-        return $this->lastBuilt?->toDebugSql();
+        return $this->compiled?->toDebugSql();
     }
 
     /** 获取子查询 */
@@ -1003,7 +969,7 @@ class QueryBuilder
 
     private function addConditionGroup(array &$conditions, callable $callback, string $concat, string $source, string $label, bool $on = false): QueryBuilder
     {
-        $group = new static();
+        $group = new self();
         $group->setPrefix($this->prefix);
         $callback($group);
         if ($group->pending[$source] === []) {
@@ -1027,12 +993,15 @@ class QueryBuilder
 
     // 语句编译与结果发布
 
+    /** @return array{?CompiledQuery, ?CompiledQuery} */
     private function compileSelect(
         mixed $tableName,
         mixed $numRows = null,
         mixed $columns = null,
-        ?string $quotedCountAlias = null,
-    ): CompiledQuery {
+        ?string $countAlias = null,
+        bool $includeData = true,
+    ): array {
+        $quotedCountAlias = $countAlias === null ? null : TableReference::identifier($countAlias);
         $state = $this->pending;
         [$buffer, $projection] = SelectPlanner::selectBody(
             $tableName, $columns ?? $state['fields'], $this->prefix,
@@ -1041,14 +1010,8 @@ class QueryBuilder
         );
         return (new QueryCompiler())->compileSelect(
             $buffer, PendingQuery::parts($state), $projection, $state['queryOptions'],
-            $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes], $quotedCountAlias,
+            $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes], $quotedCountAlias, $includeData,
         );
-    }
-
-    private function buildCount(mixed $tableName, string $alias): QueryBuilder
-    {
-        $quotedAlias = TableReference::identifier($alias);
-        return $this->publishBuild($this->compileSelect($tableName, quotedCountAlias: $quotedAlias));
     }
 
     /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
@@ -1064,7 +1027,6 @@ class QueryBuilder
             $operation = $statement === 'INSERT' || $statement === 'REPLACE' ? 'INSERT or REPLACE' : $statement;
             throw new \LogicException('A subquery builder cannot build ' . $operation);
         }
-        $this->readyToPublish = null;
         $reference = TableReference::resolve($tableName, $this->prefix);
         $state = $this->pending;
         $compiled = (new QueryCompiler())->compileWriteQuery(
@@ -1084,9 +1046,8 @@ class QueryBuilder
 
     private function publishBuild(CompiledQuery $query): QueryBuilder
     {
-        $this->lastBuilt = $query;
-        $this->readyToPublish = $query;
-        $this->reset();
+        $this->compiled = $query;
+        $this->pending = PendingQuery::DEFAULTS;
         return $this;
     }
 

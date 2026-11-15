@@ -16,11 +16,11 @@ final class QueryBuilderPublicApiTest extends TestCase
         self::assertSame($expected, self::publicApi());
     }
 
-    public function testSubclassFactoriesChainingAndResetRemainCompatible(): void
+    public function testSubqueryFactoriesChainingAndReset(): void
     {
-        $builder = new class extends QueryBuilder {};
+        $builder = new QueryBuilder();
         $subquery = $builder::subQuery('u');
-        self::assertInstanceOf($builder::class, $subquery);
+        self::assertTrue($subquery->isSubQuery());
         self::assertSame($subquery, $subquery->where('active', true)->get('users', null, 'id'));
         self::assertSame('u', $subquery->getSubQuery()['alias']);
         self::assertSame([true], $subquery->getSubQuery()['params']);

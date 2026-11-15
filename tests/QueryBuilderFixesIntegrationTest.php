@@ -190,35 +190,17 @@ SQL;
             $this->client->rawQuery('SELECT score, status FROM qb_fix_orders WHERE id = 1'));
     }
 
-    public function testUpsertUsesOverriddenDuplicateAndBatchInsertMethods(): void
+    public function testUpsertCombinesExplicitSubqueryAndCaseInsensitiveIncomingColumns(): void
     {
         $this->client->rawQuery('CREATE TEMPORARY TABLE qb_fix_audit_scores (id INT PRIMARY KEY, score INT)');
         $this->client->rawQuery('INSERT INTO qb_fix_audit_scores VALUES (1, 51), (2, 72)');
         $this->client->rawQuery('ALTER TABLE qb_fix_orders ADD COLUMN displayName VARCHAR(100) NULL, ADD COLUMN `État` VARCHAR(20) NULL');
         $score = QueryBuilder::subQuery()->where('id', 1)->get('qb_fix_audit_scores', null, 'score');
-        $builder = new class($score) extends QueryBuilder {
-            public array $calls = [];
-
-            public function __construct(private readonly QueryBuilder $score) {}
-
-            public function onDuplicate(mixed $updateColumns): QueryBuilder
-            {
-                $this->calls[] = 'onDuplicate';
-                return parent::onDuplicate($updateColumns + ['score' => $this->score]);
-            }
-
-            public function insertAll(mixed $tableName, mixed $insertData, mixed $option = []): QueryBuilder
-            {
-                $this->calls[] = 'insertAll';
-                $this->score->where('id', 2)->get('qb_fix_audit_scores', null, 'score');
-                return parent::insertAll($tableName, $insertData, $option);
-            }
-        };
+        $builder = new QueryBuilder();
         $builder->upsert('qb_fix_orders', [
             ['id' => 1, 'tenantId' => 1, 'name' => 'Alice', 'status' => 'paid', 'score' => 0, 'displayName' => 'new display name', 'État' => 'open'],
-        ], ['status' => 'adjusted', 'displayname', 'état']);
+        ], ['status' => 'adjusted', 'displayname', 'état', 'score' => $score]);
 
-        self::assertSame(['onDuplicate', 'insertAll'], $builder->calls);
         self::assertSame([1, 1, 'Alice', 'paid', 0, 'new display name', 'open', 'adjusted', 1], $builder->getLastBindParams());
         self::assertTrue($this->client->query($builder));
         self::assertSame([['score' => 51, 'status' => 'adjusted', 'displayName' => 'new display name', 'État' => 'open']],
@@ -354,21 +336,15 @@ SQL;
         self::assertNull($builder->getLastPrepareQuery());
     }
 
-    public function testPaginationCountsOnlyRowsWithinTheGetScope(): void
+    public function testPaginationCountsOnlyRowsWithinTheTemplateScope(): void
     {
-        $builder = new class extends QueryBuilder {
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                $this->where('tenantId', 1);
-                return parent::get($tableName, $numRows, $columns ?? ['id']);
-            }
-        };
+        $builder = (new QueryBuilder())->where('tenantId', 1)->fields('id');
         $builder->orderByAsc('id');
         self::assertSame(['items' => [['id' => 2]], 'total' => 2, 'page' => 2, 'perPage' => 1, 'lastPage' => 2],
             $this->client->paginate($builder, 'qb_fix_orders', perPage: 1, page: 2));
         self::assertSame(['items' => [], 'total' => 2, 'page' => 3, 'perPage' => 1, 'lastPage' => 2],
             $this->client->paginate($builder, 'qb_fix_orders', perPage: 1, page: 3));
-        self::assertFalse($builder->hasWhere());
+        self::assertTrue($builder->hasWhere());
         self::assertNull($builder->getLastCompiledQuery());
     }
 
@@ -425,17 +401,9 @@ SQL;
         self::assertSame([['order_id' => 1, 'user_id' => 1]], $page['items']);
     }
 
-    public function testGetOneUsesTheDefaultProjectionOfTheOrderBuilder(): void
+    public function testGetOneUsesConfiguredAndExplicitProjection(): void
     {
-        $builder = new class extends QueryBuilder {
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                if ($columns === null && $this->getField() === null) {
-                    $this->fields(['id', 'status']);
-                }
-                return parent::get($tableName, $numRows, $columns);
-            }
-        };
+        $builder = (new QueryBuilder())->fields(['id', 'status']);
         $builder->where('tenantId', 1)->orderByAsc('id');
         $one = (clone $builder)->getOne('qb_fix_orders');
         self::assertSame([['id' => 1, 'status' => 'paid+']], $this->client->query($one));

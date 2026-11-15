@@ -4,16 +4,15 @@ declare(strict_types=1);
 
 namespace EasySwoole\Mysqli\Tests;
 
-use EasySwoole\Mysqli\Config;
+use EasySwoole\Mysqli\{Client, Config};
 use EasySwoole\Mysqli\Transaction\TransactionStartFlags;
 use EasySwoole\Mysqli\Transaction\TransactionCompletionFlags;
 use EasySwoole\Mysqli\QueryBuilder;
-use EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection;
 use PHPUnit\Framework\TestCase;
 
 final class FastDbUsageTest extends TestCase
 {
-    private ?FastDbStyleConnection $connection = null;
+    private ?Client $connection = null;
     private string $table;
 
     protected function setUp(): void
@@ -21,7 +20,7 @@ final class FastDbUsageTest extends TestCase
         if (MYSQL_CONFIG['host'] === '') {
             $this->markTestSkipped('Set FAST_DB_TEST_* or MYSQLI_TEST_* to the EasySwoole FastDb test database.');
         }
-        $this->connection = new FastDbStyleConnection(new Config(MYSQL_CONFIG));
+        $this->connection = new Client(new Config(MYSQL_CONFIG));
         $this->connection->connect();
         $this->table = 'mysqli_fastdb_usage_' . bin2hex(random_bytes(6));
         $this->connection->rawQuery("CREATE TABLE `{$this->table}` (
@@ -34,8 +33,9 @@ final class FastDbUsageTest extends TestCase
     {
         if ($this->connection !== null) {
             try {
-                if ($this->connection->isInTransaction) {
-                    $this->connection->rollback();
+                $protocol = $this->connection->mysqlClient();
+                if ($protocol?->inTransaction()) {
+                    $protocol->rollback();
                 }
                 $this->connection->rawQuery("DROP TABLE IF EXISTS `{$this->table}`");
             } finally {
@@ -47,7 +47,7 @@ final class FastDbUsageTest extends TestCase
 
     public function testPoolHealthCheckAndQueryBuilderCalls(): void
     {
-        self::assertTrue($this->connection->beforeUse());
+        self::assertTrue($this->connection->ping());
         self::assertTrue($this->connection->query((new QueryBuilder())->insert($this->table, ['value' => 'fast-db'])));
         self::assertSame(1, $this->connection->getLastInsertId());
         self::assertSame(1, $this->connection->getLastAffectRows());
@@ -57,14 +57,15 @@ final class FastDbUsageTest extends TestCase
     public function testDirectMysqlClientTransactionCalls(): void
     {
         self::assertTrue($this->connection->connect());
-        self::assertTrue($this->connection->begin(TransactionStartFlags::ConsistentSnapshotReadWrite));
+        $protocol = $this->connection->mysqlClient();
+        self::assertTrue($protocol->begin_transaction(TransactionStartFlags::ConsistentSnapshotReadWrite));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('rollback')"));
-        self::assertTrue($this->connection->rollback(TransactionCompletionFlags::NoChain));
+        self::assertTrue($protocol->rollback(TransactionCompletionFlags::NoChain));
         self::assertSame([['total' => 0]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
 
-        self::assertTrue($this->connection->begin(TransactionStartFlags::ConsistentSnapshotReadWrite));
+        self::assertTrue($protocol->begin_transaction(TransactionStartFlags::ConsistentSnapshotReadWrite));
         self::assertTrue($this->connection->rawQuery("INSERT INTO `{$this->table}` (value) VALUES ('commit')"));
-        self::assertTrue($this->connection->commit(TransactionCompletionFlags::NoChain));
+        self::assertTrue($protocol->commit(TransactionCompletionFlags::NoChain));
         self::assertSame([['total' => 1]], $this->connection->rawQuery("SELECT COUNT(*) AS total FROM `{$this->table}`"));
     }
 }

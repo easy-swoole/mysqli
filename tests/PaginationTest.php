@@ -51,7 +51,7 @@ final class PaginationTest extends TestCase
         }
     }
 
-    public function testClientPaginationClonesTemplateAndSeparatesCountFromDataParameters(): void
+    public function testPaginationPreservesTemplateAndSeparatesCountFromDataParameters(): void
     {
         $client = $this->client([[['__mysqli_total' => 45]], [['id' => 3], ['id' => 4]]]);
         $template = (new QueryBuilder())->where('tenantId', 7)->orderByRaw('FIELD(id, ?) DESC', [99]);
@@ -77,49 +77,6 @@ final class PaginationTest extends TestCase
         self::assertCount(2, $this->queries);
     }
 
-    public function testPaginationUsesTheSameGetScopeForCountAndData(): void
-    {
-        $template = new class extends QueryBuilder {
-            public static array $calls = [];
-
-            public function __clone(): void
-            {
-                self::$calls[] = 'clone';
-                $this->where('clone_marker', 7);
-            }
-
-            public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
-            {
-                self::$calls[] = 'count';
-                return parent::count($tableName, $alias);
-            }
-
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                self::$calls[] = 'get';
-                $this->where('tenantId', 9);
-                return parent::get($tableName, $numRows, $columns);
-            }
-
-            public function raw(mixed $sql, mixed $param = []): QueryBuilder
-            {
-                self::$calls[] = 'raw';
-                return parent::raw($sql, $param);
-            }
-        };
-        $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
-        self::assertSame(1, $client->paginate($template, 'orders')['total']);
-        self::assertSame(['clone', 'get'], $template::$calls);
-        foreach ($this->queries as [$sql, $parameters]) {
-            self::assertStringContainsString('`tenantId` = ?', $sql);
-            self::assertSame([7, 9], $parameters);
-        }
-        self::assertFalse($template->hasWhere());
-        self::assertNull($template->getLastCompiledQuery());
-        $template->count('orders');
-        self::assertSame(['clone', 'get', 'count'], $template::$calls);
-    }
-
     public function testPaginationBuildsBothQueriesBeforeTheFirstCanChangeTheTemplate(): void
     {
         $subquery = QueryBuilder::subQuery()->where('active', true)->get('users', null, 'id');
@@ -134,12 +91,9 @@ final class PaginationTest extends TestCase
         self::assertStringNotContainsString('status', $this->queries[1][0]);
     }
 
-    public function testPaginationUsesOriginalDeadlineAndSkipsThePublicQueryOverride(): void
+    public function testPaginationUsesOriginalDeadline(): void
     {
         $client = $this->client([[['__mysqli_total' => 1]]]);
-        $query = (new QueryBuilder())->raw('SELECT 7 AS id');
-        self::assertSame([['id' => 7]], $client->query($query, 0.1));
-        self::assertSame([[$query, 0.1]], $client->queryCalls);
         $client->onQuery(static function (): void {
             // COUNT 已读完并清理语句，回调耗尽原有预算。
             Coroutine::sleep(0.25);
@@ -150,7 +104,6 @@ final class PaginationTest extends TestCase
             self::fail('Expected the shared deadline to expire before preparing the data query');
         } catch (TimeoutException) {
             self::assertCount(1, $this->queries);
-            self::assertCount(1, $client->queryCalls);
             self::assertTrue($client->mysqlClient()->isConnected());
         }
     }
@@ -197,15 +150,7 @@ final class PaginationTest extends TestCase
             self::assertSame("\x01", $quit);
             $peer->close();
         });
-        $this->client = new class($config) extends Client {
-            public array $queryCalls = [];
-
-            public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
-            {
-                $this->queryCalls[] = [$builder, $timeout];
-                return [['id' => 7]];
-            }
-        };
+        $this->client = new Client($config);
         $this->client->connect();
         if ($afterFirstQuery !== null) {
             $this->client->onQuery(function () use ($afterFirstQuery): void {

@@ -22,22 +22,7 @@ final class ProtocolTest extends TestCase
 
     public function testExecuteUsesTheDeadlineAlreadySpentOnPrepare(): void
     {
-        $builder = (new class extends QueryBuilder {
-            public function getLastPrepareQuery(): ?string
-            {
-                throw new \LogicException('Client should read SQL from the compiled query');
-            }
-
-            public function getLastBindParams(): array
-            {
-                throw new \LogicException('Client should read parameters from the compiled query');
-            }
-
-            public function getLastTransactionOp(): ?int
-            {
-                throw new \LogicException('Client should read the operation from the compiled query');
-            }
-        })->raw('SELECT ? AS id', [42]);
+        $builder = (new QueryBuilder())->raw('SELECT ? AS id', [42]);
         [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($builder): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
@@ -67,7 +52,7 @@ final class ProtocolTest extends TestCase
 
     public function testInternalQueryAndStreamCloseTheirStatementWhenExecutionCannotStart(): void
     {
-        [, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             foreach ([7, 8] as $id) {
@@ -81,20 +66,9 @@ final class ProtocolTest extends TestCase
             self::assertSame("\x01", $quit);
             $peer->close();
         });
-        $client = new class($config) extends Client {
-            public function prepare(string $sql, ?float $timeout = null): \EasySwoole\Mysqli\Protocol\Statement
-            {
-                throw new \LogicException('The public prepare override is only for direct calls');
-            }
-        };
         $client->connect();
         $client->onQuery(static fn() => self::fail('Failed queries must not notify success'));
-        $builder = (new class extends QueryBuilder {
-            public function getLastBindParams(): array
-            {
-                return [42];
-            }
-        })->raw('SELECT ? AS id');
+        $builder = (new QueryBuilder())->raw('SELECT ? AS id');
         try {
             foreach (['query', 'iterate'] as $method) {
                 try {
@@ -485,9 +459,9 @@ final class ProtocolTest extends TestCase
         $this->assertQueryTimeout('prepare');
     }
 
-    private function assertQueryTimeout(string $operation, bool $subclass = false): void
+    private function assertQueryTimeout(string $operation): void
     {
-        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener) use ($operation): void {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($operation): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             [, $command] = self::receivePacket($peer);
@@ -501,9 +475,6 @@ final class ProtocolTest extends TestCase
             Coroutine::sleep($operation === 'builder' ? 0.08 : 0.13);
             $peer->close();
         });
-        if ($subclass) {
-            $client = new \EasySwoole\Mysqli\Tests\Support\FastDbStyleConnection($config);
-        }
         $client->connect();
         $started = microtime(true);
         try {
@@ -613,16 +584,6 @@ final class ProtocolTest extends TestCase
         }
         $client->close();
         $this->assertServerCompleted($completed);
-    }
-
-    public function testAdaptedSubclassForwardsRawQueryTimeout(): void
-    {
-        $this->assertQueryTimeout('raw', true);
-    }
-
-    public function testAdaptedSubclassForwardsBuilderQueryTimeout(): void
-    {
-        $this->assertQueryTimeout('builder', true);
     }
 
     public function testMysqlClientReturnsProtocolConnectionOnlyWhileClientOwnsIt(): void
@@ -881,7 +842,7 @@ final class ProtocolTest extends TestCase
 
     public function testBuilderTableLocksUseTextProtocolAndKeepSuccessCallback(): void
     {
-        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+        [$client, $completed] = $this->fakeServer(static function (Socket $listener): void {
             $peer = $listener->accept(1.0);
             self::acceptSession($peer);
             foreach (['LOCK TABLES `users` READ', 'UNLOCK TABLES'] as $sql) {
@@ -892,15 +853,6 @@ final class ProtocolTest extends TestCase
             self::receivePacket($peer);
             $peer->close();
         });
-        $client = new class($config) extends Client {
-            public array $textCommands = [];
-
-            public function rawQuery(string $query, ?float $timeout = null): bool|array
-            {
-                $this->textCommands[] = $query;
-                return parent::rawQuery($query, $timeout);
-            }
-        };
         $client->connect();
         $notified = [];
         $client->onQuery(static function (bool $result) use (&$notified): void { $notified[] = $result; });
@@ -913,7 +865,6 @@ final class ProtocolTest extends TestCase
             }
             self::assertTrue($client->query($builder));
         }
-        self::assertSame(['LOCK TABLES `users` READ', 'UNLOCK TABLES'], $client->textCommands);
         self::assertSame([true, true], $notified);
         $client->close();
         $this->assertServerCompleted($completed);

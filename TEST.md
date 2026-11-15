@@ -87,7 +87,6 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 
 文件：`tests/FastDbApiCompatibilityTest.php`
 
-- 验证按当前方法签名适配的 FastDb 风格 Connection 类可以继承 Client，并检查显式可选超时参数和 query 的 bool|array 返回类型。
 - 验证 `mysqlClient()` 返回类型仅为协议 Connection 或 null。
 - FastDb 中存在但当前客户端不使用的额外配置不会造成异常。
 - 该测试不依赖 `easyswoole/fast-db` 包。
@@ -291,9 +290,9 @@ Peak memory: 124.34 MB
 
 ## 查询方法显式签名验证
 
-query 和 rawQuery 显式声明可选超时参数，query 返回类型为 bool|array，mysqlClient 返回类型收窄为 Connection|null。旧单参数子类签名不再兼容，需要同步参数和返回类型；测试中的 FastDb 风格子类已经按新接口适配，不代表未修改的旧版 FastDb 连接类仍然兼容。
+query 和 rawQuery 显式声明可选超时参数，query 返回类型为 bool|array，mysqlClient 返回类型收窄为 Connection|null。
 
-新增 5 个行为测试，覆盖 query/rawQuery 的命名超时参数、适配后子类对两种查询的超时转发，以及 mysqlClient 在建连前、建连后和关闭后的返回值。保留原有查询结果数组、写操作布尔结果及超时回归测试。
+新增 5 个行为测试，覆盖 query/rawQuery 的命名超时参数，以及 mysqlClient 在建连前、建连后和关闭后的返回值。保留原有查询结果数组、写操作布尔结果及超时回归测试。
 
 本次单元测试：60 个测试、447 个断言，全部通过。
 指定远程数据库全套测试：89 个测试、719 个断言，全部通过，无错误、失败或跳过；耗时 27.065 秒，峰值内存 124.34 MB。PHP 语法检查及 git diff --check 通过。
@@ -425,7 +424,7 @@ TLS 根据 tlsServerName 或连接 DNS 名发送 SNI，IP 不发送 SNI；SNI �
 
 公开 QueryBuilder 保留链式 API 与构建结果管理，编译实现拆分到 src/QueryBuilder：QueryParts 输入快照、QueryCompiler 调度、ConditionCompiler 条件与子查询、SelectCompiler 查询子句、WriteCompiler 写入、SqlBuffer 参数与 SQL、TableReference 表名/索引、ExpressionFactory 表达式、SqlFormatter 调试展示。WHERE/HAVING 与 ON 共用运算符编译，移除未参与执行的 mysqli 参数类型字符串，区分待构建状态与最近构建结果。主文件由 1632 行缩减到 836 行。
 
-新增公开 API 快照测试，核对全部 71 个公开方法的名称、参数名/顺序/类型/默认值、返回类型、静态属性和公开常量，并验证子类工厂、链式调用、编译异常后的恢复和 reset/prefix 规则。单元测试 170 项、1809 次断言通过；独立临时数据库中的完整集成测试 83 项、1081 次断言通过，无跳过。另对重构前后执行 900 组确定性混合调用序列，精确 SQL、参数、展示 SQL、选项、事务标记、子查询元数据与复用状态全部一致，异常后 reset/raw 的状态也一致。临时数据库已清理，README 与 QueryBuilder 指南已补充内部职责说明。
+新增公开 API 快照测试，核对全部 71 个公开方法的名称、参数名/顺序/类型/默认值、返回类型、静态属性和公开常量，并验证子查询工厂、链式调用、编译异常后的恢复和 reset/prefix 规则。单元测试 170 项、1809 次断言通过；独立临时数据库中的完整集成测试 83 项、1081 次断言通过，无跳过。另对重构前后执行 900 组确定性混合调用序列，精确 SQL、参数、展示 SQL、选项、事务标记、子查询元数据与复用状态全部一致，异常后 reset/raw 的状态也一致。临时数据库已清理，README 与 QueryBuilder 指南已补充内部职责说明。
 
 
 ## 2026-11-08 QueryBuilder 常用场景补齐
@@ -447,7 +446,7 @@ TLS 根据 tlsServerName 或连接 DNS 名发送 SNI，IP 不发送 SNI；SNI �
 
 LockWaitPolicy::Default 显式清除此前的 NOWAIT/SKIP LOCKED；selectForUpdate() 省略选项、null 或旧空字符串的行为保留，setSelectLockOption() 的空字符串仍清除策略。TLS 配置支持字符串与 TlsVersion 混合数组，getter 继续返回字符串数组、保留键；版本名和空数组仍在构建 TLS 选项时校验。TLS 默认关闭，证书校验和协议版本能力位不变。
 
-核对全部 87 个公开方法，其中 27 个方法扩大参数类型；方法及参数名、参数顺序/默认值、返回类型和公开常量保持不变。子类重写原 string 参数的方法需要同步接受相应联合类型；README 和 QueryBuilder 指南已在对应方法下注明迁移要求及每项枚举的用法。顺带修复既有 NATURAL JOIN 错误追加 ON 的问题，使用空初始条件按同名列自然连接，拒绝附加 ON/USING 条件，参照 [MySQL JOIN 语法](https://dev.mysql.com/doc/refman/8.4/en/join.html)。
+核对全部 87 个公开方法，其中 27 个方法扩大参数类型；方法及参数名、参数顺序/默认值、返回类型和公开常量保持不变。README 和 QueryBuilder 指南已在对应方法下注明枚举用法。顺带修复既有 NATURAL JOIN 错误追加 ON 的问题，使用空初始条件按同名列自然连接，拒绝附加 ON/USING 条件，参照 [MySQL JOIN 语法](https://dev.mysql.com/doc/refman/8.4/en/join.html)。
 
 新增 44 项单元测试及 4 项真实数据库场景，覆盖枚举与字符串的精确 SQL/参数/标记一致、各条件入口、命名参数、失败不部分变更状态、锁策略重置、TLS 配置构造/restore/getter/错误路径、自然连接和 TLS 1.2/1.3 实际协商。QueryBuilder/TLS 数据库专项 21 项、69 次断言通过。16 个新增或修改 PHP 文件通过 PHP 8.4 语法检查及 PHP 8.1 目标语法解析（未在 PHP 8.1 运行时执行）；20 段枚举文档示例语法及 Markdown 围栏检查通过。
 
@@ -474,15 +473,15 @@ LockWaitPolicy::Default 显式清除此前的 NOWAIT/SKIP LOCKED；selectForUpda
 
 ## 2026-11-09 状态、规划、认证与执行上下文重构及类型声明
 
-QueryBuilder 将待构建状态按 PendingQuery 的统一默认值及结构说明保存为写时复制数组，编译输入通过 parts() 转为只读 QueryParts，最近成功的执行结果独立保存为只读 CompiledQuery。克隆不共享可变状态对象，也不依赖子类调用父级构造或克隆钩子。调试 SQL 保留独立属性，维持它先于 reset() 发布其他结果的原可见时机，包括子类延迟发布、后续编译失败再清理的场景。
+QueryBuilder 将待构建状态按 PendingQuery 的统一默认值及结构说明保存为写时复制数组，编译输入通过 parts() 转为只读 QueryParts，最近成功的执行结果独立保存为只读 CompiledQuery。待构建数组在克隆后独立修改。
 
-新增无状态 SelectPlanner 与只读 SelectPlan，收拢 SELECT 来源和头部、COUNT 转换、聚合表达式及游标校验。仍保留工厂 new static()、COUNT/聚合的虚 get()、分页副本的子类 __clone() 和链式调用顺序；FROM/UNION 保存调用时快照，IN/EXISTS/JOIN 延后读取子查询的语义不变。前缀输入继续保持旧接口支持范围，未因内部规划器引入更窄类型。
+新增无状态 SelectPlanner 与只读 SelectPlan，收拢 SELECT 来源和头部、COUNT 转换、聚合表达式及游标校验。FROM/UNION 保存调用时快照，IN/EXISTS/JOIN 延后读取子查询的语义不变。前缀输入继续保持旧接口支持范围，未因内部规划器引入更窄类型。
 
-Connection 将握手、能力协商、TLS 升级与认证抽出到 Authenticator，以显式回调沿用错误/OK 元数据更新；共享原 Deadline，TLS 校验先于凭据发送，认证完成后再启用压缩。文本命令发包及预处理参数数量校验共用内部入口，保留原校验顺序。Client 的 ExecutionContext 集中一次执行的超时、Client 自建 Statement 清理及通知，保留 prepare()/query() 子类分派、手工 Statement 所有权、EOF 与提前停止行为、清理异常优先级和成功回调时机。
+Connection 将握手、能力协商、TLS 升级与认证抽出到 Authenticator，以显式回调沿用错误/OK 元数据更新；共享原 Deadline，TLS 校验先于凭据发送，认证完成后再启用压缩。文本命令发包及预处理参数数量校验共用内部入口，保留原校验顺序。Client 的 ExecutionContext 集中一次执行的超时、Client 自建 Statement 清理及通知，保留手工 Statement 所有权、EOF 与提前停止行为、清理异常优先级和成功回调时机。
 
-按用户明确许可补齐公开及内部方法、参数和属性的原生类型声明，保留既有方法名、参数名、顺序和默认值；数据库值与灵活的旧接口输入保留 mixed，数组和回调另加 PHPDoc。构造/析构按 PHP 规则不声明返回类型。ApiContractTest 的重构前基线覆盖 44 个符号、278 个公开或受保护方法；QueryBuilder 当前 97 个公开接口快照已同步类型声明，NativeTypeCompletenessTest 检查全部源码声明。FastDb 子类 rawQuery 适配 bool|array，README 和 QueryBuilder 指南已明确子类重写返回类型的迁移要求。
+按用户明确许可补齐公开及内部方法、参数和属性的原生类型声明，保留既有方法名、参数名、顺序和默认值；数据库值与灵活的旧接口输入保留 mixed，数组和回调另加 PHPDoc。构造/析构按 PHP 规则不声明返回类型。ApiContractTest 的重构前基线覆盖 44 个符号、278 个公开或受保护方法；QueryBuilder 当前 97 个公开接口快照已同步类型声明，NativeTypeCompletenessTest 检查全部源码声明。
 
-本轮新增 49 项单元测试。状态回归中的 14 项、85 次断言分别对重构前和重构后源码执行，全部通过；覆盖 raw/column/group helper 后克隆、返回数组隔离、无父级钩子的子类、重置及调试时序、来源快照和延迟子查询读取。现有伪服务端测试继续覆盖完整 TCP/TLS、压缩、并发、异常和流式路径。
+本轮新增 49 项单元测试。状态回归中的 14 项、85 次断言分别对重构前和重构后源码执行，全部通过；覆盖 raw/column/group helper 后克隆、返回数组隔离、重置及调试时序、来源快照和延迟子查询读取。现有伪服务端测试继续覆盖完整 TCP/TLS、压缩、并发、异常和流式路径。
 
 最终验证环境为 PHP 8.4.27、Swoole 6.2.4、真实 MySQL 9.7.4，VerifyIdentity TLS。单元套件 404 项、5886 次断言全部通过（4.183 秒，18.00 MB）；数据库集成套件 105 项、1176 次断言全部通过（238.779 秒，92.31 MB），合计 509 项、7062 次断言，无错误、失败或跳过。首轮集成初始化出现 7 次 1 秒 TCP 建连超时；保留原超时及源码，串行重跑完整集成套件通过。测试使用独立随机库，结束后已删除；凭据仅经环境变量传入，未修改服务器全局配置。
 

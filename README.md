@@ -169,11 +169,9 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 `Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 对构造器的表锁命令使用文本协议，其余查询使用服务端预处理。`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本协议。两者支持 `timeout: 0.5` 这样的命名参数。
 
-直接调用 `Client::prepare()` 或 `Client::query()` 时遵循 PHP 的方法分派。构造器查询和流式查询使用内部预处理，分页的两条语句使用内部执行流程。子类可在自己的业务入口管理自定义行为。
-
 本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 在 `finally` 中关闭自建的 Statement。执行和关闭均失败时保留执行异常，只有关闭失败时抛出关闭异常。成功回调在清理完成后触发。
 
-继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写这两个方法时都需要声明兼容的 `bool|array` 返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
+`mysqlClient()` 仅返回协议层 `Connection` 或 `null`。
 
 命令发送前耗尽预算时，客户端抛出超时异常并保留会话。开始发送后发生超时会关闭连接，避免复用存在未读 MySQL 数据包的协议流。
 
@@ -221,7 +219,7 @@ CHAIN 可开始新事务。通过事务枚举显式指定 `RELEASE` 时，成功
 
 `connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
 
-`query()` 和 `iterate()` 通过 `getLastCompiledQuery()` 读取已发布的编译结果，从同一份结果取得 SQL、绑定参数和操作标记。覆写各个独立 getter 不会改变 Client 的执行结果。
+`query()` 和 `iterate()` 通过 `getLastCompiledQuery()` 读取已发布的编译结果，从同一份结果取得 SQL、绑定参数和操作标记。
 
 `prepare()` 向服务端发送预处理命令时会清除旧的 `Connection::errno` 和 `Connection::error`。本次预处理若收到服务端错误，这两个属性记录本次错误。
 
@@ -241,8 +239,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 // ['items' => [...], 'total' => 42, 'page' => 2, 'perPage' => 20, 'lastPage' => 3]
 ```
 
-- 在同一个模板副本上先构建 COUNT 和当前页语句，再依次执行。两条语句共享 `get()` 最终使用的表、投影和筛选条件。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
-- 子类可在 `get()` 中添加公共筛选，再调用并返回 `parent::get()` 的构建结果。分页会把这些筛选同时用于 COUNT 和数据页。
+- 从模板的待构建状态生成 COUNT 和当前页语句，再依次执行。两条语句共享表、投影和筛选条件。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
 - JOIN 分页在查询模板上用 `fields()` 显式选列。同名列分别起别名，确保 `items` 能按列名取到各自的值。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
@@ -427,7 +424,7 @@ $builder->where(whereProp: 'amount', whereValue: 100,
 - 普通 `where()` 仍原样保留字符串 `$operator` / `$cond` 的大小写、空白及旧扩展写法，例如 `'REGEXP'`、`'LIKE'`、`'IN'`、`'BETWEEN'`、`'XOR'`。这些 SQL 结构必须来自可信代码或白名单，字符串兼容不表示构造器已验证其完整 SQL 语法。
 - `ConditionValue::Raw` 继续表示完整原始条件；PHP `null`、`true`、`false` 继续按原规则使用，不新增 NULL 或布尔值枚举，也不需要转换。比较 NULL 优先使用 `whereNull()` / `whereNotNull()`。
 - `ComparisonOperator`、`ConditionConjunction`、`SortDirection`、`JoinType`、`TableLockMode`、`LockWaitPolicy` 均位于 `EasySwoole\Mysqli\QueryBuilder` 命名空间；TLS 版本枚举另见 `EasySwoole\Mysqli\TlsVersion`。
-- 此次扩展保留现有参数名、默认值和返回类型，枚举与相应字符串生成相同 SQL、绑定参数及事务标记。重写相关方法的子类应核对父类的新联合参数类型；将参数仅限定为 `string` 会不兼容，需接受相应 `枚举|string`（`selectForUpdate()` 的 `$option` 还接受 `null`）。未限定参数类型的更宽声明仍可兼容。
+- 枚举与相应字符串生成相同的 SQL、绑定参数及事务标记。
 
 ### `having()` / `orHaving()`：聚合条件中的枚举
 
@@ -691,7 +688,7 @@ $builder->onDuplicate([
 - 字段列表 `['name']` 表示引用 MySQL 已计算的插入值，插入表达式只求值一次。单行和批量的隐式更新均使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。显式值为子查询时，先用无别名的 `QueryBuilder::subQuery()` 构建，再传给 `onDuplicate()` 保存其 SQL 和参数。
 - 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。混用隐式列和自定义表达式时，用实际目标表名限定表达式读取的目标列，例如 `orders.baseline`。插入行别名也包含该列时，未限定的 `baseline` 会导致 MySQL 报列名歧义。构造器原样使用 `Expression` 和 `func()` 的 SQL。
-- `upsert()` 要求非空行数据和非空更新列。本次重复键更新通过 `$updateColumns` 指定。构建依次调用 `onDuplicate()` 和 `insertAll()`，子类可覆写这两个方法。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
+- `upsert()` 要求非空行数据和非空更新列。本次重复键更新通过 `$updateColumns` 指定。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
 - 按插入值更新的字段必须在过滤后保留。MySQL 按自己的列名规则解析行别名，例如插入列 `displayName` 可以通过 `displayname` 更新。固定值或表达式更新列由 `$updateColumns` 指定。
 - 重复键更新仅用于 INSERT。与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
@@ -769,7 +766,7 @@ $builder->fields('id')->getOne('users', '*');   // SELECT * FROM `users` LIMIT 1
 
 - 省略 `$columns` 或传入 `null` 时，使用当前的 `fields()` 和 `selectRaw()` 配置。未配置时默认选择 `*`。
 - 显式传入字段会覆盖当前配置。传入 `'*'` 选择全部列，空字段数组会抛出 `InvalidArgumentException`。
-- `getOne()` 将 `LIMIT 1` 和字段参数传给 `get()`。调用和 `fields()` 均未指定字段时，子类覆写的 `get()` 可以决定默认投影。
+- `getOne()` 将 `LIMIT 1` 和字段参数传给 `get()`。调用和 `fields()` 均未指定字段时，使用默认投影。
 
 ### `update($tableName, $tableData, $numRows = null)`：限定字段名
 
@@ -881,7 +878,6 @@ echo $compiled->toDebugSql();
 
 - 首次发布查询前返回 `null`。发布后返回与 `getLastPrepareQuery()` 和 `getLastBindParams()` 对应的只读结果。可直接读取 `$compiled->sql` 和 `$compiled->parameters`，重新使用构造器后仍可保留原结果。
 - `toDebugSql()` 使用该结果保存的引号规则按需展开参数。没有参数时直接返回 SQL。
-- 子类覆写 `reset()` 时，调用 `parent::reset()` 前，`getLastQuery()` 已能显示本次调试 SQL，`getLastCompiledQuery()` 仍读取上一次发布的结果。
 
 ### `forceIndex($indexes)`
 
@@ -1244,7 +1240,7 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 ```
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
-- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端通过 `rawQuery()` 走文本协议，子类覆写的 `rawQuery()` 同样会收到这些命令。
+- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端用文本协议执行这些命令。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
 - 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
 - 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。
@@ -1342,7 +1338,7 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | 类 | 职责 |
 | --- | --- |
 | `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
-| `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
+| `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制 |
 | `CompiledQuery` | 公开只读结果，保存 SQL、绑定参数、查询选项、事务标记和引号模式，按需生成调试 SQL |
 | `SelectPlanner` | 解析 SELECT 的表来源与投影，构建聚合表达式 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
@@ -1359,12 +1355,10 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `SqlFormatter` | 仅生成调试展示 SQL，不参与数据库执行 |
 
 各编译器仅依赖本次 SQL 缓冲和所需输入，不回调整个 Builder 读取私有状态，也不负责连接数据库。
-每次编译使用独立的 SQL 缓冲。构建完成后统一记录调试结果，再调用 `reset()` 发布可执行结果并清除待构建状态。
+每次编译使用独立的 SQL 缓冲。成功构建后发布编译结果并清除待构建状态。调试 SQL 从同一份结果按需生成。
 FROM、UNION、JOIN 和条件子查询在加入外层时保存已构建的 SQL 和绑定参数。
 `QueryBuilderPublicApiTest` 记录公开接口快照；API 契约测试保护方法名、命名参数和默认值，类型完整性测试保护原生类型声明。有意增加或调整公开 API 时，应审查并同步更新相应基线。
 
-### 原生类型与子类重写
+### 方法返回类型
 
 - 普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。`startTransaction()`、`commit()` 和 `rollback()` 只构建 SQL，返回 `void`。
-- 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，聚合方法仍通过 `get()` 构建。
-- 继承 Client 并重写 `rawQuery()` 时同步声明 `bool|array`；`query()` 原有返回类型不变。`Connection::set_charset()` 明确返回 `bool`。这轮类型声明会影响子类方法的 PHP 继承检查，旧的无返回类型重写需要同步适配。

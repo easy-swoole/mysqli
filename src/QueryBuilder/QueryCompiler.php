@@ -71,7 +71,10 @@ final class QueryCompiler
         return $buffer;
     }
 
-    /** @param array{bool, bool} $quoteMode */
+    /**
+     * @param array{bool, bool} $quoteMode
+     * @return array{?CompiledQuery, ?CompiledQuery} 计数语句、数据语句
+     */
     public function compileSelect(
         SqlBuffer $buffer,
         QueryParts $parts,
@@ -80,18 +83,21 @@ final class QueryCompiler
         mixed $numRows,
         array $quoteMode,
         ?string $quotedCountAlias,
-    ): CompiledQuery {
+        bool $includeData,
+    ): array {
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
-        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, $quotedCountAlias !== null);
-        if ($quotedCountAlias !== null) {
-            // 计数保留子查询和 UNION 分支各自的排序及分页。
-            return $this->compileCount($buffer, $parts, $projection, $options, $quoteMode, $quotedCountAlias);
+        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, !$includeData);
+        // 计数在追加外层排序、分页和行锁之前生成。
+        $count = $quotedCountAlias === null ? null
+            : $this->compileCount($buffer, $parts, $projection, $options, $quoteMode, $quotedCountAlias);
+        if (!$includeData) {
+            return [$count, null];
         }
 
         $operation = $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
         $buffer->sql = self::selectHead($projection ?? '*', $options) . $buffer->sql;
-        return CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode);
+        return [$count, CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode)];
     }
 
     private function appendSelectBody(

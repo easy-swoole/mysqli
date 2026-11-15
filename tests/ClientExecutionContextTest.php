@@ -192,39 +192,9 @@ final class ClientExecutionContextTest extends TestCase
         $this->assertClosed($statement);
     }
 
-    private function overrideClient(Statement $statement, ?Connection $connection = null): Client
-    {
-        return new class($statement, $connection) extends Client {
-            /** @var list<array{string, ?float}> */
-            public array $prepareCalls = [];
-            public function __construct(
-                private readonly Statement $statement,
-                ?Connection $connection,
-            ) {
-                parent::__construct(new Config());
-                $this->mysqlClient = $connection;
-                $this->lastInsertId = 9;
-                $this->lastAffectRows = 8;
-            }
-            public function prepare(string $sql, ?float $timeout = null): Statement
-            {
-                $this->prepareCalls[] = [$sql, $timeout];
-                return $this->statement;
-            }
-        };
-    }
-
-    public function testDirectPrepareCallsThePublicOverride(): void
-    {
-        $statement = $this->statement();
-        $client = $this->overrideClient($statement);
-        self::assertSame($statement, $client->prepare('SELECT 1', 0.5));
-        self::assertSame([['SELECT 1', 0.5]], $client->prepareCalls);
-    }
-
     public function testQueryPropagatesNativePrepareTypeErrorWithoutNotifying(): void
     {
-        $client = $this->overrideClient($this->statement(), $this->connected());
+        $client = new Client(new Config());
         $client->onQuery(static function (): void { self::fail('Failure must not notify'); });
         try {
             $client->query(new QueryBuilder(), 0.5);
@@ -232,7 +202,6 @@ final class ClientExecutionContextTest extends TestCase
         } catch (\TypeError $error) {
             self::assertNull($error->getPrevious());
         }
-        self::assertSame([], $client->prepareCalls);
         self::assertNull($client->getLastInsertId());
         self::assertNull($client->getLastAffectRows());
     }
@@ -253,32 +222,4 @@ final class ClientExecutionContextTest extends TestCase
         }
     }
 
-    public function testInvalidTimeoutDoesNotClearEarlierMetadataOrCallPrepare(): void
-    {
-        $client = $this->overrideClient($this->statement());
-        foreach (['query', 'iterate'] as $method) {
-            try { $client->{$method}((new QueryBuilder())->raw('SELECT 1'), 0.0); self::fail('Expected timeout validation'); }
-            catch (\InvalidArgumentException) { self::assertSame([], $client->prepareCalls); }
-            self::assertSame(9, $client->getLastInsertId());
-            self::assertSame(8, $client->getLastAffectRows());
-        }
-    }
-
-    public function testRawQueryReturnTypeAndProtectedCallbackRemainSubclassCompatible(): void
-    {
-        $client = new class(new Config()) extends Client {
-            public function rawQuery(string $query, ?float $timeout = null): bool|array { return [['sql' => $query]]; }
-            public function installCallback(callable $callback): void { $this->onQuery = $callback; }
-        };
-        $client->installCallback(static fn(): bool => true);
-        self::assertSame([['sql' => 'SELECT 1']], $client->rawQuery(query: 'SELECT 1', timeout: 0.5));
-        $property = new \ReflectionProperty(Client::class, 'onQuery');
-        self::assertTrue($property->isProtected());
-        self::assertSame('mixed', (string) $property->getType());
-        $type = (new \ReflectionMethod(Client::class, 'rawQuery'))->getReturnType();
-        self::assertInstanceOf(\ReflectionUnionType::class, $type);
-        $names = array_map(static fn(\ReflectionNamedType $item): string => $item->getName(), $type->getTypes());
-        sort($names);
-        self::assertSame(['array', 'bool'], $names);
-    }
 }

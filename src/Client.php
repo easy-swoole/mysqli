@@ -60,14 +60,15 @@ class Client
      */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
-        return $this->queryWithin($builder->getLastCompiledQuery(), $timeout);
+        $query = $builder->getLastCompiledQuery();
+        if ($this->isTableLock($query?->transactionOp)) {
+            return $this->rawQueryWithin($query->sql, $timeout);
+        }
+        return $this->queryWithin($query, $timeout);
     }
 
     private function queryWithin(?CompiledQuery $query, Deadline|float|null $timeout): bool|array
     {
-        if ($this->isTableLock($query?->transactionOp)) {
-            return $this->rawQuery($query->sql, $timeout instanceof Deadline ? $timeout->remaining() : $timeout);
-        }
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $query): bool|array {
             $statement = $this->prepareForExecution($query?->sql, $execution);
@@ -125,6 +126,11 @@ class Client
      * @return bool|list<array<array-key, mixed>>
      */
     public function rawQuery(string $query,?float $timeout = null): bool|array
+    {
+        return $this->rawQueryWithin($query, $timeout);
+    }
+
+    private function rawQueryWithin(string $query, ?float $timeout): bool|array
     {
         $execution = $this->beginExecution($timeout);
         return $execution->buffered(function () use ($execution, $query): bool|array {

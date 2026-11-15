@@ -6,7 +6,7 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 
 /**
  * @internal 构造器写时复制的待构建状态默认值。
- * 使用数组保持 PHP 克隆隔离，无需子类调用 parent::__clone()。
+ * 使用数组的写时复制保持克隆隔离。
  * @phpstan-type State array{
  *   transactionOp: ?int, joins: list<array>, whereConditions: list<array>,
  *   unionBranches: list<array>, havingConditions: list<array>,

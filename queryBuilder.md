@@ -34,7 +34,7 @@ Coroutine\run(function (): void {
 
 构造器的 `get()`、`getOne()`、`insert()`、`update()` 等方法返回构造器，
 不会执行数据库操作。`getOne()` 构建 `LIMIT 1` 查询，执行后仍返回行数组。
-`get()` 和 `getOne()` 省略字段或传入 `null` 时沿用当前字段配置，显式传入 `'*'` 选择全部列。子类覆写 `get()` 时，也可以为省略字段的 `getOne()` 提供默认投影。
+`get()` 和 `getOne()` 省略字段或传入 `null` 时沿用当前字段配置，显式传入 `'*'` 选择全部列。
 成功执行写入语句返回 `true`；影响行数和插入 ID 分别由客户端的
 `getLastAffectRows()`、`getLastInsertId()` 获取。
 
@@ -73,11 +73,11 @@ $builder->where('col1',2)->get('my_table');
 
 //获取上次条件构造的预处理sql语句
 echo $builder->getLastPrepareQuery();
-// SELECT  * FROM `my_table` WHERE  `col1` = ? 
+// SELECT  * FROM `my_table` WHERE  `col1` = ?
 
 //获取上次条件构造的sql语句
 echo $builder->getLastQuery();
-// SELECT  * FROM `my_table` WHERE  `col1` = 2 
+// SELECT  * FROM `my_table` WHERE  `col1` = 2
 
 // 获取上次预处理 SQL 需要的绑定参数
 var_dump($builder->getLastBindParams());
@@ -250,7 +250,7 @@ $builder->where(whereProp: 'amount', whereValue: 100,
 - 普通 `where()` 仍原样保留字符串 `$operator` / `$cond` 的大小写、空白及旧扩展写法，例如 `'REGEXP'`、`'LIKE'`、`'IN'`、`'BETWEEN'`、`'XOR'`。这些 SQL 结构必须来自可信代码或白名单，字符串兼容不表示构造器已验证其完整 SQL 语法。
 - `ConditionValue::Raw` 继续表示完整原始条件；PHP `null`、`true`、`false` 继续按原规则使用，不新增 NULL 或布尔值枚举，也不需要转换。比较 NULL 优先使用 `whereNull()` / `whereNotNull()`。
 - `ComparisonOperator`、`ConditionConjunction`、`SortDirection`、`JoinType`、`TableLockMode`、`LockWaitPolicy` 均位于 `EasySwoole\Mysqli\QueryBuilder` 命名空间；TLS 版本枚举另见 `EasySwoole\Mysqli\TlsVersion`。
-- 此次扩展保留现有参数名、默认值和返回类型，枚举与相应字符串生成相同 SQL、绑定参数及事务标记。重写相关方法的子类应核对父类的新联合参数类型；将参数仅限定为 `string` 会不兼容，需接受相应 `枚举|string`（`selectForUpdate()` 的 `$option` 还接受 `null`）。未限定参数类型的更宽声明仍可兼容。
+- 枚举与相应字符串生成相同的 SQL、绑定参数及事务标记。
 
 ### `having()` / `orHaving()`：聚合条件中的枚举
 
@@ -494,7 +494,7 @@ $builder->onDuplicate([
 - 字段列表 `['name']` 表示引用 MySQL 已计算的插入值，插入表达式只求值一次。单行和批量的隐式更新均使用 INSERT 行别名语法，**需要 MySQL 8.0.19 或更高版本**。
 - 显式映射 `['name' => '统一名称']` 表示冲突时统一写入该值，不读取每行的 name。显式值也可使用 Expression 或原有 `func()` 等表达式；固定标量参数在各行插入参数之后绑定。显式值为子查询时，先用无别名的 `QueryBuilder::subQuery()` 构建，再传给 `onDuplicate()` 保存其 SQL 和参数。
 - 重复键赋值按 `$updateColumns` 的顺序执行。每列只能配置一次，例如同时传入 `['name', 'name' => '固定值']` 会在构建时抛出 `InvalidArgumentException`。混用隐式列时，`inc()`、`dec()` 和默认 `not()` 引用目标表当前列。混用隐式列和自定义表达式时，用实际目标表名限定表达式读取的目标列，例如 `orders.baseline`。插入行别名也包含该列时，未限定的 `baseline` 会导致 MySQL 报列名歧义。构造器原样使用 `Expression` 和 `func()` 的 SQL。
-- `upsert()` 要求非空行数据和非空更新列。本次重复键更新通过 `$updateColumns` 指定。构建依次调用 `onDuplicate()` 和 `insertAll()`，子类可覆写这两个方法。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
+- `upsert()` 要求非空行数据和非空更新列。本次重复键更新通过 `$updateColumns` 指定。可以用 `fields()` 筛选待插入的列，筛选后每行的列集合必须一致。放弃失败的构建时，先调用 `reset()` 再组装新查询。
 - 按插入值更新的字段必须在过滤后保留。MySQL 按自己的列名规则解析行别名，例如插入列 `displayName` 可以通过 `displayname` 更新。重复键更新仅用于 INSERT，与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
@@ -608,7 +608,7 @@ $builder->where('active', true)->reset();
 
 - 只清除待构建的字段、条件、FROM 来源、排序、分页、索引、锁和重复键设置，保留最近一次成功构建的 SQL、绑定参数及事务操作快照。
 - 表前缀和 `setLockTableMode()` 的持久表锁模式保留。构建失败不会发布半成品结果；需要放弃失败查询时调用 `reset()`，再开始新的链式构建。
-- 返回类型现明确为 `QueryBuilder`。子类重写 `reset()` 时需声明兼容返回类型，并返回父类结果或 `$this`；构造器克隆不要求额外调用父级 `__clone()`。
+- 返回类型为 `QueryBuilder`。
 
 ### `raw($sql, $param = [])`
 
@@ -860,7 +860,7 @@ use EasySwoole\Mysqli\QueryBuilder;
 
 $builder = new QueryBuilder();
 
-// update 
+// update
 $builder->update('updateTable', ['a' => 1]);
 
 // limit update
@@ -1002,7 +1002,7 @@ $builder->setLockTableMode(TableLockMode::Read)->lockTable('users');
 ```
 
 - `Read` / `Write` 分别对应 READ / WRITE；未设置时仍使用 READ。`lockTable()` 生成表锁语句，表锁与 SELECT 行锁及其等待策略是不同设置。
-- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端通过 `rawQuery()` 走文本协议，子类覆写的 `rawQuery()` 同样会收到这些命令。
+- 用 `Client::query()` 执行 `lockTable()` 和 `unlockTable()` 构建的命令，客户端用文本协议执行这些命令。
 - 字符串继续忽略大小写，但沿用旧规则不去除首尾空白：`'read'` 有效，`' read '` 无效。固定字符串通过 `TableLockMode::tryFrom()` 校验，无效值不会覆盖此前模式。
 - 可传入单个表名或非空表名数组，数组按值的顺序处理。普通表名应用表前缀，数据库限定表名按原数据库和表名引用。
 - 表锁模式保留到下一次显式设置。复用构造器时，可调用 `setLockTableMode(TableLockMode::Read)` 切回 READ。
@@ -1061,8 +1061,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 // ['items' => [...], 'total' => 42, 'page' => 2, 'perPage' => 20, 'lastPage' => 3]
 ```
 
-- 在同一个模板副本上先构建 COUNT 和当前页语句，再依次执行。两条语句共享 `get()` 最终使用的表、投影和筛选条件。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
-- 子类可在 `get()` 中添加公共筛选，再调用并返回 `parent::get()` 的构建结果。分页会把这些筛选同时用于 COUNT 和数据页。
+- 从模板的待构建状态生成 COUNT 和当前页语句，再依次执行。两条语句共享表、投影和筛选条件。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
 - JOIN 分页在查询模板上用 `fields()` 显式选列。同名列分别起别名，确保 `items` 能按列名取到各自的值。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
@@ -1149,7 +1148,7 @@ try {
 
 ## 内部实现与兼容性
 
-公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。`SelectPlanner` 解析表来源与投影并生成聚合表达式。`QueryCompiler` 负责写入语句头和子句顺序，普通 SELECT 与 COUNT 共用查询主体，再由编译器生成最终语句。批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
+公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建时发布只读 `CompiledQuery` 并清除待构建状态。`SelectPlanner` 解析表来源与投影并生成聚合表达式。`QueryCompiler` 负责写入语句头和子句顺序，普通 SELECT 与 COUNT 共用查询主体，再由编译器生成最终语句。批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
 条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
-普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。子类重写方法时须声明兼容的返回类型，例如 `QueryBuilder` 或协变的 `static`，并接受父类支持的参数。COUNT 直接编译模板状态，聚合方法通过 `get()` 构建，工厂返回子类实例。
+普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。
 内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。

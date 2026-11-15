@@ -98,25 +98,4 @@ final class SelectPlannerTest extends TestCase
             self::assertNotNull($error);
         }
     }
-
-    public function testCountCompilesDirectlyAndAggregateKeepsGetDispatch(): void
-    {
-        $calls = new \ArrayObject();
-        $builder = new class($calls) extends QueryBuilder {
-            public function __construct(private \ArrayObject $calls) { parent::__construct(); }
-            public function __clone() { $this->calls[] = 'clone'; $this->where('clone_flag', 9); }
-            public function get($tableName, $numRows = null, $columns = null): QueryBuilder
-            { $this->calls[] = 'get'; $this->where('get_flag', 10); return parent::get($tableName, $numRows, $columns); }
-        };
-        $builder->where('tenantId', 7)->count('orders');
-        self::assertSame([7], $builder->getLastBindParams());
-        self::assertSame([], $calls->getArrayCopy());
-        try { $builder->count('orders', ''); self::fail('Invalid alias must be rejected'); }
-        catch (\InvalidArgumentException $error) { }
-        self::assertSame([], $calls->getArrayCopy());
-        $builder->sum('orders', 'amount');
-        self::assertSame([10], $builder->getLastBindParams());
-        self::assertSame(['get'], $calls->getArrayCopy());
-    }
-
 }
