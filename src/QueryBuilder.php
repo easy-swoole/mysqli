@@ -5,7 +5,6 @@ namespace EasySwoole\Mysqli;
 use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\QueryBuilder\{
     CompiledQuery,
-    CountCompilation,
     ComparisonOperator,
     ConditionConjunction,
     ExpressionFactory,
@@ -37,11 +36,6 @@ class QueryBuilder
     /** @var State 写时复制状态；克隆对象不会共享可变状态对象。 */
     private array $pending = PendingQuery::DEFAULTS;
     private ?CompiledQuery $compiled = null;
-    // null 为直接调用 count()，false 为可直接编译的分页副本。
-    private QueryBuilder|false|null $countSource = null;
-    private ?CountCompilation $countCompilation = null;
-    /** @var (\Closure(): (array{bool, bool}|null))|null */
-    private ?\Closure $countPublicationQuoteMode = null;
     private bool $noBackslashEscapes = false;
     private bool $ansiQuotes = false;
     private ?CompiledQuery $readyToPublish = null;
@@ -586,120 +580,16 @@ class QueryBuilder
         return $this->publishBuild($this->compileSelect($tableName, $numRows, $columns));
     }
 
-    private function compileSelect(
-        mixed $tableName,
-        mixed $numRows = null,
-        mixed $columns = null,
-        bool $countOnly = false,
-    ): CompiledQuery {
-        $state = $this->pending;
-        [$buffer, $projection] = SelectPlanner::selectBody(
-            $tableName, $columns ?? $state['fields'], $this->prefix,
-            $state['fromSource'], ['FORCE' => $state['forceIndexes'],
-                'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
-        );
-        if (!$countOnly) {
-            $this->pending['tableName'] = $buffer->tableName;
-        }
-
-        $scope = $this->countCompilation;
-        return (new QueryCompiler())->compileSelect(
-            $buffer, PendingQuery::parts($state), $projection, $state['queryOptions'],
-            $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes],
-            $countOnly, $scope?->active ? $scope : null,
-        );
-    }
-
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
     public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
     {
-        // 先校验再克隆；子类 __clone() 执行完成后再应用查询计划。
-        $quotedAlias = TableReference::identifier($alias);
-        $source = $this->countSource;
-        $this->countSource = null;
-        $inner = $this->countSelectResult($tableName, $source);
-        $sql = SelectPlanner::countSql($inner->sql, $quotedAlias);
-        $this->pending['queryOptions'] = [];
-        $this->pending['transactionOp'] = null;
-        $previousQuoteMode = $this->countPublicationQuoteMode;
-        $quoteMode = $inner->quoteMode;
-        // raw() 钩子返回后，钩子内创建的副本也不再使用临时引号模式。
-        $this->countPublicationQuoteMode = static function () use (&$quoteMode): ?array { return $quoteMode; };
-        try {
-            return $this->raw($sql, $inner->parameters);
-        } finally {
-            $quoteMode = null;
-            $this->countPublicationQuoteMode = $previousQuoteMode;
-        }
+        return $this->buildCount($tableName, $alias);
     }
 
     /** @internal 从模板创建计数查询。 */
     public function countQuery(?string $table, string $alias): QueryBuilder
     {
-        $counter = clone $this;
-        $counter->countSource = false;
-        if (static::class !== self::class && $this->overridesCountSource()) {
-            $counter->countSource = (new \ReflectionMethod($this, 'count'))->getDeclaringClass()->getName() === self::class
-                ? clone $this : $counter;
-        }
-        try {
-            return $counter->count($table, $alias);
-        } finally {
-            $counter->countSource = null;
-        }
-    }
-
-    private function countSelectResult(mixed $tableName, QueryBuilder|false|null $source): CompiledQuery
-    {
-        if (static::class === self::class || $source === false) {
-            return $this->compileSelect($tableName, countOnly: true);
-        }
-
-        if ($source === $this) {
-            // 还原计数副本的构建状态，同时保留子类 get() 钩子写入的属性。
-            $state = [$this->pending, $this->compiled, $this->readyToPublish, $this->lastBuilt,
-                $this->prefix, $this->tableLockMethod, $this->noBackslashEscapes, $this->ansiQuotes];
-            try {
-                return $this->compileCountSource($tableName, true);
-            } finally {
-                [$this->pending, $this->compiled, $this->readyToPublish, $this->lastBuilt,
-                    $this->prefix, $this->tableLockMethod, $this->noBackslashEscapes, $this->ansiQuotes] = $state;
-            }
-        }
-        return ($source ?? clone $this)->compileCountSource($tableName, $source !== null);
-    }
-
-    private function compileCountSource(mixed $tableName, bool $paging): CompiledQuery
-    {
-        $previousCompilation = $this->countCompilation;
-        $compilation = new CountCompilation($paging);
-        $this->countCompilation = $compilation;
-        try {
-            $source = $this->get($tableName);
-            // 让覆写的 SQL 和参数读取方法看到最终返回的计数来源。
-            $original = $source->compiled;
-            $source->compiled = $compilation->sources[$original] ?? $original;
-            try {
-                return new CompiledQuery($source->getLastPrepareQuery(), $source->getLastBindParams(),
-                    [], null, quoteMode: $source->compiled->quoteMode);
-            } finally {
-                $source->compiled = $original;
-            }
-        } finally {
-            $compilation->active = false;
-            $this->countCompilation = $previousCompilation;
-        }
-    }
-
-    /** 检查内层 SELECT 是否需要调用子类方法。 */
-    private function overridesCountSource(): bool
-    {
-        foreach (['get', 'getLastPrepareQuery', 'getLastBindParams'] as $method) {
-            if ((new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() !== self::class) {
-                return true;
-            }
-        }
-        return false;
+        return (clone $this)->buildCount($table, $alias);
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */
@@ -830,17 +720,12 @@ class QueryBuilder
     /** 重置构造器 */
     public function reset(): QueryBuilder
     {
-        $this->resetBuildState();
-        return $this;
-    }
-
-    private function resetBuildState(): void
-    {
         if ($this->readyToPublish !== null) {
             $this->compiled = $this->readyToPublish;
             $this->readyToPublish = null;
         }
         $this->pending = PendingQuery::DEFAULTS;
+        return $this;
     }
 
     public static function rawExpression(string $sql, array $parameters = []): Expression
@@ -976,8 +861,7 @@ class QueryBuilder
             throw new \TypeError('Raw SQL must be a string');
         }
         $parameters = array_map(static fn($value) => $value, array_values($param));
-        $quoteMode = $this->countPublicationQuoteMode?->__invoke();
-        return $this->completeBuild($sql, $parameters, $this->pending['transactionOp'], quoteMode: $quoteMode);
+        return $this->completeBuild($sql, $parameters, $this->pending['transactionOp']);
     }
 
     // 条件构建与选项处理
@@ -1114,6 +998,34 @@ class QueryBuilder
 
     // 语句编译与结果发布
 
+    private function compileSelect(
+        mixed $tableName,
+        mixed $numRows = null,
+        mixed $columns = null,
+        ?string $quotedCountAlias = null,
+    ): CompiledQuery {
+        $state = $this->pending;
+        [$buffer, $projection] = SelectPlanner::selectBody(
+            $tableName, $columns ?? $state['fields'], $this->prefix,
+            $state['fromSource'], ['FORCE' => $state['forceIndexes'],
+                'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
+        );
+        if ($quotedCountAlias === null) {
+            $this->pending['tableName'] = $buffer->tableName;
+        }
+
+        return (new QueryCompiler())->compileSelect(
+            $buffer, PendingQuery::parts($state), $projection, $state['queryOptions'],
+            $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes], $quotedCountAlias,
+        );
+    }
+
+    private function buildCount(mixed $tableName, string $alias): QueryBuilder
+    {
+        $quotedAlias = TableReference::identifier($alias);
+        return $this->publishBuild($this->compileSelect($tableName, quotedCountAlias: $quotedAlias));
+    }
+
     /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
     private function compileWrite(
         string $statement,
@@ -1133,21 +1045,19 @@ class QueryBuilder
         }
         $reference = TableReference::resolve($tableName, $this->prefix);
         $this->pending['tableName'] = $reference['name'];
-        $buffer = QueryCompiler::writeHead($statement, $reference, $this->pending['queryOptions'], $this->pending['joins'] !== []);
         $state = $this->pending;
-        (new QueryCompiler())->compileWrite(
-            $buffer, PendingQuery::parts($state), $statement, $numRows ?? $state['limit'],
-            $tableData, $fields ?? $state['fields'], $batch
+        $compiled = (new QueryCompiler())->compileWriteQuery(
+            $statement, $reference, PendingQuery::parts($state), $state['queryOptions'],
+            $numRows ?? $state['limit'], $tableData, $fields ?? $state['fields'], $batch,
+            [$this->noBackslashEscapes, $this->ansiQuotes]
         );
-        return $this->publishBuild(CompiledQuery::fromBuffer($buffer, $state['queryOptions'], null,
-            [$this->noBackslashEscapes, $this->ansiQuotes]));
+        return $this->publishBuild($compiled);
     }
 
-    /** @param array{bool, bool}|null $quoteMode */
-    private function completeBuild(string $sql, array $parameters, ?int $operation, ?array $quoteMode = null): QueryBuilder
+    private function completeBuild(string $sql, array $parameters, ?int $operation): QueryBuilder
     {
         $query = new CompiledQuery($sql, $parameters, $this->pending['queryOptions'], $operation,
-            quoteMode: $quoteMode ?? [$this->noBackslashEscapes, $this->ansiQuotes]);
+            quoteMode: [$this->noBackslashEscapes, $this->ansiQuotes]);
         return $this->publishBuild($query);
     }
 
@@ -1155,11 +1065,7 @@ class QueryBuilder
     {
         $this->lastBuilt = $query;
         $this->readyToPublish = $query;
-        if ($this->countCompilation?->active && $this->countCompilation->skipResetHook) {
-            $this->resetBuildState();
-        } else {
-            $this->reset();
-        }
+        $this->reset();
         return $this;
     }
 

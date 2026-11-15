@@ -73,7 +73,7 @@ final class Connection
                 $this->config,
                 $this->stream,
                 function (string $packet, string $context): void { $this->throwIfError($packet, $context); },
-                function (string $packet): void { $this->parseOk($packet); },
+                function (string $packet): void { $this->applyOk($packet); },
             );
             $authenticator->authenticateWithOptions($handshake, $deadline, $tlsOptions, $expectedName);
             $charsetSql = self::charsetSql($this->config->getCharset());
@@ -462,7 +462,7 @@ final class Connection
         $headerOffset = 0;
         $header = Codec::int1($packet, $headerOffset);
         if ($header === 0x00) {
-            $this->parseOk($packet);
+            $this->applyOk($packet);
             return null;
         }
         if ($header === 0xfb) {
@@ -480,14 +480,12 @@ final class Connection
         }
         $terminator = $this->stream->readPacket($deadline, 'column terminator');
         $this->throwIfError($terminator, $sql);
-        if (!$this->isEof($terminator) && ord($terminator[0]) !== 0x00) {
-            throw new ProtocolException('Malformed result-set column terminator');
-        }
-
         if ($this->isEof($terminator)) {
-            $this->parseEofStatus($terminator);
+            $this->state->applyServerStatus(ResultDecoder::parseEofStatus($terminator));
+        } elseif (ord($terminator[0]) === 0x00) {
+            $this->applyOk($terminator);
         } else {
-            $this->parseOk($terminator);
+            throw new ProtocolException('Malformed result-set column terminator');
         }
 
         return $columns;
@@ -499,7 +497,7 @@ final class Connection
         $row = $this->stream->readPacket($deadline, 'result row');
         $this->throwIfError($row, $sql, $serverError);
         if ($this->isEof($row)) {
-            $this->parseEofStatus($row);
+            $this->state->applyServerStatus(ResultDecoder::parseEofStatus($row));
             return null;
         }
         return $binary ? ResultDecoder::parseBinaryRow($row, $columns) : ResultDecoder::parseTextRow($row, $columns);
@@ -521,29 +519,12 @@ final class Connection
     }
 
     /**
-     * 读取成功响应中的影响行数、插入 ID 及事务状态。
+     * 使用成功响应更新会话元数据和事务状态。
      */
-    private function parseOk(string $packet): void
+    private function applyOk(string $packet): void
     {
-        $offset = 1;
-        $affectedRows = Codec::lenencInt($packet, $offset);
-        $insertId = Codec::lenencInt($packet, $offset);
-        if ($affectedRows === null || $insertId === null) {
-            throw new ProtocolException('Malformed MySQL OK packet metadata');
-        }
-        $status = Codec::int2($packet, $offset);
-        $this->affected_rows = $affectedRows;
-        $this->insert_id = $insertId;
+        [$this->affected_rows, $this->insert_id, $status] = ResultDecoder::parseOk($packet);
         $this->state->applyServerStatus($status);
-    }
-
-    /**
-     * 从结果集结束包读取服务端事务状态。
-     */
-    private function parseEofStatus(string $packet): void
-    {
-        $offset = 3;
-        $this->state->applyServerStatus(Codec::int2($packet, $offset));
     }
 
     /**
@@ -579,16 +560,11 @@ final class Connection
      */
     private function throwIfError(string $packet, string $context, ?bool &$serverError = null): void
     {
-        if (($packet[0] ?? '') !== "\xff") {
+        $error = ResultDecoder::parseError($packet);
+        if ($error === null) {
             return;
         }
-        $offset = 1;
-        $code = Codec::int2($packet, $offset);
-        if (($packet[$offset] ?? '') === '#') {
-            Codec::requireBytes($packet, $offset, 6);
-            $offset += 6;
-        }
-        $message = substr($packet, $offset);
+        [$code, $message] = $error;
         $serverError = true;
         $this->errno = $code;
         $this->error = $message;

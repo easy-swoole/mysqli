@@ -254,7 +254,7 @@ final class QueryBuilderStateTest extends TestCase
         self::assertSame('SELECT  * FROM `records`', $fresh->get('records')->getLastPrepareQuery());
     }
 
-    public function testCountPreservesSubclassCloneHooksAndVirtualGetCalls(): void
+    public function testCountCompilesDirectlyWithoutCloningOrDispatchingGet(): void
     {
         $template = new class extends QueryBuilder {
             public static array $events = [];
@@ -270,8 +270,8 @@ final class QueryBuilderStateTest extends TestCase
             }
         };
         $template->whereRaw('active = ?', [1])->count('records');
-        self::assertSame(['clone', 'get'], $template::$events);
-        self::assertSame([1, 42], $template->getLastBindParams());
+        self::assertSame([], $template::$events);
+        self::assertSame([1], $template->getLastBindParams());
         self::assertStringNotContainsString('ORDER BY', $template->getLastPrepareQuery());
         self::assertSame(1, substr_count($template->getLastPrepareQuery(), 'LIMIT'));
         self::assertStringEndsWith('AS `__mysqli_count` LIMIT 1', $template->getLastPrepareQuery());

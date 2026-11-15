@@ -9,6 +9,40 @@ use EasySwoole\Mysqli\Exception\ProtocolException;
 /** 解码完整的结果报文，不持有 Socket 或连接状态。 */
 final class ResultDecoder
 {
+    /** @return array{int|string, int|string, int} 影响行数、插入 ID、服务端状态 */
+    public static function parseOk(string $packet): array
+    {
+        $offset = 1;
+        $affectedRows = Codec::lenencInt($packet, $offset);
+        $insertId = Codec::lenencInt($packet, $offset);
+        if ($affectedRows === null || $insertId === null) {
+            throw new ProtocolException('Malformed MySQL OK packet metadata');
+        }
+        return [$affectedRows, $insertId, Codec::int2($packet, $offset)];
+    }
+
+    /** 从结果集结束包解码服务端状态。 */
+    public static function parseEofStatus(string $packet): int
+    {
+        $offset = 3;
+        return Codec::int2($packet, $offset);
+    }
+
+    /** @return array{int, string}|null 错误码和错误消息 */
+    public static function parseError(string $packet): ?array
+    {
+        if (($packet[0] ?? '') !== "\xff") {
+            return null;
+        }
+        $offset = 1;
+        $code = Codec::int2($packet, $offset);
+        if (($packet[$offset] ?? '') === '#') {
+            Codec::requireBytes($packet, $offset, 6);
+            $offset += 6;
+        }
+        return [$code, substr($packet, $offset)];
+    }
+
     /**
      * 解析结果字段的名称、类型及标志。
      */

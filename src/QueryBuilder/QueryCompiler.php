@@ -51,7 +51,7 @@ final class QueryCompiler
      * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
      * @param array{sql: string, name: string, target: ?string, baseName: ?string} $table
      */
-    public static function writeHead(string $statement, array $table, array $options, bool $hasJoins): SqlBuffer
+    private static function writeHead(string $statement, array $table, array $options, bool $hasJoins): SqlBuffer
     {
         $target = '';
         if ($statement === 'DELETE' && $hasJoins) {
@@ -79,27 +79,19 @@ final class QueryCompiler
         array $options,
         mixed $numRows,
         array $quoteMode,
-        bool $countOnly,
-        ?CountCompilation $scope,
+        ?string $quotedCountAlias,
     ): CompiledQuery {
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
-        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, $countOnly);
-        if ($countOnly || $scope !== null) {
-            // 计数取到 UNION 为止，分支和子查询已经编译好的排序及分页仍然保留。
-            $count = $this->countSource($buffer, $parts, $projection, $options, $quoteMode);
-            if ($countOnly) {
-                return $count;
-            }
+        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, $quotedCountAlias !== null);
+        if ($quotedCountAlias !== null) {
+            // 计数保留子查询和 UNION 分支各自的排序及分页。
+            return $this->compileCount($buffer, $parts, $projection, $options, $quoteMode, $quotedCountAlias);
         }
 
         $operation = $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
         $buffer->sql = self::selectHead($projection ?? '*', $options) . $buffer->sql;
-        $query = CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode);
-        if ($scope !== null) {
-            $scope->sources[$query] = $count;
-        }
-        return $query;
+        return CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode);
     }
 
     private function appendSelectBody(
@@ -155,12 +147,13 @@ final class QueryCompiler
     }
 
     /** @param array{bool, bool} $quoteMode */
-    private function countSource(
+    private function compileCount(
         SqlBuffer $buffer,
         QueryParts $parts,
         ?string $projection,
         array $options,
         array $quoteMode,
+        string $quotedAlias,
     ): CompiledQuery {
         // 顶层 SELECT 的专用选项不能带进计数派生表。
         $options = array_values(array_diff($options, ['SQL_CALC_FOUND_ROWS', 'SQL_BUFFER_RESULT', 'HIGH_PRIORITY']));
@@ -169,13 +162,36 @@ final class QueryCompiler
                 || array_intersect(['DISTINCT', 'DISTINCTROW'], $options) !== [];
             $projection = $usesProjection ? '*' : '1';
         }
-        return new CompiledQuery(self::selectHead($projection, $options) . $buffer->sql,
-            $buffer->parameters, $options, null, quoteMode: $quoteMode);
+        $source = self::selectHead($projection, $options) . $buffer->sql;
+        $sql = 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($source)
+            . ' AS `__mysqli_count` LIMIT 1';
+        return new CompiledQuery($sql, $buffer->parameters, [], null, quoteMode: $quoteMode);
     }
 
     private static function selectHead(string $projection, array $options): string
     {
         return 'SELECT ' . self::modifierSql('SELECT', $options) . ' ' . $projection;
+    }
+
+    /**
+     * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
+     * @param array{sql: string, name: string, target: ?string, baseName: ?string} $table
+     * @param array{bool, bool} $quoteMode
+     */
+    public function compileWriteQuery(
+        string $statement,
+        array $table,
+        QueryParts $parts,
+        array $options,
+        mixed $numRows,
+        mixed $tableData,
+        ?array $fields,
+        bool $batch,
+        array $quoteMode,
+    ): CompiledQuery {
+        $buffer = self::writeHead($statement, $table, $options, $parts->joins !== []);
+        $this->compileWrite($buffer, $parts, $statement, $numRows, $tableData, $fields, $batch);
+        return CompiledQuery::fromBuffer($buffer, $options, null, $quoteMode);
     }
 
     /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
@@ -213,13 +229,13 @@ final class QueryCompiler
         }
 
         $conditions = new ConditionCompiler($buffer);
-        $select = new SelectCompiler($buffer, $conditions);
-        $select->appendJoins($parts->joins);
+        $clauses = new SelectCompiler($buffer, $conditions);
+        $clauses->appendJoins($parts->joins);
         if ($statement === 'UPDATE') {
             (new WriteCompiler($buffer))->appendUpdate($tableData, $fields);
         }
         $conditions->append('WHERE', $parts->where);
-        $select->appendOrder($parts->ordering);
-        $select->appendLimit($numRows);
+        $clauses->appendOrder($parts->ordering);
+        $clauses->appendLimit($numRows);
     }
 }

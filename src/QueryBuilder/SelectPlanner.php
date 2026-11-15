@@ -82,12 +82,6 @@ final class SelectPlanner
         return [$select, $projection];
     }
 
-    public static function countSql(string $sourceSql, string $quotedAlias): string
-    {
-        return 'SELECT COUNT(*) AS ' . $quotedAlias . ' FROM ' . SqlList::parenthesized($sourceSql)
-            . ' AS `__mysqli_count` LIMIT 1';
-    }
-
     public static function aggregateExpression(string $function, string|Expression $column, string $alias, bool $hasUnion): Expression
     {
         $function = strtoupper(trim($function));

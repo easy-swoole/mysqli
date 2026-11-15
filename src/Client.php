@@ -64,15 +64,14 @@ class Client
 
     private function queryWithin(QueryBuilder $builder, Deadline|float|null $timeout): bool|array
     {
-        $sql = $builder->getLastPrepareQuery();
-        if ($this->isTableLock($builder)) {
-            return $this->rawQuery($sql, $timeout instanceof Deadline ? $timeout->remaining() : $timeout);
+        $query = $builder->getLastCompiledQuery();
+        if ($this->isTableLock($query?->transactionOp)) {
+            return $this->rawQuery($query->sql, $timeout instanceof Deadline ? $timeout->remaining() : $timeout);
         }
-        $parameters = $builder->getLastBindParams();
         $execution = $this->beginExecution($timeout);
-        return $execution->buffered(function () use ($execution, $sql, $parameters): bool|array {
-            $statement = $this->prepareForExecution($sql, $execution);
-            return $statement->executeWithDeadline($parameters, $execution->deadline());
+        return $execution->buffered(function () use ($execution, $query): bool|array {
+            $statement = $this->prepareForExecution($query?->sql, $execution);
+            return $statement->executeWithDeadline($query->parameters, $execution->deadline());
         });
     }
 
@@ -82,15 +81,14 @@ class Client
      */
     public function iterate(QueryBuilder $builder, ?float $timeout = null): ResultStream
     {
-        if ($this->isTableLock($builder)) {
+        $query = $builder->getLastCompiledQuery();
+        if ($this->isTableLock($query?->transactionOp)) {
             throw new \InvalidArgumentException('Table lock commands must be executed with query()');
         }
         $execution = $this->beginExecution($timeout);
-        $sql = $builder->getLastPrepareQuery();
-        $parameters = $builder->getLastBindParams();
-        $statement = $this->prepareForExecution($sql, $execution);
+        $statement = $this->prepareForExecution($query?->sql, $execution);
         try {
-            $stream = $statement->iterateWithDeadline($parameters, $execution->deadline());
+            $stream = $statement->iterateWithDeadline($query->parameters, $execution->deadline());
         } catch (\Throwable $error) {
             $execution->discardOwnedStatement();
             throw $error;
@@ -120,16 +118,9 @@ class Client
         // 两条语句先构建完，避免查询回调或协程切换改变分页条件。
         $countQuery = $query->countQuery($table, '__mysqli_total');
         $dataQuery = $data->limit($offset, $perPage)->get($table);
-        $counts = $this->queryPagePart($countQuery, $deadline);
-        $items = $this->queryPagePart($dataQuery, $deadline);
+        $counts = $this->queryWithin($countQuery, $deadline);
+        $items = $this->queryWithin($dataQuery, $deadline);
         return \EasySwoole\Mysqli\QueryBuilder\Pagination::result($items, $counts[0]['__mysqli_total'], $perPage, $page);
-    }
-
-    private function queryPagePart(QueryBuilder $builder, Deadline $deadline): bool|array
-    {
-        return $this->overrides('query')
-            ? $this->query($builder, $deadline->remaining())
-            : $this->queryWithin($builder, $deadline);
     }
 
     /**
@@ -156,18 +147,8 @@ class Client
 
     private function prepareForExecution(string $sql, ExecutionContext $execution): Statement
     {
-        $deadline = $execution->deadline();
-        $statement = $this->overrides('prepare')
-            ? $this->prepare($sql, $deadline->remaining())
-            : $this->prepareWithDeadline($sql, $deadline, null);
+        $statement = $this->prepareWithDeadline($sql, $execution->deadline(), null);
         return $execution->ownStatement($statement);
-    }
-
-    /** 只有实际覆写公开方法时才将截止时间转换成剩余秒数。 */
-    private function overrides(string $method): bool
-    {
-        return static::class !== self::class
-            && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() !== self::class;
     }
 
     private function prepareWithDeadline(string $sql, Deadline $deadline, ?callable $beforeExecute): Statement
@@ -232,9 +213,8 @@ class Client
         }
     }
 
-    private function isTableLock(QueryBuilder $builder): bool
+    private function isTableLock(?int $operation): bool
     {
-        $operation = $builder->getLastTransactionOp();
         return $operation === QueryBuilder::TS_OP_LOCK_TABLE || $operation === QueryBuilder::TS_OP_UNLOCK_TABLE;
     }
 

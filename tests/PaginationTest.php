@@ -5,11 +5,30 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\{Client, Config, QueryBuilder};
+use EasySwoole\Mysqli\Exception\TimeoutException;
 use EasySwoole\Mysqli\QueryBuilder\Pagination;
+use EasySwoole\Mysqli\Tests\Support\FakeMysqlServer;
+use Swoole\Coroutine;
+use Swoole\Coroutine\Channel;
+use Swoole\Coroutine\Socket;
 use PHPUnit\Framework\TestCase;
 
 final class PaginationTest extends TestCase
 {
+    use FakeMysqlServer;
+
+    private ?Client $client = null;
+    private ?Channel $completed = null;
+    private array $queries = [];
+
+    protected function tearDown(): void
+    {
+        $this->client?->close();
+        if ($this->completed !== null) {
+            $this->assertServerCompleted($this->completed);
+        }
+    }
+
     public function testUnsignedCountsAndLastPageNeverLosePrecision(): void
     {
         $large = '18446744073709551615';
@@ -39,55 +58,14 @@ final class PaginationTest extends TestCase
         $page = $client->paginate($template, 'orders', 20, 2);
         self::assertSame(['items' => [['id' => 3], ['id' => 4]], 'total' => 45,
             'page' => 2, 'perPage' => 20, 'lastPage' => 3], $page);
-        self::assertSame([7], $client->queries[0][1]);
-        self::assertSame([7, 99], $client->queries[1][1]);
-        self::assertStringNotContainsString('ORDER BY', $client->queries[0][0]);
-        self::assertStringEndsWith('LIMIT 20, 20', $client->queries[1][0]);
-        self::assertLessThanOrEqual($client->queries[0][2], $client->queries[1][2]);
+        self::assertSame([7], $this->queries[0][1]);
+        self::assertSame([7, 99], $this->queries[1][1]);
+        self::assertStringNotContainsString('ORDER BY', $this->queries[0][0]);
+        self::assertStringEndsWith('LIMIT 20, 20', $this->queries[1][0]);
         self::assertNull($template->getLastPrepareQuery());
         $template->get('orders');
         self::assertSame([7, 99], $template->getLastBindParams());
         self::assertStringNotContainsString('LIMIT', $template->getLastPrepareQuery());
-    }
-
-    public function testPaginationClonesEachBranchOnceAndKeepsCountOverride(): void
-    {
-        $template = new class extends QueryBuilder {
-            private int $depth = 0;
-            public static int $countCalls = 0;
-            public static int $resetCalls = 0;
-            public int $resets = 0;
-
-            public function reset(): QueryBuilder
-            {
-                self::$resetCalls++;
-                $this->resets++;
-                return parent::reset();
-            }
-
-            public static array $beforeCountPublication = [];
-            public function raw(mixed $sql, mixed $param = []): QueryBuilder
-            {
-                self::$beforeCountPublication[] = [$this->getLastPrepareQuery(), $this->getLastBindParams(), $this->resets];
-                return parent::raw($sql, $param);
-            }
-            public function __clone(): void
-            {
-                $this->where('cloneDepth', ++$this->depth);
-            }
-            public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
-            {
-                self::$countCalls++;
-                return parent::count($tableName, $alias);
-            }
-        };
-        $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
-        self::assertSame(1, $client->paginate($template, 'orders')['total']);
-        self::assertSame(1, $template::$countCalls);
-        self::assertSame([[null, [], 0]], $template::$beforeCountPublication);
-        self::assertSame(2, $template::$resetCalls);
-        self::assertSame([1], $client->queries[0][1]);
-        self::assertSame([1], $client->queries[1][1]);
     }
 
     public function testClientPreservesUnsignedCountPrecision(): void
@@ -96,44 +74,45 @@ final class PaginationTest extends TestCase
         $client = $this->client([[['__mysqli_total' => $total]], [['id' => 7]]]);
         self::assertSame(['items' => [['id' => 7]], 'total' => $total, 'page' => 1,
             'perPage' => 1, 'lastPage' => $total], $client->paginate(new QueryBuilder(), 'orders', 1));
-        self::assertCount(2, $client->queries);
+        self::assertCount(2, $this->queries);
     }
 
-    public function testPaginationKeepsOverriddenGetOnAnIndependentCountSource(): void
+    public function testPaginationCompilesCountWithoutDispatchingToSubclassMethods(): void
     {
         $template = new class extends QueryBuilder {
-            public static array $countPublications = [];
-            public static int $clones = 0;
-            private int $selects = 0;
-            private int $depth = 0;
+            public static array $calls = [];
 
             public function __clone(): void
             {
-                self::$clones++;
-                $this->setPrefix('tenant_' . ++$this->depth . '_')->where('tenantId', 7);
+                self::$calls[] = 'clone';
+                $this->where('clone_marker', 7);
+            }
+
+            public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
+            {
+                self::$calls[] = 'count';
+                return parent::count($tableName, $alias);
             }
 
             public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
             {
-                $this->where('scope', $this->depth)->where('visible', ++$this->selects);
+                self::$calls[] = 'get';
                 return parent::get($tableName, $numRows, $columns);
             }
 
             public function raw(mixed $sql, mixed $param = []): QueryBuilder
             {
-                self::$countPublications[] = $this->selects;
+                self::$calls[] = 'raw';
                 return parent::raw($sql, $param);
             }
         };
         $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
-        $client->paginate($template, 'orders');
-
-        self::assertSame([0], $template::$countPublications);
-        self::assertSame(3, $template::$clones);
-        self::assertSame([7, 1, 1], $client->queries[0][1]);
-        self::assertSame([7, 1, 1], $client->queries[1][1]);
-        self::assertStringContainsString('FROM `tenant_1_orders`', $client->queries[0][0]);
-        self::assertStringContainsString('FROM `tenant_1_orders`', $client->queries[1][0]);
+        self::assertSame(1, $client->paginate($template, 'orders')['total']);
+        self::assertSame(['clone', 'clone', 'get'], $template::$calls);
+        self::assertSame([7], $this->queries[0][1]);
+        self::assertSame([7], $this->queries[1][1]);
+        $template->count('orders');
+        self::assertSame(['clone', 'clone', 'get', 'count'], $template::$calls);
     }
 
     public function testPaginationBuildsBothQueriesBeforeTheFirstCanChangeTheTemplate(): void
@@ -145,107 +124,91 @@ final class PaginationTest extends TestCase
             $subquery->where('active', false)->get('users', null, 'id');
         });
         self::assertSame(1, $client->paginate($template, 'orders')['total']);
-        self::assertSame([7, true], $client->queries[0][1]);
-        self::assertSame([7, true], $client->queries[1][1]);
-        self::assertStringNotContainsString('status', $client->queries[1][0]);
+        self::assertSame([7, true], $this->queries[0][1]);
+        self::assertSame([7, true], $this->queries[1][1]);
+        self::assertStringNotContainsString('status', $this->queries[1][0]);
     }
 
-    public function testCountAndGetOverridesShareThePaginationCountClone(): void
+    public function testPaginationUsesOriginalDeadlineAndSkipsThePublicQueryOverride(): void
     {
-        $template = new class extends QueryBuilder {
-            public static int $resets = 0;
-            public static int $activeInstances = 0;
-            public static int $clones = 0;
-            public static int $destructs = 0;
-            public static array $beforePublication = [];
-            private int $builds = 0;
-            private int $scope = 0;
-            private int $scopeAlias;
-            private bool $counting = false;
+        $client = $this->client([[['__mysqli_total' => 1]]]);
+        $query = (new QueryBuilder())->raw('SELECT 7 AS id');
+        self::assertSame([['id' => 7]], $client->query($query, 0.1));
+        self::assertSame([[$query, 0.1]], $client->queryCalls);
+        $client->onQuery(static function (): void {
+            // COUNT 已读完并清理语句，回调耗尽原有预算。
+            Coroutine::sleep(0.25);
+        });
 
-            public function __construct()
-            {
-                parent::__construct();
-                self::$activeInstances++;
-                $this->scopeAlias =& $this->scope;
-            }
-
-            public function __clone(): void
-            {
-                self::$activeInstances++;
-                self::$clones++;
-                // 重新关联副本的两个属性，避免与原实例共用同一个引用。
-                $scope = $this->scope;
-                unset($this->scope, $this->scopeAlias);
-                $this->scope = $scope + 6;
-                $this->scopeAlias =& $this->scope;
-            }
-
-            public function __destruct()
-            {
-                self::$destructs++;
-                self::$activeInstances--;
-            }
-
-            public function count(mixed $tableName, string $alias = 'aggregate'): QueryBuilder
-            {
-                $this->counting = true;
-                return parent::count($tableName, $alias);
-            }
-
-            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
-            {
-                $this->builds++;
-                $this->scope++;
-                $this->where('scope', $this->scopeAlias);
-                if ($this->counting) {
-                    $this->where('active', true);
-                }
-                return parent::get($tableName, $numRows, $columns);
-            }
-
-            public function raw(mixed $sql, mixed $param = []): QueryBuilder
-            {
-                self::$beforePublication[] = [
-                    $this->builds, $this->getLastPrepareQuery(), $this->getLastBindParams(), $this->getLastQuery(),
-                ];
-                return parent::raw($sql, $param);
-            }
-
-            public function reset(): QueryBuilder
-            {
-                self::$resets++;
-                return parent::reset();
-            }
-        };
-        $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
-        $client->paginate($template, 'orders');
-
-        self::assertSame([7, true], $client->queries[0][1]);
-        self::assertSame([7], $client->queries[1][1]);
-        self::assertSame(2, $template::$resets);
-        self::assertSame([[1, null, [], null]], $template::$beforePublication);
-        self::assertSame(2, $template::$clones);
-        self::assertSame(2, $template::$destructs);
-        self::assertSame(1, $template::$activeInstances);
+        try {
+            $client->paginate(new QueryBuilder(), 'orders', timeout: 0.2);
+            self::fail('Expected the shared deadline to expire before preparing the data query');
+        } catch (TimeoutException) {
+            self::assertCount(1, $this->queries);
+            self::assertCount(1, $client->queryCalls);
+            self::assertTrue($client->mysqlClient()->isConnected());
+        }
     }
 
     private function client(array $results, ?\Closure $afterFirstQuery = null): Client
     {
-        return new class($results, $afterFirstQuery) extends Client {
-            public array $queries = [];
-            public function __construct(private array $results, private readonly ?\Closure $afterFirstQuery)
-            {
-                parent::__construct(new Config());
+        [, $this->completed, $config] = $this->fakeServer(function (Socket $listener) use ($results): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            foreach ($results as $index => $rows) {
+                $id = $index + 1;
+                [, $prepare] = self::receivePacket($peer);
+                self::assertSame("\x16", $prepare[0]);
+                $sql = substr($prepare, 1);
+                $column = array_key_first($rows[0]);
+                $type = is_int($rows[0][$column]) ? 8 : 253;
+                $count = substr_count($sql, '?');
+                self::sendPreparedMetadata($peer, $id, $count, $column, $type);
+
+                [, $execute] = self::receivePacket($peer);
+                self::assertSame("\x17" . pack('V', $id), substr($execute, 0, 5));
+                $params = [];
+                if ($count > 0) {
+                    $typesOffset = 11 + intdiv($count + 7, 8);
+                    $valueOffset = $typesOffset + $count * 2;
+                    for ($i = 0; $i < $count; $i++) {
+                        $boolean = ord($execute[$typesOffset + $i * 2]) === 1;
+                        $params[] = $boolean ? (bool) ord($execute[$valueOffset]) : unpack('P', $execute, $valueOffset)[1];
+                        $valueOffset += $boolean ? 1 : 8;
+                    }
+                }
+                $this->queries[] = [$sql, $params];
+                self::sendResultHeader($peer, $column, $type, true);
+                foreach ($rows as $number => $row) {
+                    $value = $row[$column];
+                    $payload = is_int($value) ? pack('P', $value) : chr(strlen($value)) . $value;
+                    self::sendPacket($peer, "\0\0" . $payload, 4 + $number);
+                }
+                self::sendPacket($peer, self::eof(), 4 + count($rows));
+                [, $close] = self::receivePacket($peer);
+                self::assertSame("\x19" . pack('V', $id), $close);
             }
+            [, $quit] = self::receivePacket($peer);
+            self::assertSame("\x01", $quit);
+            $peer->close();
+        });
+        $this->client = new class($config) extends Client {
+            public array $queryCalls = [];
+
             public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
             {
-                $this->queries[] = [$builder->getLastPrepareQuery(), $builder->getLastBindParams(), $timeout];
-                if (count($this->queries) === 1) {
-                    $this->afterFirstQuery?->__invoke();
-                }
-                return array_shift($this->results);
+                $this->queryCalls[] = [$builder, $timeout];
+                return [['id' => 7]];
             }
         };
+        $this->client->connect();
+        if ($afterFirstQuery !== null) {
+            $this->client->onQuery(function () use ($afterFirstQuery): void {
+                if (count($this->queries) === 1) {
+                    $afterFirstQuery();
+                }
+            });
+        }
+        return $this->client;
     }
 }

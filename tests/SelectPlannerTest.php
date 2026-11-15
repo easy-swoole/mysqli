@@ -97,7 +97,7 @@ final class SelectPlannerTest extends TestCase
         }
     }
 
-    public function testCountAndAggregateKeepSubclassCloneAndGetDispatch(): void
+    public function testCountCompilesDirectlyAndAggregateKeepsGetDispatch(): void
     {
         $calls = new \ArrayObject();
         $builder = new class($calls) extends QueryBuilder {
@@ -107,14 +107,14 @@ final class SelectPlannerTest extends TestCase
             { $this->calls[] = 'get'; $this->where('get_flag', 10); return parent::get($tableName, $numRows, $columns); }
         };
         $builder->where('tenantId', 7)->count('orders');
-        self::assertSame([7, 9, 10], $builder->getLastBindParams());
-        self::assertSame(['clone', 'get'], $calls->getArrayCopy());
-        try { $builder->count('orders', ''); self::fail('Invalid alias must be rejected before cloning'); }
+        self::assertSame([7], $builder->getLastBindParams());
+        self::assertSame([], $calls->getArrayCopy());
+        try { $builder->count('orders', ''); self::fail('Invalid alias must be rejected'); }
         catch (\InvalidArgumentException $error) { }
-        self::assertSame(['clone', 'get'], $calls->getArrayCopy());
+        self::assertSame([], $calls->getArrayCopy());
         $builder->sum('orders', 'amount');
         self::assertSame([10], $builder->getLastBindParams());
-        self::assertSame(['clone', 'get', 'get'], $calls->getArrayCopy());
+        self::assertSame(['get'], $calls->getArrayCopy());
     }
 
 }

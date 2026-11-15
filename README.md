@@ -169,6 +169,8 @@ $config->getTlsVersions(); // 始终返回字符串数组，例如 ['TLSv1.2', '
 
 `Client::query(QueryBuilder $builder, ?float $timeout = null): bool|array` 对构造器的表锁命令使用文本协议，其余查询使用服务端预处理。`rawQuery(string $query, ?float $timeout = null): bool|array` 使用文本协议。两者支持 `timeout: 0.5` 这样的命名参数。
 
+直接调用 `Client::prepare()` 或 `Client::query()` 时遵循 PHP 的方法分派。构造器查询和流式查询使用内部预处理，分页的两条语句使用内部执行流程。子类可在自己的业务入口管理自定义行为。
+
 本地 PHP 异常（例如 `TypeError`）直接传播，不统一包装为 mysqli 异常；数据库和协议错误保留各自的异常类型。`query()` 在 `finally` 中关闭自建的 Statement。执行和关闭均失败时保留执行异常，只有关闭失败时抛出关闭异常。成功回调在清理完成后触发。
 
 继承 `Client` 的类（包括 FastDb 连接类）如果重写了 `query()` 或 `rawQuery()`，需要同步接受可选超时参数并传给父类；重写这两个方法时都需要声明兼容的 `bool|array` 返回类型。旧的单参数子类方法签名不能继续使用。`mysqlClient()` 仅返回协议层 `Connection` 或 `null`，不再包含原生 `mysqli` 类型。
@@ -219,6 +221,8 @@ CHAIN 可开始新事务。通过事务枚举显式指定 `RELEASE` 时，成功
 
 `connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
 
+`query()` 和 `iterate()` 通过 `getLastCompiledQuery()` 读取已发布的编译结果，从同一份结果取得 SQL、绑定参数和操作标记。覆写各个独立 getter 不会改变 Client 的执行结果。
+
 `prepare()` 向服务端发送预处理命令时会清除旧的 `Connection::errno` 和 `Connection::error`。本次预处理若收到服务端错误，这两个属性记录本次错误。
 
 `Connection::set_charset(string $charset): bool` 使用连接的默认查询超时。需要单独指定本次超时时，可调用 `$connection->query('SET NAMES utf8mb4', 1.0)`。
@@ -242,7 +246,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两个分支分别使用模板副本。子类同时覆写 `count()` 和 `get()` 时，两者在同一个计数副本上执行，内层 SELECT 不再克隆。发布 COUNT 的 `raw()` 可以读到 `get()` 对子类属性的修改。驱动在发布前恢复内层构建前的 SQL 和参数状态，只有最终 COUNT 和数据查询触发各自的 `reset()` 钩子。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两条 SQL 分别在模板副本上构建，COUNT 使用配置好的投影和条件。分页直接使用 Client 的内部执行流程。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -806,11 +810,13 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。
+
 - 忽略外层 ORDER BY、LIMIT 和行锁。子查询和 UNION 分支保留各自的 ORDER BY、LIMIT 和绑定参数。外层投影、WHERE、JOIN 和 HAVING 的参数仍按 SQL 顺序绑定。
-- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用正常 SELECT 的选项。
+ 分页的当前页查询沿用正常 SELECT 的选项。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
-- COUNT 使用内层 `get()` 返回的构造器读取 SQL、参数和编译时的引号模式。COUNT 的 `raw()` 钩子沿用这个引号模式。
+- COUNT 直接按待构建状态编译，调试 SQL 使用构建时的引号模式。需要自定义计数的调用方可显式配置投影和条件，或自行执行计数查询。
 - 方法构建 COUNT SQL 并返回构造器，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
 
@@ -1324,7 +1330,8 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 - `PacketStream`：Socket 收发、包序号、分包重组、压缩及缓冲区；不判断事务或自动重试 SQL。
 - `SessionState`：服务端事务状态、异常断开后的事务丢失保护、显式关闭和会话代次。
 - `Deadline`：基于单调时钟的截止时间；连接、认证及该次命令的内部收发共享预算，建连还受 `maxConnectTime` 上限约束。
-- `ResultDecoder`、`ParameterEncoder`、`PacketPayload`：结果解码、参数编码和有界发送分片。分片过程同时生成协议要求的末尾空包。
+- `ResultDecoder`：解码列、结果行及 OK、EOF、ERR 报文。连接根据解码结果更新会话。
+- `ParameterEncoder`、`PacketPayload`：参数编码和有界发送分片。分片过程同时生成协议要求的末尾空包。
 
 上述辅助类属于内部实现。本轮补齐属性、参数和返回值的原生类型声明，保留既有方法名、参数名、顺序和默认值；构造和析构方法按 PHP 规则不声明返回类型。数据库值及旧接口中支持多种输入的参数保留 `mixed`，避免隐式转换或提前抛出 TypeError 改变调用行为。数组结构和回调签名另以 PHPDoc 标注。
 
@@ -1337,11 +1344,11 @@ rg -n 'SWOOLE_(51_COMPAT|51_BUILD|SNI_COMPAT)' src tests/docker/Dockerfile
 | `QueryBuilder` | 按投影、条件、关联、锁、读取和写入组织链式入口，管理待构建状态和结果发布 |
 | `PendingQuery` | 统一待构建状态的默认值、结构说明和编译快照转换；状态采用数组写时复制，克隆无需依赖子类调用父级钩子 |
 | `CompiledQuery` | 公开只读结果，保存 SQL、绑定参数、查询选项、事务标记和引号模式，按需生成调试 SQL |
-| `SelectPlanner` | 解析 SELECT 的表来源与投影，构建聚合表达式和外层 COUNT SQL |
+| `SelectPlanner` | 解析 SELECT 的表来源与投影，构建聚合表达式 |
 | `QueryParts` | 保存本次编译所需的条件与选项快照 |
-| `QueryCompiler` | 按 SQL 顺序编译子句并绑定参数。普通 SELECT 和 COUNT 共用查询主体，SELECT 再追加外层排序、分页和行锁 |
+| `QueryCompiler` | 按 SQL 顺序编译子句并绑定参数。普通 SELECT 和 COUNT 共用查询主体；INSERT、REPLACE、UPDATE、DELETE 从表引用编译为完整结果 |
 | `ConditionCompiler` | WHERE、HAVING、JOIN ON 条件值、条件组和子查询，共用运算符处理 |
-| `SelectCompiler` | JOIN、GROUP BY、UNION、ORDER BY、LIMIT 及排序项规范化 |
+| `SelectCompiler` | SELECT 的投影、GROUP BY、UNION，以及读写语句共用的 JOIN、ORDER BY、LIMIT 和排序项 |
 | `WriteCompiler` | 批量选项、写入字段过滤、列对齐和值绑定，以及重复键更新 |
 | `SqlBuffer` | 保存 SQL 和按 SQL 出现顺序排列的参数；不再维护未使用的 mysqli 类型字符串 |
 | `TableReference` | 表名及字段引用、表名前缀处理、索引名校验及索引提示渲染 |
@@ -1359,5 +1366,5 @@ FROM、UNION、JOIN 和条件子查询在加入外层时保存已构建的 SQL �
 ### 原生类型与子类重写
 
 - 普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。`startTransaction()`、`commit()` 和 `rollback()` 只构建 SQL，返回 `void`。
-- 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，COUNT、聚合仍经过子类方法。
+- 继承 QueryBuilder 并重写 `get()`、`where()`、`reset()` 等方法时，需要补兼容的返回类型；可声明 `QueryBuilder` 或协变的 `static`。参数可以保持不加类型的更宽声明，但不能缩窄父类支持的输入。工厂仍使用 `new static()`，聚合方法仍通过 `get()` 构建。
 - 继承 Client 并重写 `rawQuery()` 时同步声明 `bool|array`；`query()` 原有返回类型不变。`Connection::set_charset()` 明确返回 `bool`。这轮类型声明会影响子类方法的 PHP 继承检查，旧的无返回类型重写需要同步适配。

@@ -562,9 +562,11 @@ $total = $client->query($counter)[0]['total'];
 
 - 统计当前筛选结果集的行数；有 GROUP BY 时统计分组数，有 DISTINCT 或 UNION 时统计它们产生的结果行数。它与 `aggregate(..., 'COUNT', $column)` 的列计数含义不同。
 - `groupBy()` 可使用 `WITH ROLLUP`，或在支持该语法的 MySQL 版本上使用 `ROLLUP(...)`。生成的 COUNT 包含汇总行。
-- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。子类覆写 `get()` 时，可以先根据 `getField()` 选择投影。COUNT 只调整 `get()` 钩子返回的外层 SELECT。
+- GROUP BY、HAVING、DISTINCT、DISTINCTROW 和 UNION 计数保留查询投影。分组计数用 `fields()` 指定符合当前 SQL 模式的结果列。普通行计数在没有显式投影时使用常量作为内层投影。
+
 - 忽略外层 ORDER BY、LIMIT 和行锁。子查询和 UNION 分支保留各自的 ORDER BY、LIMIT 和绑定参数。外层投影、WHERE、JOIN 和 HAVING 的参数仍按 SQL 顺序绑定。
-- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。子类在 `get()` 内设置的这些选项以及整体排序、分页和行锁也在构建计数 SELECT 时移除。分页的当前页查询沿用正常 SELECT 的选项。
+- 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用正常 SELECT 的选项。
+ 分页的当前页查询沿用正常 SELECT 的选项。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
 - 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
@@ -1065,7 +1067,7 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两条 SQL 分别在模板副本上构建，COUNT 使用配置好的投影和条件。分页直接使用 Client 的内部执行流程。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 
@@ -1147,7 +1149,7 @@ try {
 
 ## 内部实现与兼容性
 
-公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。`SelectPlanner` 解析表来源与投影，并生成聚合表达式和外层 COUNT SQL。`QueryCompiler` 负责写入语句头和子句顺序，普通 SELECT 与 COUNT 共用查询主体。批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
+公开 `QueryBuilder` 负责链式入口，待构建状态按 `PendingQuery` 定义以数组写时复制保存，成功构建的结果以只读 `CompiledQuery` 保存，并由 `reset()` 发布。`SelectPlanner` 解析表来源与投影并生成聚合表达式。`QueryCompiler` 负责写入语句头和子句顺序，普通 SELECT 与 COUNT 共用查询主体，再由编译器生成最终语句。批量选项、列对齐和值绑定由 `WriteCompiler` 处理。
 条件、写入、SELECT 子句、参数缓冲、表名/索引、表达式和调试格式化各自独立；完整职责表见 README 的“QueryBuilder 内部职责”。
-普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。子类重写方法时须声明兼容的返回类型，例如 `QueryBuilder` 或协变的 `static`，并接受父类支持的参数。COUNT 和聚合使用子类克隆及公开方法，工厂返回子类实例。
+普通链式方法声明返回 `QueryBuilder`。`update()` 和 `delete()` 声明返回 `?QueryBuilder`，成功时返回构造器。构建事务 SQL 的三个方法返回 `void`。子类重写方法时须声明兼容的返回类型，例如 `QueryBuilder` 或协变的 `static`，并接受父类支持的参数。COUNT 直接编译模板状态，聚合方法通过 `get()` 构建，工厂返回子类实例。
 内部协作类带 `@internal` 标记，不承诺业务层直接依赖它们的兼容性。

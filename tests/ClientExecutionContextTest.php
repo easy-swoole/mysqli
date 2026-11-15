@@ -192,15 +192,14 @@ final class ClientExecutionContextTest extends TestCase
         $this->assertClosed($statement);
     }
 
-    private function overrideClient(Statement $statement, ?Connection $connection = null, ?\Closure $duringPrepare = null): Client
+    private function overrideClient(Statement $statement, ?Connection $connection = null): Client
     {
-        return new class($statement, $connection, $duringPrepare) extends Client {
+        return new class($statement, $connection) extends Client {
             /** @var list<array{string, ?float}> */
             public array $prepareCalls = [];
             public function __construct(
                 private readonly Statement $statement,
                 ?Connection $connection,
-                private readonly ?\Closure $duringPrepare
             ) {
                 parent::__construct(new Config());
                 $this->mysqlClient = $connection;
@@ -210,25 +209,17 @@ final class ClientExecutionContextTest extends TestCase
             public function prepare(string $sql, ?float $timeout = null): Statement
             {
                 $this->prepareCalls[] = [$sql, $timeout];
-                $this->duringPrepare?->__invoke();
                 return $this->statement;
             }
         };
     }
 
-    public function testQueryStillDispatchesToSubclassPrepareAndPropagatesItsExecutionFailure(): void
+    public function testDirectPrepareCallsThePublicOverride(): void
     {
-        $statement = $this->statement(parameters: 1);
-        $client = $this->overrideClient($statement, $this->connected());
-        $client->onQuery(static function (): void { self::fail('Failure must not notify'); });
-        try { $client->query((new QueryBuilder())->raw('SELECT ? AS id'), 0.5); self::fail('Expected invalid parameter count'); }
-        catch (\InvalidArgumentException $error) { self::assertSame('Statement expects 1 parameters, 0 given', $error->getMessage()); }
-        self::assertSame('SELECT ? AS id', $client->prepareCalls[0][0]);
-        self::assertGreaterThan(0.0, $client->prepareCalls[0][1]);
-        self::assertLessThanOrEqual(0.5, $client->prepareCalls[0][1]);
-        self::assertNull($client->getLastInsertId());
-        self::assertNull($client->getLastAffectRows());
-        $this->assertClosed($statement);
+        $statement = $this->statement();
+        $client = $this->overrideClient($statement);
+        self::assertSame($statement, $client->prepare('SELECT 1', 0.5));
+        self::assertSame([['SELECT 1', 0.5]], $client->prepareCalls);
     }
 
     public function testQueryPropagatesNativePrepareTypeErrorWithoutNotifying(): void
@@ -244,40 +235,6 @@ final class ClientExecutionContextTest extends TestCase
         self::assertSame([], $client->prepareCalls);
         self::assertNull($client->getLastInsertId());
         self::assertNull($client->getLastAffectRows());
-    }
-
-    public function testIterateStillDispatchesToSubclassPrepareAndDoesNotWrapStartupErrors(): void
-    {
-        foreach ([false, true] as $failCleanup) {
-            $statement = $this->statement($failCleanup ? $this->connected(true) : null, 1);
-            $client = $this->overrideClient($statement);
-            $client->onQuery(static function (): void { self::fail('Failure must not notify'); });
-            try { $client->iterate((new QueryBuilder())->raw('SELECT ? AS id'), 0.5); self::fail('Expected parameter rejection'); }
-            catch (\InvalidArgumentException $error) { self::assertStringContainsString('expects 1 parameters, 0 given', $error->getMessage()); }
-            self::assertCount(1, $client->prepareCalls);
-            self::assertGreaterThan(0.0, $client->prepareCalls[0][1]);
-            self::assertLessThanOrEqual(0.5, $client->prepareCalls[0][1]);
-            self::assertNull($client->getLastAffectRows());
-            if (!$failCleanup) { $this->assertClosed($statement); }
-        }
-    }
-
-    public function testIterateKeepsTheParametersReadBeforePrepare(): void
-    {
-        $builder = (new QueryBuilder())->raw('SELECT ? AS id', [1]);
-        $statement = $this->statement(parameters: 1);
-        $client = $this->overrideClient($statement, duringPrepare: static function () use ($builder): void {
-            $builder->raw('SELECT ? AS id, ? AS other', [2, 3]);
-        });
-        try {
-            $client->iterate($builder);
-            self::fail('Expected the disconnected fixture to reject execution');
-        } catch (\LogicException $error) {
-            // 参数数量校验应先通过，之后才到达断开连接的检查。
-            self::assertStringContainsString('expired MySQL session', $error->getMessage());
-        }
-        self::assertSame('SELECT ? AS id', $client->prepareCalls[0][0]);
-        $this->assertClosed($statement);
     }
 
     public function testConnectionRejectsAStatementOwnedByAnotherConnection(): void
@@ -305,24 +262,6 @@ final class ClientExecutionContextTest extends TestCase
             self::assertSame(9, $client->getLastInsertId());
             self::assertSame(8, $client->getLastAffectRows());
         }
-    }
-
-    public function testPaginationKeepsSubclassQueryDispatch(): void
-    {
-        $client = new class extends Client {
-            /** @var list<array{?string, float|null}> */
-            public array $queries = [];
-            /** @var list<array<array-key, mixed>> */
-            public array $responses = [[['__mysqli_total' => 1]], [['id' => 7]]];
-            public function __construct() { parent::__construct(new Config()); }
-            public function query(QueryBuilder $builder, ?float $timeout = null): bool|array
-            {
-                $this->queries[] = [$builder->getLastPrepareQuery(), $timeout];
-                return array_shift($this->responses);
-            }
-        };
-        self::assertSame([['id' => 7]], $client->paginate(new QueryBuilder(), 'records')['items']);
-        self::assertCount(2, $client->queries);
     }
 
     public function testRawQueryReturnTypeAndProtectedCallbackRemainSubclassCompatible(): void

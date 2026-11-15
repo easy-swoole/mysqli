@@ -6,7 +6,7 @@ use EasySwoole\Mysqli\Exception\Exception;
 use EasySwoole\Mysqli\Expression;
 
 /**
- * @internal 编译 JOIN、GROUP、UNION、ORDER 及 LIMIT 子句。
+ * @internal 编译 SELECT 的投影、GROUP BY、UNION，以及读写语句共用的 JOIN、ORDER BY、LIMIT。
  * @phpstan-type JoinNode array{type: string, source: string, condition: mixed, key: string, parameters: array<array-key, mixed>, on: list<ConditionNode>}
  * @phpstan-type UnionNode array{0: string|null, 1: array<array-key, mixed>, 2: mixed, 3: bool}
  * @phpstan-type OrderNode array{field: string|Expression, direction: string, params: array<array-key, mixed>}
