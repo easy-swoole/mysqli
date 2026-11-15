@@ -720,6 +720,17 @@ $builder->setQueryOption(['LOW_PRIORITY', 'IGNORE'])->insert('users', ['id' => 2
 - `IGNORE` 用于 INSERT、UPDATE 和 DELETE，`QUICK` 用于 DELETE，`DISTINCT` 用于 SELECT。语句不支持的选项或互斥选项会在构建时抛出 `InvalidArgumentException`。
 - `ALL`、`DISTINCT` 和 `DISTINCTROW` 任选其一。`distinct()` 添加 DISTINCT，`distinct(false)` 清除 DISTINCT。混用互斥选项时，构建会报错。
 
+### `withTotalCount(bool $enabled = true)`
+
+`withTotalCount()` 添加 `SQL_CALC_FOUND_ROWS`，`withTotalCount(false)` 从待构建查询移除该选项。连续设置分页时，可以把本次的总数开关直接传入。其他查询选项继续生效。
+
+```php
+$builder->limit(0, 20)->withTotalCount()
+    ->limit(20, 20)->withTotalCount(false)
+    ->get('orders');
+// 第二页的 SQL 使用 LIMIT 20, 20，不含 SQL_CALC_FOUND_ROWS。
+```
+
 ### `fields($fields)` / `setPrefix($prefix = '')`：字段与表名引用
 
 ```php

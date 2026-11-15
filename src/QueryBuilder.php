@@ -79,15 +79,7 @@ class QueryBuilder
     /** 对所选列的组合去重，仅影响下一次构建的查询。 */
     public function distinct(bool $isDistinct = true): QueryBuilder
     {
-        if ($isDistinct) {
-            $this->setQueryOption('DISTINCT');
-        } else {
-            $this->pending['queryOptions'] = array_values(array_filter(
-                $this->pending['queryOptions'],
-                static fn(string $option): bool => $option !== 'DISTINCT'
-            ));
-        }
-        return $this;
+        return $this->toggleQueryOption('DISTINCT', $isDistinct);
     }
 
     /** 为下一次 SELECT 的主表指定强制使用的索引；重复调用覆盖之前的设置。 传入空数组可取消设置，索引名按标识符引用，不接受 SQL 片段。 */
@@ -547,11 +539,10 @@ class QueryBuilder
         return TableReference::resolve($tableName, $this->prefix)['target'];
     }
 
-    /** 统计结果行数 */
-    public function withTotalCount(): QueryBuilder
+    /** 设置本次查询是否添加 SQL_CALC_FOUND_ROWS。 */
+    public function withTotalCount(bool $enabled = true): QueryBuilder
     {
-        $this->setQueryOption('SQL_CALC_FOUND_ROWS');
-        return $this;
+        return $this->toggleQueryOption('SQL_CALC_FOUND_ROWS', $enabled);
     }
 
     // SELECT 与聚合
@@ -860,6 +851,18 @@ class QueryBuilder
     }
 
     // 条件构建与选项处理
+
+    private function toggleQueryOption(string $option, bool $enabled): QueryBuilder
+    {
+        if ($enabled) {
+            return $this->setQueryOption($option);
+        }
+        $this->pending['queryOptions'] = array_values(array_filter(
+            $this->pending['queryOptions'],
+            static fn(string $configured): bool => $configured !== $option
+        ));
+        return $this;
+    }
 
     private function conditionConjunction(ConditionConjunction|string $cond, bool $strict = true): string
     {

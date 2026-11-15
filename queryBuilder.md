@@ -649,6 +649,8 @@ $builder->setPrefix(''); // 恢复无前缀，避免影响下面的示例
 // 添加 SQL_CALC_FOUND_ROWS 选项。下面两个构建结果相同
 $builder->withTotalCount()->where('col1', 1, '>')->get('getTable');
 $builder->setQueryOption('SQL_CALC_FOUND_ROWS')->where('col1', 1, '>')->get('getTable');
+// 切换到第二页，同时关闭总数选项
+$builder->limit(0, 20)->withTotalCount()->limit(20, 20)->withTotalCount(false)->get('getTable');
 
 // fields。支持一维数组或字符串
 $builder->fields('col1, col2')->get('getTable');

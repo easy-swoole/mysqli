@@ -577,6 +577,23 @@ final class QueryBuilderTest extends TestCase
         $this->assertEquals([1, 'whereValue'], $this->builder->getLastBindParams());
     }
 
+    public function testWithTotalCountCanBeDisabledWhenChangingPagination(): void
+    {
+        $builder = $this->builder->distinct()->where('tenantId', 7)->limit(0, 20)->withTotalCount();
+        self::assertSame(['DISTINCT', 'SQL_CALC_FOUND_ROWS'], $builder->getQueryOptions());
+
+        self::assertSame($builder, $builder->limit(20, 20)->withTotalCount(false));
+        self::assertSame(['DISTINCT'], $builder->getQueryOptions());
+        $builder->get('orders', columns: 'id');
+        self::assertSame('SELECT DISTINCT id FROM `orders` WHERE `tenantId` = ? LIMIT 20, 20',
+            $this->normalizedSql($builder));
+        self::assertSame([7], $builder->getLastBindParams());
+        self::assertSame(['DISTINCT'], $builder->getLastQueryOptions());
+
+        $builder->withTotalCount(false)->withTotalCount(true)->get('orders');
+        self::assertSame(['SQL_CALC_FOUND_ROWS'], $builder->getLastQueryOptions());
+    }
+
     public function testStatementSpecificClausesCannotLeakIntoOtherStatements(): void
     {
         $builder = $this->builder->raw('SELECT ?', [1]);

@@ -105,7 +105,7 @@
         "whereNotNull": "public function whereNotNull(string $column, EasySwoole\\Mysqli\\QueryBuilder\\ConditionConjunction|string $cond = 'AND'): EasySwoole\\Mysqli\\QueryBuilder",
         "whereNull": "public function whereNull(string $column, EasySwoole\\Mysqli\\QueryBuilder\\ConditionConjunction|string $cond = 'AND'): EasySwoole\\Mysqli\\QueryBuilder",
         "whereRaw": "public function whereRaw(string $sql, array $parameters = [], EasySwoole\\Mysqli\\QueryBuilder\\ConditionConjunction|string $cond = 'AND'): EasySwoole\\Mysqli\\QueryBuilder",
-        "withTotalCount": "public function withTotalCount(): EasySwoole\\Mysqli\\QueryBuilder"
+        "withTotalCount": "public function withTotalCount(bool $enabled = true): EasySwoole\\Mysqli\\QueryBuilder"
     },
     "constants": {
         "TS_OP_COMMIT": 2,

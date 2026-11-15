@@ -6196,7 +6196,22 @@
                     "static": false,
                     "final": false,
                     "returnByReference": false,
-                    "parameters": [],
+                    "parameters": [
+                        {
+                            "name": "enabled",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": {
+                                "type": "bool",
+                                "value": true
+                            },
+                            "type": [
+                                "bool"
+                            ]
+                        }
+                    ],
                     "returnType": [
                         "EasySwoole\\Mysqli\\QueryBuilder"
                     ]
