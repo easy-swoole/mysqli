@@ -459,6 +459,42 @@ final class ProtocolTest extends TestCase
         $this->assertQueryTimeout('prepare');
     }
 
+    public function testPreparedExecutionReadsCurrentDefaultTimeout(): void
+    {
+        [$client, $completed, $config] = $this->fakeServer(static function (Socket $listener): void {
+            $peer = $listener->accept(1.0);
+            self::acceptSession($peer);
+            [, $prepare] = self::receivePacket($peer);
+            self::assertSame("\x16SELECT 1 AS id", $prepare);
+            self::sendPreparedMetadata($peer, 7, 0, 'id', 8);
+
+            [, $execute] = self::receivePacket($peer);
+            self::assertSame("\x17" . pack('V', 7), substr($execute, 0, 5));
+            Coroutine::sleep(0.15);
+            self::sendResultHeader($peer, 'id', 8, true);
+            self::sendPacket($peer, "\0\0" . pack('P', 1), 4);
+            self::sendPacket($peer, self::eof(), 5);
+
+            [, $execute] = self::receivePacket($peer);
+            self::assertSame("\x17" . pack('V', 7), substr($execute, 0, 5));
+            self::assertSame('', $peer->recvAll(1, 0.35));
+            $peer->close();
+        });
+        $client->connect();
+        $statement = $client->prepare('SELECT 1 AS id');
+        $config->setTimeout(0.05);
+        try {
+            self::assertSame([['id' => 1]], $statement->execute(timeout: 0.5));
+            $statement->execute();
+            self::fail('Expected the configured default timeout');
+        } catch (TimeoutException) {
+            self::assertFalse($client->mysqlClient()->isConnected());
+        } finally {
+            $client->close();
+        }
+        $this->assertServerCompleted($completed);
+    }
+
     private function assertQueryTimeout(string $operation): void
     {
         [$client, $completed] = $this->fakeServer(static function (Socket $listener) use ($operation): void {

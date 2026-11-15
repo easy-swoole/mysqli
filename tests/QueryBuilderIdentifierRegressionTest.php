@@ -62,7 +62,7 @@ SQL, $builder->getLastQuery());
     #[DataProvider('tableReferences')]
     public function testTableReferencesPreservePrefixAndAliasRules(string $table, string $prefix, string $expected): void
     {
-        self::assertSame($expected, TableReference::parse($table, $prefix));
+        self::assertSame($expected, TableReference::resolve($table, $prefix)['sql']);
     }
 
     public static function tableReferences(): array

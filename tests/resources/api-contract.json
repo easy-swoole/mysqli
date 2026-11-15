@@ -7220,33 +7220,6 @@
                     "returnType": [
                         "array"
                     ]
-                },
-                "parse": {
-                    "visibility": "public",
-                    "static": true,
-                    "final": false,
-                    "returnByReference": false,
-                    "parameters": [
-                        {
-                            "name": "tableName",
-                            "byReference": true,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
-                        },
-                        {
-                            "name": "prefix",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
-                        }
-                    ],
-                    "returnType": null
                 }
             }
         },

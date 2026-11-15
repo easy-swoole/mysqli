@@ -5,13 +5,6 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 /** @internal 保留表前缀规则，并校验及渲染索引标识符。 */
 final class TableReference
 {
-    public static function parse(mixed &$tableName, mixed $prefix): mixed
-    {
-        $reference = self::resolve($tableName, $prefix);
-        $tableName = $reference['name'];
-        return $reference['sql'];
-    }
-
     /**
      * @return array{sql: string, name: string, target: ?string, baseName: ?string}
      */

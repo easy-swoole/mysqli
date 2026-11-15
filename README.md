@@ -1,6 +1,6 @@
 # EasySwoole 协程 MySQLi
 
-基于 `Swoole\Coroutine\Socket` 实现的 MySQL 协议客户端，支持连接超时、单次查询的总超时、文本查询、原生服务端预处理语句，并提供 FastDb 风格的查询及事务接口；继承接口的适配要求见下文。
+基于 `Swoole\Coroutine\Socket` 实现的 MySQL 协议客户端，支持连接超时、单次查询的总超时、文本查询、原生服务端预处理语句及事务命令。
 
 ## 环境要求
 
@@ -13,7 +13,7 @@
 
 ## 使用示例
 
-`new Config($options)` 和 `Config::restore($options)` 接受配置属性名。未知键抛出 `InvalidArgumentException`，mysqli 配置值类型不符时抛出 `TypeError`。例如 `compress` 使用布尔值，`port` 使用整数，超时接受整数或浮点数。传入 FastDb 的完整连接池配置时，连接池专用字段仍由 FastDb 和连接池使用。
+`new Config($options)` 和 `Config::restore($options)` 只接受 mysqli 配置项。未知键抛出 `InvalidArgumentException`，配置值类型不符时抛出 `TypeError`。例如 `compress` 使用布尔值，`port` 使用整数，超时接受整数或浮点数。
 
 `Client` 和直接使用的 `Protocol\Connection` 都必须先调用 `connect()`。查询、预处理、流式读取和事务命令使用当前已建立的会话。未连接时执行命令会抛出异常。
 
@@ -218,6 +218,8 @@ CHAIN 可开始新事务。通过事务枚举显式指定 `RELEASE` 时，成功
 同一个连接同时只允许一个操作，包括建立连接、关闭 Statement 和关闭连接。并发调用会抛出异常，正在进行的操作仍可继续完成。可以在当前操作结束后重试关闭 Statement；需要并发查询时，应使用不同的客户端连接。
 
 `connect()` 的超时预算覆盖 TCP 建连、握手、认证和字符集设置。`rawQuery()` 和 `prepare()` 分别使用各自的命令超时。`query()` 的预处理、执行、结果读取及 Statement 清理共用一个查询超时预算。
+
+省略操作超时时，客户端和预处理语句都读取当前 `Config::getTimeout()`。调用 `setTimeout()` 后，新值从下一次操作起生效，已开始的操作继续使用原截止时间。
 
 `query()` 和 `iterate()` 通过 `getLastCompiledQuery()` 读取已发布的编译结果，从同一份结果取得 SQL、绑定参数和操作标记。
 

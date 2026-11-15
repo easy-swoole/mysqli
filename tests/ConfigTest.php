@@ -27,14 +27,12 @@ final class ConfigTest extends TestCase
     public function testRestoreAssignsKnownPropertiesAndPreservesOtherValues(): void
     {
         $config = new Config(['maxConnectTime' => 0.75, 'port' => 3307]);
-        self::assertSame($config, $config->restore(['host' => 'db', 'timeout' => 0.125, 'compress' => true, 'autoPing' => 5]));
+        self::assertSame($config, $config->restore(['host' => 'db', 'timeout' => 0.125, 'compress' => true]));
         self::assertSame('db', $config->getHost());
         self::assertSame(0.125, $config->getTimeout());
         self::assertSame(0.75, $config->getMaxConnectTime());
         self::assertSame(3307, $config->getPort());
         self::assertTrue($config->isCompress());
-        self::assertArrayNotHasKey('autoPing', $config->toArray());
-        self::assertNull($config->getProperty('autoPing'));
         self::assertSame($config, $config->restore());
         self::assertSame(0.125, $config->getTimeout());
     }
@@ -118,47 +116,23 @@ final class ConfigTest extends TestCase
         return ['zero' => [0.0], 'negative' => [-0.5], 'fractional' => [0.125]];
     }
 
-    public function testSubclassPropertiesRemainSupported(): void
+    public function testConstructorRejectsPoolOption(): void
     {
-        $config = new class(['host' => 'db', 'customOption' => 42]) extends Config {
-            protected int $customOption = 7;
-        };
-        self::assertSame(42, $config->getProperty('customOption'));
-        self::assertSame(42, $config->toArray()['customOption']);
-        self::assertSame('db', $config->getHost());
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unknown mysqli config option: maxObjectNum');
+        new Config(['host' => 'db', 'maxObjectNum' => 16]);
     }
 
-    public function testFastDbStyleConfigurationIsAccepted(): void
+    public function testRestoreRejectsPoolOptionWithoutChangingConfig(): void
     {
-        $config = new Config([
-            'host' => 'db',
-            'port' => 3307,
-            'user' => 'test',
-            'password' => 'secret',
-            'database' => 'test',
-            'timeout' => 0.25,
-            'charset' => 'utf8mb4',
-            'autoPing' => 5,
-            'useMysqli' => false,
-            'name' => 'default',
-            'isForceRollback' => false,
-            'intervalCheckTime' => 5000,
-            'maxObjectNum' => 16,
-            'intervalCheckBatchSize' => 8,
-            'minObjectNum' => 8,
-            'getObjectTimeout' => 3.0,
-            'waitLoadAverageTime' => 0.001,
-            'extraConf' => null,
-            'compress' => true,
-        ]);
-
-        self::assertSame('db', $config->getHost());
-        self::assertSame(3307, $config->getPort());
-        self::assertSame(0.25, $config->getTimeout());
-        self::assertSame(1.0, $config->getMaxConnectTime());
-        self::assertTrue($config->isCompress());
-        self::assertTrue($config->toArray()['compress']);
-        self::assertArrayNotHasKey('maxObjectNum', $config->toArray());
+        $config = new Config(['host' => 'db']);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unknown mysqli config option: autoPing');
+        try {
+            $config->restore(['host' => 'another-db', 'autoPing' => 5]);
+        } finally {
+            self::assertSame('db', $config->getHost());
+        }
     }
 
     public function testDefaultValues(): void

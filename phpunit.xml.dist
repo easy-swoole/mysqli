@@ -12,7 +12,6 @@
             <file>tests/TlsVersionTest.php</file>
             <file>tests/DeadlineTest.php</file>
             <file>tests/SessionStateTest.php</file>
-            <file>tests/FastDbApiCompatibilityTest.php</file>
             <file>tests/ConnectionTimeoutTest.php</file>
             <file>tests/ProtocolTest.php</file>
             <file>tests/CodecTest.php</file>

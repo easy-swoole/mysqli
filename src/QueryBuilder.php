@@ -490,7 +490,7 @@ class QueryBuilder
             if (!is_string($name) || trim($name) === '' || str_contains($name, "\0")) {
                 throw new \InvalidArgumentException('Lock table names must be non-empty strings without NUL bytes');
             }
-            $references[] = TableReference::parse($name, $this->prefix) . ' ' . $this->tableLockMethod;
+            $references[] = TableReference::resolve($name, $this->prefix)['sql'] . ' ' . $this->tableLockMethod;
         }
         return $this->completeBuild('LOCK TABLES ' . implode(', ', $references), [], self::TS_OP_LOCK_TABLE);
     }

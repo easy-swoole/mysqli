@@ -210,7 +210,10 @@ final class WriteCompiler
     private function appendDuplicateAssignments(?array $updateColumns): void
     {
         if ($updateColumns === null || $updateColumns === []) { return; }
-        $updates = [];
+        $seen = [];
+        $columns = [];
+        $values = [];
+        $incoming = [];
         foreach ($updateColumns as $key => $value) {
             $implicit = is_int($key);
             $column = $implicit ? $value : $key;
@@ -218,22 +221,16 @@ final class WriteCompiler
                 throw new \InvalidArgumentException('Implicit duplicate-update columns must be strings');
             }
             $name = strtolower($column);
-            if (isset($updates[$name])) {
+            if (isset($seen[$name])) {
                 throw new \InvalidArgumentException("Duplicate update assignment for column {$column}");
             }
-            $updates[$name] = [$column, $implicit, $value];
-        }
-
-        $columns = [];
-        $values = [];
-        $incoming = [];
-        foreach ($updates as [$column, $implicit, $value]) {
+            $seen[$name] = true;
             $columns[$column] = TableReference::identifier($column);
-            if (!$implicit) {
+            if ($implicit) {
+                $incoming[] = $column;
+            } else {
                 $values[$column] = $value;
-                continue;
             }
-            $incoming[] = $column;
         }
 
         $readQualifier = '';

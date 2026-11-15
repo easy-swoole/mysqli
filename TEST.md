@@ -76,20 +76,11 @@ php tests/run.php --filter testPreparedInsertReportsInvalidColumnAndInvalidDataT
 
 文件：`tests/ConfigTest.php`
 
-- 接受 FastDb 风格的配置数组。
 - 验证主机、端口、超时和最大连接时间。
 - 验证 `compress` 压缩配置及 `toArray()` 输出。
-- 验证查询超时与连接超时独立赋值，未知字段（含旧别名 `maxConnectTim`）被忽略。
+- 验证查询超时与连接超时独立赋值，未知配置项会在赋值前被拒绝。
 - 验证默认值、getter/setter、`restore()`、SplBean 序列化及过滤行为。
 - Config 仅存储超时值，包括零值和负数；相关测试不再断言 Config 会拒绝这些值。
-
-### FastDb API 兼容
-
-文件：`tests/FastDbApiCompatibilityTest.php`
-
-- 验证 `mysqlClient()` 返回类型仅为协议 Connection 或 null。
-- FastDb 中存在但当前客户端不使用的额外配置不会造成异常。
-- 该测试不依赖 `easyswoole/fast-db` 包。
 
 ### 连接超时
 

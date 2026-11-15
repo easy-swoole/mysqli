@@ -23,7 +23,6 @@ final class Connection
 
     private PacketStream $stream;
     private SessionState $state;
-    private float $timeout;
     private bool $busy = false;
 
     public string $connect_error = '';
@@ -34,13 +33,12 @@ final class Connection
     public int|string $affected_rows = 0;
 
     /**
-     * 保存连接配置及默认操作超时。
+     * 保存连接配置并初始化传输及会话状态。
      */
     public function __construct(private readonly Config $config)
     {
         $this->stream = new PacketStream();
         $this->state = new SessionState();
-        $this->timeout = $config->getTimeout();
     }
 
     /**
@@ -81,7 +79,6 @@ final class Connection
             $this->stream->writePacket(chr(self::COM_QUERY) . $charsetSql, $deadline, 'charset');
             $this->readResponse($deadline, false, 'SET NAMES');
             $this->state->established();
-            $this->timeout = $this->config->getTimeout();
             return true;
         } catch (\Throwable $error) {
             $this->connect_errno = $error->getCode();
@@ -132,7 +129,7 @@ final class Connection
     /** 按行读取文本协议结果；结果流关闭前独占连接。 */
     public function iterate(string $sql, ?float $timeout = null): ResultStream
     {
-        return $this->iterateWithDeadline($sql, Deadline::after($timeout ?? $this->timeout));
+        return $this->iterateWithDeadline($sql, $this->resolveDeadline($timeout));
     }
 
     /** @internal 使用调用方的查询截止时间。 */
@@ -316,7 +313,7 @@ final class Connection
      */
     public function ping(): bool
     {
-        return $this->command(self::COM_PING, '', $this->timeout) === true;
+        return $this->command(self::COM_PING, '', null) === true;
     }
 
     /**
@@ -389,7 +386,7 @@ final class Connection
         if ($this->isConnected()) {
             try {
                 $this->stream->beginCommand();
-                $this->stream->writePacket(chr(self::COM_QUIT), Deadline::after(min(0.1, $this->timeout)), 'quit');
+                $this->stream->writePacket(chr(self::COM_QUIT), Deadline::after(min(0.1, $this->config->getTimeout())), 'quit');
             } catch (\Throwable) {
             }
         }
@@ -414,7 +411,7 @@ final class Connection
 
     private function resolveDeadline(Deadline|float|null $timeout): Deadline
     {
-        return $timeout instanceof Deadline ? $timeout : Deadline::after($timeout ?? $this->timeout);
+        return $timeout instanceof Deadline ? $timeout : Deadline::after($timeout ?? $this->config->getTimeout());
     }
 
     /** 缓冲和流式查询共用文本命令的检查和发包顺序。 */

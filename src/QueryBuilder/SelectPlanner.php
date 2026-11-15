@@ -60,7 +60,6 @@ final class SelectPlanner
     ): array {
         $select = new SqlBuffer('');
         $projection = $columns === null ? null : SelectCompiler::columns($columns, $select);
-        $table = $tableName;
         if ($fromSource !== null) {
             if ($tableName !== null) {
                 throw new \InvalidArgumentException('Use get(null) after fromSub(), or getFromSub()');
@@ -75,7 +74,7 @@ final class SelectPlanner
             if (!is_string($tableName) || trim($tableName) === '') {
                 throw new \InvalidArgumentException('SELECT requires a table or a FROM subquery');
             }
-            $tableSql = TableReference::parse($table, $prefix);
+            ['sql' => $tableSql, 'name' => $table] = TableReference::resolve($tableName, $prefix);
         }
         $select->sql = ' FROM ' . $tableSql . TableReference::indexHints($indexHints);
         $select->tableName = $table;
