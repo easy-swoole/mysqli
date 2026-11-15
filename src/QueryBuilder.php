@@ -78,6 +78,13 @@ class QueryBuilder
         return $this;
     }
 
+    /** 获取待构建查询的 LIMIT 条数。 */
+    public function getLimitRowCount(): ?int
+    {
+        $limit = $this->pending['limit'];
+        return is_array($limit) ? $limit[1] : $limit;
+    }
+
     /** 对所选列的组合去重，仅影响下一次构建的查询。 */
     public function distinct(bool $isDistinct = true): QueryBuilder
     {
@@ -543,6 +550,12 @@ class QueryBuilder
         return $this;
     }
 
+    /** 按当前表前缀解析可用于限定列名的表名或别名。 */
+    public function resolveTableTarget(string $tableName): ?string
+    {
+        return TableReference::resolve($tableName, $this->prefix)['target'];
+    }
+
     /** 统计结果行数 */
     public function withTotalCount(): QueryBuilder
     {
@@ -792,6 +805,12 @@ class QueryBuilder
         $this->pending['updateColumns'] = $updateColumns === null
             ? null : array_map($this->snapshotSubqueryValue(...), $updateColumns);
         return $this;
+    }
+
+    /** 获取待构建语句的重复键更新配置。 */
+    public function getDuplicateColumns(): ?array
+    {
+        return $this->pending['updateColumns'];
     }
 
     /** UPDATE 更新查询。 */

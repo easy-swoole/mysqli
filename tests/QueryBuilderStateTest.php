@@ -33,6 +33,49 @@ final class QueryBuilderStateTest extends TestCase
         self::assertNull($builder->reset()->getField());
     }
 
+    public function testLimitRowCountReadsPendingCountWithoutTheOffset(): void
+    {
+        $builder = new QueryBuilder();
+        self::assertNull($builder->getLimitRowCount());
+        self::assertSame(20, $builder->limit(20)->getLimitRowCount());
+        self::assertSame(1, $builder->limit(10, 1)->getLimitRowCount());
+        $builder->get('orders');
+        self::assertStringEndsWith('LIMIT 10, 1', $builder->getLastPrepareQuery());
+        self::assertNull($builder->getLimitRowCount());
+        self::assertSame(0, $builder->limit(0)->getLimitRowCount());
+        self::assertSame(0, $builder->limit(10, 0)->getLimitRowCount());
+        self::assertNull($builder->reset()->getLimitRowCount());
+    }
+
+    public function testDuplicateColumnsReadPendingConfiguration(): void
+    {
+        $builder = new QueryBuilder();
+        self::assertNull($builder->getDuplicateColumns());
+        self::assertSame([], $builder->onDuplicate([])->getDuplicateColumns());
+        self::assertNull($builder->onDuplicate(null)->getDuplicateColumns());
+
+        $configuration = ['name', 'status' => null, 'score' => QueryBuilder::inc()];
+        self::assertSame($configuration, $builder->onDuplicate($configuration)->getDuplicateColumns());
+        $builder->insert('orders', ['id' => 1, 'name' => 'new order']);
+        self::assertStringContainsString('ON DUPLICATE KEY UPDATE', $builder->getLastPrepareQuery());
+        self::assertNull($builder->getDuplicateColumns());
+        self::assertNull($builder->onDuplicate($configuration)->reset()->getDuplicateColumns());
+    }
+
+    public function testResolveTableTargetUsesTheCurrentPrefixAndAlias(): void
+    {
+        $builder = (new QueryBuilder())->setPrefix('shop.app_');
+        self::assertSame('`shop`.`app_orders`', $builder->resolveTableTarget('orders'));
+        self::assertSame('`archive`.`orders`', $builder->resolveTableTarget('archive.orders'));
+        self::assertSame('o', $builder->resolveTableTarget('orders o'));
+        self::assertSame('`order list`', $builder->resolveTableTarget('orders AS `order list`'));
+        self::assertNull($builder->resolveTableTarget('(SELECT 1 AS id) AS o'));
+        self::assertNull($builder->getLastPrepareQuery());
+        $builder->get('orders');
+        self::assertSame('`shop`.`app_orders`', $builder->resolveTableTarget('orders'));
+        self::assertSame('`shop`.`app_orders`', $builder->reset()->resolveTableTarget('orders'));
+    }
+
     public function testHasWhereOnlyReadsPendingWhereConditions(): void
     {
         $builder = new QueryBuilder();

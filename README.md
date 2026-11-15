@@ -691,6 +691,10 @@ $builder->onDuplicate([
 - 重复键更新仅用于 INSERT。与 REPLACE 组合会抛出 `InvalidArgumentException`。构建完成或 `reset()` 后，更新列设置自动清除。
 
 
+### `getDuplicateColumns(): ?array`
+
+读取待构建的重复键更新配置，保留列清单和显式赋值的键值结构。未配置或调用 `onDuplicate(null)` 时返回 `null`，显式传入 `[]` 时返回 `[]`。成功构建或 `reset()` 后返回 `null`。
+
 ### 通用调用规则
 
 - 先调用条件、排序、索引及锁方法，最后调用 `get()`、`getOne()`、`update()` 等构建方法，再交给 `$client->query($builder)` 执行。构建方法本身不访问数据库。
@@ -727,6 +731,14 @@ $builder->get('`archive`.`order`');
 - `fields()` 接受字符串、字段数组和 Expression；字符串中的表达式、空白和别名原样保留。用于 INSERT、REPLACE 或 UPDATE 的字段白名单时，传入要保留的原始列名。
 - 先调用 `setPrefix()`，再组装查询及 JOIN。前缀保留到显式更改，`reset()` 保留该设置。普通表名、已加反引号的表名及其别名均可使用。数据库限定表名按原数据库和表名引用。
 - 表名、字段表达式及原始 FROM 片段仍来自可信代码；表名前缀处理不是任意 SQL 的安全过滤器。需要带参数的派生表时使用 `fromSub()`。
+
+### `resolveTableTarget(string $tableName): ?string`
+
+用于限定列名。设置前缀 `app_` 后，`resolveTableTarget('orders')` 返回带反引号的 `app_orders`。有别名时返回别名并保留原有引用，例如 `orders AS o` 返回 `o`。派生表等无法解析限定名的表源返回 `null`。成功构建和 `reset()` 均保留表前缀。
+
+### `getLimitRowCount(): ?int`
+
+读取通过 `limit()` 设置的待构建条数。`limit(10, 1)` 返回 `1`，`limit(0)` 返回 `0`。未设置、成功构建后或显式 `reset()` 后返回 `null`。
 
 ### `getField(): ?array`：读取显式配置的字段
 
