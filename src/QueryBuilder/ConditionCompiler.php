@@ -25,7 +25,7 @@ final class ConditionCompiler
             return ' ' . $operator . ' ? ';
         }
         $type = get_class($value);
-        throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} cannot be {$type}");
+        throw new Exception("Condition value in table {$this->buffer->tableName} cannot be {$type}");
     }
 
     /**
@@ -77,7 +77,6 @@ final class ConditionCompiler
                 continue;
             }
             [$concat, $field, $operator, $value] = $cond;
-            $this->buffer->column = $field instanceof Expression ? $field->getSql() : $field;
             if ($field instanceof Expression) {
                 $this->buffer->bindAll($field->getParameters());
                 $field = $field->getSql();
@@ -106,7 +105,7 @@ final class ConditionCompiler
                 } else {
                     if ($conditionField !== null && !is_array($value)) {
                         $type = gettype($value);
-                        throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} must be array or object,{$type} given}");
+                        throw new Exception("Value for {$conditionField} in table {$this->buffer->tableName} must be an array or expression, {$type} given");
                     }
                     foreach ($value as $item) {
                         $comparison .= ' ?,';
@@ -127,7 +126,7 @@ final class ConditionCompiler
             default:
                 if ($conditionField !== null && ComparisonOperator::tryFrom($operatorType) !== null
                     && is_array($value) && strpos($conditionField, '?') === false) {
-                    throw new Exception("value for column {$this->buffer->column} in table {$this->buffer->tableName} can not be array");
+                    throw new Exception("Value for {$conditionField} in table {$this->buffer->tableName} cannot be an array");
                 }
                 if (is_array($value)) {
                     $this->buffer->bindAll($value);

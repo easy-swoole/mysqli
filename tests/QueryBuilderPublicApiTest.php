@@ -27,7 +27,7 @@ final class QueryBuilderPublicApiTest extends TestCase
         self::assertSame($builder, $builder->setPrefix('app_')->where('o.tenantId', 9)
             ->join($subquery, 'u.id=o.userId', 'LEFT')->orderByDesc('o.id')->get('orders o', 5));
         self::assertSame([true, 9], $builder->getLastBindParams());
-        self::assertStringContainsString('FROM app_orders o LEFT JOIN', $builder->getLastPrepareQuery());
+        self::assertStringContainsString('FROM `app_orders` o LEFT JOIN', $builder->getLastPrepareQuery());
         self::assertStringContainsString('ORDER BY o.id DESC', $builder->getLastPrepareQuery());
         $completedQuery = $builder->getLastPrepareQuery();
         $builder->where('new_condition', 1);

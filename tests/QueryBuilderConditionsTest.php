@@ -163,7 +163,7 @@ final class QueryBuilderConditionsTest extends TestCase
             ->joinOn('u', 'u.tenantId', 'o.tenantId')
             ->joinWhereGroup('u', static fn(QueryBuilder $q) => $q->where('u.status', 'active')->orWhere('u.status', 'staff'))
             ->where('o.tenantId', 7)->get('orders o');
-        self::assertStringContainsString('FROM app_orders o LEFT JOIN', $this->sql($builder));
+        self::assertStringContainsString('FROM `app_orders` o LEFT JOIN', $this->sql($builder));
         self::assertStringContainsString('AND `u`.`tenantId` = `o`.`tenantId` AND (u.status = ? OR u.status = ?)', $this->sql($builder));
         self::assertSame([1, 7, 'active', 'active', 'staff', 7], $builder->getLastBindParams());
     }

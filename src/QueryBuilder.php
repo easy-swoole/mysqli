@@ -1029,9 +1029,10 @@ class QueryBuilder
         }
         $reference = TableReference::resolve($tableName, $this->prefix);
         $state = $this->pending;
+        $allowedFields = $batch || $statement === 'DELETE' ? $fields : WriteCompiler::fieldKeys($state['fields']);
         $compiled = (new QueryCompiler())->compileWriteQuery(
             $statement, $reference, PendingQuery::parts($state), $state['queryOptions'],
-            $numRows ?? $state['limit'], $tableData, $fields ?? $state['fields'], $batch,
+            $numRows ?? $state['limit'], $tableData, $allowedFields, $batch,
             [$this->noBackslashEscapes, $this->ansiQuotes]
         );
         return $this->publishBuild($compiled);

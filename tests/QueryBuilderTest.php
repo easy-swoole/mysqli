@@ -126,7 +126,7 @@ final class QueryBuilderTest extends TestCase
         $copy->where('i.id', 70)->get('items i');
         $sql = $this->normalizedSql($copy);
         self::assertSame([10, 20, 30, 40, 70, 50, 60], $copy->getLastBindParams());
-        self::assertStringContainsString('SELECT DISTINCT ? AS marker FROM app_items i USE INDEX (`idx_status`)', $sql);
+        self::assertStringContainsString('SELECT DISTINCT ? AS marker FROM `app_items` i USE INDEX (`idx_status`)', $sql);
         self::assertStringContainsString('LEFT JOIN', $sql);
         self::assertStringContainsString('WHERE ( `i`.`status` = ? OR `i`.`score` = ? ) AND `i`.`id` = ?', $sql);
         self::assertStringContainsString('GROUP BY i.id HAVING (COUNT(*) > ?)', $sql);
@@ -179,7 +179,7 @@ final class QueryBuilderTest extends TestCase
     public function testUseAndIgnoreIndexesResetAndPreserveAliasAndPrefix(): void
     {
         $this->builder->setPrefix('app_')->useIndex(['idx_user', 'PRIMARY'])->ignoreIndex('idx_status')->get('items i');
-        self::assertSame('SELECT * FROM app_items i USE INDEX (`idx_user`, `PRIMARY`) IGNORE INDEX (`idx_status`)', $this->normalizedSql($this->builder));
+        self::assertSame('SELECT * FROM `app_items` i USE INDEX (`idx_user`, `PRIMARY`) IGNORE INDEX (`idx_status`)', $this->normalizedSql($this->builder));
         $this->builder->get('items');
         self::assertSame('SELECT * FROM `app_items`', $this->normalizedSql($this->builder));
         $this->builder->forceIndex('old')->forceIndex([])->useIndex('new')->get('items');
@@ -362,7 +362,7 @@ final class QueryBuilderTest extends TestCase
         $this->builder->setPrefix('app_')->forceIndex(['PRIMARY', 'idx`name'])
             ->join('users u', 'u.id = o.userId', 'LEFT')->get('order_mapping o');
         self::assertStringContainsString(
-            'FROM app_order_mapping o FORCE INDEX (`PRIMARY`, `idx``name`) LEFT JOIN',
+            'FROM `app_order_mapping` o FORCE INDEX (`PRIMARY`, `idx``name`) LEFT JOIN',
             $this->builder->getLastPrepareQuery()
         );
         self::assertSame([], $this->builder->getLastBindParams());

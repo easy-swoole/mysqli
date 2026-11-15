@@ -70,12 +70,14 @@ SQL, $builder->getLastQuery());
         return [
             ['users', '', '`users`'],
             ['users', 'app_', '`app_users`'],
-            ['users u', 'app_', 'app_users u'],
-            ['users AS u', 'app_', 'app_users AS u'],
+            ['users u', 'app_', '`app_users` u'],
+            ['users AS u', 'app_', '`app_users` AS u'],
+            ['users AS u', 'north-america_', '`north-america_users` AS u'],
             ['db.users', 'app_', '`db`.`users`'],
             ['db.users u', 'app_', 'db.users u'],
             ['users', 'db.', '`db`.`users`'],
-            ['users u', 'db.app_', 'db.app_users u'],
+            ['users u', 'db.app_', '`db`.`app_users` u'],
+            ['users AS u', 'tenant-store.app_', '`tenant-store`.`app_users` AS u'],
             ['`users`', 'db.app_', '`db`.`app_users`'],
             ['`order`', 'app_', '`app_order`'],
             ['`user``data`', 'app_', '`app_user``data`'],
@@ -87,7 +89,7 @@ SQL, $builder->getLastQuery());
             ['`event.log`', 'app_', '`app_event.log`'],
             ['(SELECT 1 AS id) u', 'app_', '(SELECT 1 AS id) u'],
             ["JSON_TABLE('[1]', '$[*]' COLUMNS(id INT PATH '$')) j", 'app_', "JSON_TABLE('[1]', '$[*]' COLUMNS(id INT PATH '$')) j"],
-            ['users FORCE INDEX (idx_user)', 'app_', 'app_users FORCE INDEX (idx_user)'],
+            ['users FORCE INDEX (idx_user)', 'app_', '`app_users` FORCE INDEX (idx_user)'],
             ['`users` FORCE INDEX (idx_user)', 'app_', '`app_users` FORCE INDEX (idx_user)'],
             ['`db`.`users` PARTITION (p0) u', 'app_', '`db`.`users` PARTITION (p0) u'],
         ];
@@ -172,7 +174,7 @@ SQL, $builder->getLastQuery());
             ->joinWhere('archive.orders o', 'o.status', 'closed')
             ->delete('users AS `target user`');
         self::assertSame(
-            'DELETE `target user` FROM app_users AS `target user` JOIN archive.orders o on (o.user_id=`target user`.id) AND o.status = ?',
+            'DELETE `target user` FROM `app_users` AS `target user` JOIN archive.orders o on (o.user_id=`target user`.id) AND o.status = ?',
             $this->sql($builder)
         );
         self::assertSame(['closed'], $builder->getLastBindParams());
@@ -183,7 +185,7 @@ SQL, $builder->getLastQuery());
         $builder = (new QueryBuilder())->setPrefix('app_')
             ->fields('`u`.`tenant$id`')->groupBy('`u`.`tenant$id`')->orderByAsc('`u`.`tenant$id`')->get('users u');
         self::assertSame(
-            'SELECT `u`.`tenant$id` FROM app_users u GROUP BY `u`.`tenant$id` ORDER BY `u`.`tenant$id` ASC',
+            'SELECT `u`.`tenant$id` FROM `app_users` u GROUP BY `u`.`tenant$id` ORDER BY `u`.`tenant$id` ASC',
             $this->sql($builder)
         );
     }

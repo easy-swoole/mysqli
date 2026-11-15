@@ -26,7 +26,7 @@ final class QueryBuilderUpsertTest extends TestCase
     {
         $rows = [['id' => 1, 'name' => 'Ada']];
         $builder = (new QueryBuilder())->setPrefix('app.__mysqli_')->upsert('new PARTITION (p0)', $rows, ['name']);
-        self::assertSame('INSERT  INTO app.__mysqli_new PARTITION (p0) (`id`, `name`)  VALUES (?, ?) AS `__mysqli_new_row` ON DUPLICATE KEY UPDATE `name` = `__mysqli_new_row`.`name`', $builder->getLastPrepareQuery());
+        self::assertSame('INSERT  INTO `app`.`__mysqli_new` PARTITION (p0) (`id`, `name`)  VALUES (?, ?) AS `__mysqli_new_row` ON DUPLICATE KEY UPDATE `name` = `__mysqli_new_row`.`name`', $builder->getLastPrepareQuery());
         self::assertSame([1, 'Ada'], $builder->getLastBindParams());
     }
 
@@ -290,11 +290,12 @@ final class QueryBuilderUpsertTest extends TestCase
 
     public function testWhitelistPreservesFirstRowFieldOrderNullExpressionsAndOuterRowOrder(): void
     {
-        $q = (new QueryBuilder())->onDuplicate(['name' => new Expression('UPPER(?)', ['fixed'])])
+        $q = (new QueryBuilder())->fields(['name', 'id', 'discard_a'])
+            ->onDuplicate(['name' => new Expression('UPPER(?)', ['fixed'])])
             ->insertAll('users', [
                 'first' => ['id' => 1, 'discard_a' => 'a', 'name' => null],
                 'second' => ['name' => new Expression('CONCAT(?, ?)', ['a', 'b']), 'discard_b' => 'b', 'id' => 2],
-            ], ['field' => ['name', 'id']]);
+            ], ['field' => ['name', 'id', 'discard_b']]);
         self::assertSame('INSERT  INTO `users` (`id`, `name`)  VALUES (?, ?),(?, CONCAT(?, ?)) ON DUPLICATE KEY UPDATE `name` = UPPER(?)', $q->getLastPrepareQuery());
         self::assertSame([1, null, 2, 'a', 'b', 'fixed'], $q->getLastBindParams());
 

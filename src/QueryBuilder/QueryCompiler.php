@@ -176,6 +176,7 @@ final class QueryCompiler
      * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
      * @param array{sql: string, name: string, target: ?string, baseName: ?string} $table
      * @param array{bool, bool} $quoteMode
+     * @param array<string, true>|null $fields
      */
     public function compileWriteQuery(
         string $statement,
@@ -193,7 +194,10 @@ final class QueryCompiler
         return CompiledQuery::fromBuffer($buffer, $options, null, $quoteMode);
     }
 
-    /** @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement */
+    /**
+     * @param 'INSERT'|'REPLACE'|'UPDATE'|'DELETE' $statement
+     * @param array<string, true>|null $fields
+     */
     public function compileWrite(
         SqlBuffer $buffer,
         QueryParts $parts,

@@ -135,6 +135,21 @@ SQL;
         self::assertSame([['name'=>'Bobby']],$this->client->query((new QueryBuilder())->where('id',2)->get('qb_fix_orders',null,'name')));
     }
 
+    public function testPrefixedTablesWithAliasesAndIndexHintsUseQuotedIdentifiers(): void
+    {
+        $this->client->rawQuery('CREATE TEMPORARY TABLE `qb-fix_orders` (id INT PRIMARY KEY, userId INT, score INT)');
+        $this->client->rawQuery('CREATE TEMPORARY TABLE `qb-fix_users` (id INT PRIMARY KEY)');
+        $this->client->rawQuery('INSERT INTO `qb-fix_orders` VALUES (1, 7, 10)');
+        $this->client->rawQuery('INSERT INTO `qb-fix_users` VALUES (7)');
+
+        $builder = (new QueryBuilder())->setPrefix('qb-fix_');
+        $builder->where('o.id', 1)->update('orders AS o', ['o.score' => 20]);
+        self::assertTrue($this->client->query($builder));
+        $builder->join('users AS u', 'u.id = o.userId')->forceIndex('PRIMARY')
+            ->where('o.id', 1)->get('orders AS o', null, ['o.score', 'u.id AS userId']);
+        self::assertSame([['score' => 20, 'userId' => 7]], $this->client->query($builder));
+    }
+
     public function testCountsHandlePlainJoinDistinctGroupsAndUnion(): void
     {
         $builder=(new QueryBuilder())->join('qb_fix_users u','u.tenantId=o.tenantId','INNER')->count('qb_fix_orders o');

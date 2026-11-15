@@ -733,6 +733,7 @@ $builder->get('`archive`.`order`');
 - `fields()` 接受字符串、字段数组和 Expression；字符串中的表达式、空白和别名原样保留。用于 INSERT、REPLACE 或 UPDATE 的字段白名单时，传入要保留的原始列名。
 - 先调用 `setPrefix()`，再组装查询及 JOIN。前缀保留到显式更改，`reset()` 保留该设置。普通表名、已加反引号的表名及其别名均可使用。数据库限定表名按原数据库和表名引用。
 - 表名、字段表达式及原始 FROM 片段仍来自可信代码；表名前缀处理不是任意 SQL 的安全过滤器。需要带参数的派生表时使用 `fromSub()`。
+- 加前缀后的表名按标识符引用，别名和索引提示写在引用之外。
 
 ### `resolveTableTarget(string $tableName): ?string`
 

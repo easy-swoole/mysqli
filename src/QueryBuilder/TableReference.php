@@ -43,9 +43,9 @@ final class TableReference
                 $quoted = implode('.', array_map([self::class, 'identifier'], $parts));
             }
             $suffix = $match['suffix'] ?? '';
-            $hasQuotes = str_contains($match['table'], '`');
-            $name = ($hasQuotes ? $quoted : ($unqualified ? $prefix . $match['table'] : $match['table'])) . $suffix;
-            $sql = $suffix !== '' || (!$quoteBare && !$hasQuotes) ? $name : $quoted;
+            $useQuotedName = ($unqualified && $prefix !== '') || str_contains($match['table'], '`');
+            $name = ($useQuotedName ? $quoted : $match['table']) . $suffix;
+            $sql = $suffix !== '' || !$quoteBare ? $name : $quoted;
             return ['sql' => $sql, 'name' => $name, 'target' => self::alias($suffix, $identifier) ?? $quoted,
                 'baseName' => $baseName];
         }

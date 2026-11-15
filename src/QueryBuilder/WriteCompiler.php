@@ -11,7 +11,7 @@ final class WriteCompiler
 {
     public function __construct(private readonly SqlBuffer $buffer) {}
 
-    /** @return array{statement: 'INSERT'|'REPLACE', fields: ?array} */
+    /** @return array{statement: 'INSERT'|'REPLACE', fields: array<string, true>|null} */
     public static function batchOptions(mixed $options, ?array $selectedFields): array
     {
         if (!is_array($options)) {
@@ -22,20 +22,20 @@ final class WriteCompiler
             throw new \InvalidArgumentException('Unknown batch insert option: ' . array_key_first($unknown));
         }
         $options += ['replace' => false];
-        $fields = null;
+        $fields = self::fieldKeys($selectedFields);
         if (array_key_exists('field', $options)) {
-            $fields = $options['field'];
-            if (!is_array($fields)) {
+            if (!is_array($options['field'])) {
                 throw new \TypeError('Batch insert field option must be an array of column names');
             }
-            foreach ($fields as $field) {
+            $requested = [];
+            foreach ($options['field'] as $field) {
                 if (!is_string($field)) {
                     throw new \TypeError('Batch insert field option must contain only strings');
                 }
+                $requested[$field] = true;
             }
-            if ($selectedFields !== null) {
-                $fields = array_filter($fields, static fn(string $field): bool => in_array($field, $selectedFields, true));
-            }
+            $fields = $fields === null ? array_filter($requested, 'is_string', ARRAY_FILTER_USE_KEY)
+                : array_intersect_key($fields, $requested);
         }
         if (!is_bool($options['replace'])) {
             throw new \TypeError('Batch insert replace option must be a boolean');
@@ -44,19 +44,18 @@ final class WriteCompiler
     }
 
     /** @return array{array<string, string>, \Generator} */
-    private static function prepareBatch(mixed $rows, ?array $fields): array
+    private static function prepareBatch(mixed $rows, ?array $allowed): array
     {
-        $rows = self::batchRows($rows, $fields);
+        $rows = self::batchRows($rows, $allowed);
         $columns = self::insertReferences($rows->current());
         return [$columns, self::alignedRows($rows, $columns)];
     }
 
-    private static function batchRows(mixed $rows, ?array $fields): \Generator
+    private static function batchRows(mixed $rows, ?array $allowed): \Generator
     {
         if (!is_array($rows) || $rows === []) {
             throw new \InvalidArgumentException('Batch insert requires a non-empty array of associative rows');
         }
-        $allowed = self::fieldKeys($fields);
         foreach ($rows as $row) {
             if (!is_array($row) || $row === []) {
                 throw new \InvalidArgumentException('Every batch row must be a non-empty associative array');
@@ -87,9 +86,9 @@ final class WriteCompiler
         }
     }
 
-    public function appendUpdate(array $tableData, ?array $fields): void
+    public function appendUpdate(array $tableData, ?array $allowed): void
     {
-        $row = self::filterRow($tableData, self::fieldKeys($fields));
+        $row = self::filterRow($tableData, $allowed);
         if ($row === []) {
             throw new \InvalidArgumentException('UPDATE requires at least one assignment');
         }
@@ -102,12 +101,12 @@ final class WriteCompiler
     }
 
     /** 单行和批量插入共用列映射、VALUES 和重复键赋值。 */
-    public function appendInsert(array $tableData, ?array $fields, bool $batch, ?array $updateColumns): void
+    public function appendInsert(array $tableData, ?array $allowed, bool $batch, ?array $updateColumns): void
     {
         if (self::isBatch($tableData, $batch)) {
-            [$columns, $rows] = self::prepareBatch($tableData, $fields);
+            [$columns, $rows] = self::prepareBatch($tableData, $allowed);
         } else {
-            $row = self::filterRow($tableData, self::fieldKeys($fields));
+            $row = self::filterRow($tableData, $allowed);
             $columns = self::insertReferences($row);
             $rows = [$row];
         }
@@ -132,7 +131,8 @@ final class WriteCompiler
         return $batch || (is_int($first) && is_array($tableData[$first]));
     }
 
-    private static function fieldKeys(?array $fields): ?array
+    /** @return array<string, true>|null */
+    public static function fieldKeys(?array $fields): ?array
     {
         if ($fields === null) {
             return null;

@@ -5,7 +5,6 @@ namespace EasySwoole\Mysqli\QueryBuilder;
 /** @internal 保存单次编译的 SQL 及按顺序排列的参数。 */
 final class SqlBuffer
 {
-    public ?string $column = null;
     public ?string $baseTableName = null;
     public bool $unionOperandNeedsParentheses = true;
 
