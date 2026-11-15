@@ -77,7 +77,7 @@ final class PaginationTest extends TestCase
         self::assertCount(2, $this->queries);
     }
 
-    public function testPaginationCompilesCountWithoutDispatchingToSubclassMethods(): void
+    public function testPaginationUsesTheSameGetScopeForCountAndData(): void
     {
         $template = new class extends QueryBuilder {
             public static array $calls = [];
@@ -97,6 +97,7 @@ final class PaginationTest extends TestCase
             public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
             {
                 self::$calls[] = 'get';
+                $this->where('tenantId', 9);
                 return parent::get($tableName, $numRows, $columns);
             }
 
@@ -108,11 +109,15 @@ final class PaginationTest extends TestCase
         };
         $client = $this->client([[['__mysqli_total' => 1]], [['id' => 3]]]);
         self::assertSame(1, $client->paginate($template, 'orders')['total']);
-        self::assertSame(['clone', 'clone', 'get'], $template::$calls);
-        self::assertSame([7], $this->queries[0][1]);
-        self::assertSame([7], $this->queries[1][1]);
+        self::assertSame(['clone', 'get'], $template::$calls);
+        foreach ($this->queries as [$sql, $parameters]) {
+            self::assertStringContainsString('`tenantId` = ?', $sql);
+            self::assertSame([7, 9], $parameters);
+        }
+        self::assertFalse($template->hasWhere());
+        self::assertNull($template->getLastCompiledQuery());
         $template->count('orders');
-        self::assertSame(['clone', 'clone', 'get', 'count'], $template::$calls);
+        self::assertSame(['clone', 'get', 'count'], $template::$calls);
     }
 
     public function testPaginationBuildsBothQueriesBeforeTheFirstCanChangeTheTemplate(): void

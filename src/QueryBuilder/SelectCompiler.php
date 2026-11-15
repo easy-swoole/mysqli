@@ -147,12 +147,12 @@ final class SelectCompiler
     }
 
     /** @return array{0: string, 1: array{field: string, direction: string, params: list<scalar|null>}} */
-    public static function order(mixed $orderByField, mixed $orderbyDirection, mixed $customFieldsOrRegExp, mixed $tableName): array
+    public static function order(mixed $orderByField, mixed $orderbyDirection, mixed $customFieldsOrRegExp): array
     {
         $orderbyDirection = $orderbyDirection instanceof SortDirection ? $orderbyDirection->value : strtoupper(trim($orderbyDirection));
         $direction = SortDirection::tryFrom($orderbyDirection);
         if ($direction === null) {
-            throw new Exception("Wrong order direction: {$orderbyDirection} for column {$orderByField} in table {$tableName}");
+            throw new Exception("Wrong order direction: {$orderbyDirection} for column {$orderByField}");
         }
         $orderParams = [];
         if (is_array($customFieldsOrRegExp)) {
@@ -171,7 +171,7 @@ final class SelectCompiler
             $orderParams = [$customFieldsOrRegExp];
             $orderByField .= ' REGEXP ?';
         } elseif ($customFieldsOrRegExp !== null) {
-            throw new Exception("Wrong custom field or Regular Expression: {$customFieldsOrRegExp} for column {$orderByField} in table {$tableName}");
+            throw new Exception("Wrong custom field or Regular Expression: {$customFieldsOrRegExp} for column {$orderByField}");
         }
         // 浮点键使用原始双精度字节，并用数组与普通字符串参数区分。
         $keyParams = array_map(static fn($value) => is_float($value) ? [pack('E', $value)] : $value, $orderParams);

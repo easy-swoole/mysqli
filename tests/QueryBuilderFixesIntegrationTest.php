@@ -354,6 +354,24 @@ SQL;
         self::assertNull($builder->getLastPrepareQuery());
     }
 
+    public function testPaginationCountsOnlyRowsWithinTheGetScope(): void
+    {
+        $builder = new class extends QueryBuilder {
+            public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
+            {
+                $this->where('tenantId', 1);
+                return parent::get($tableName, $numRows, $columns ?? ['id']);
+            }
+        };
+        $builder->orderByAsc('id');
+        self::assertSame(['items' => [['id' => 2]], 'total' => 2, 'page' => 2, 'perPage' => 1, 'lastPage' => 2],
+            $this->client->paginate($builder, 'qb_fix_orders', perPage: 1, page: 2));
+        self::assertSame(['items' => [], 'total' => 2, 'page' => 3, 'perPage' => 1, 'lastPage' => 2],
+            $this->client->paginate($builder, 'qb_fix_orders', perPage: 1, page: 3));
+        self::assertFalse($builder->hasWhere());
+        self::assertNull($builder->getLastCompiledQuery());
+    }
+
     public function testPaginationCountsOnlyTheLatestOrdersSelectedByTheSubquery(): void
     {
         $latest = (new QueryBuilder())->where('score', 10, '>=')->orderByDesc('id')->get('qb_fix_orders', 2);

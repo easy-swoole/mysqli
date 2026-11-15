@@ -10,6 +10,7 @@ use EasySwoole\Mysqli\Protocol\Connection;
 use EasySwoole\Mysqli\Protocol\Deadline;
 use EasySwoole\Mysqli\Protocol\Statement;
 use EasySwoole\Mysqli\Protocol\ResultStream;
+use EasySwoole\Mysqli\QueryBuilder\CompiledQuery;
 
 class Client
 {
@@ -59,12 +60,11 @@ class Client
      */
     public function query(QueryBuilder $builder,?float $timeout = null): bool|array
     {
-        return $this->queryWithin($builder, $timeout);
+        return $this->queryWithin($builder->getLastCompiledQuery(), $timeout);
     }
 
-    private function queryWithin(QueryBuilder $builder, Deadline|float|null $timeout): bool|array
+    private function queryWithin(?CompiledQuery $query, Deadline|float|null $timeout): bool|array
     {
-        $query = $builder->getLastCompiledQuery();
         if ($this->isTableLock($query?->transactionOp)) {
             return $this->rawQuery($query->sql, $timeout instanceof Deadline ? $timeout->remaining() : $timeout);
         }
@@ -114,10 +114,7 @@ class Client
     {
         $offset = \EasySwoole\Mysqli\QueryBuilder\Pagination::offset($perPage, $page);
         $deadline = $this->queryDeadline($timeout);
-        $data = clone $query;
-        // 两条语句先构建完，避免查询回调或协程切换改变分页条件。
-        $countQuery = $query->countQuery($table, '__mysqli_total');
-        $dataQuery = $data->limit($offset, $perPage)->get($table);
+        [$countQuery, $dataQuery] = $query->compilePage($table, $offset, $perPage, '__mysqli_total');
         $counts = $this->queryWithin($countQuery, $deadline);
         $items = $this->queryWithin($dataQuery, $deadline);
         return \EasySwoole\Mysqli\QueryBuilder\Pagination::result($items, $counts[0]['__mysqli_total'], $perPage, $page);

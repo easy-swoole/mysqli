@@ -13,14 +13,14 @@ use EasySwoole\Mysqli\QueryBuilder;
 final class SelectPlanner
 {
     /** @return array{sql: string, params: array, alias: string} */
-    public static function fromSub(?string $sql, array $parameters, string $alias): array
+    public static function fromSub(?CompiledQuery $query, string $alias): array
     {
-        if ($sql === null || preg_match('/\A\s*(?:SELECT\b|WITH\b|\()/i', $sql) !== 1) {
+        if ($query === null || preg_match('/\A\s*(?:SELECT\b|WITH\b|\()/i', $query->sql) !== 1) {
             throw new \InvalidArgumentException('FROM requires a built SELECT query');
         }
         $quotedAlias = TableReference::identifier($alias);
-        return ['sql' => SqlList::parenthesized($sql) . ' AS ' . $quotedAlias,
-            'params' => array_map(static fn($value) => $value, $parameters), 'alias' => $alias];
+        return ['sql' => SqlList::parenthesized($query->sql) . ' AS ' . $quotedAlias,
+            'params' => $query->parameters, 'alias' => $alias];
     }
 
     /**

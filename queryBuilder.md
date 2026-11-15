@@ -566,7 +566,6 @@ $total = $client->query($counter)[0]['total'];
 
 - 忽略外层 ORDER BY、LIMIT 和行锁。子查询和 UNION 分支保留各自的 ORDER BY、LIMIT 和绑定参数。外层投影、WHERE、JOIN 和 HAVING 的参数仍按 SQL 顺序绑定。
 - 计数内层 SELECT 省略 `SQL_BUFFER_RESULT`、`HIGH_PRIORITY` 和 `SQL_CALC_FOUND_ROWS`。分页的当前页查询沿用正常 SELECT 的选项。
- 分页的当前页查询沿用正常 SELECT 的选项。
 - 方法构建 COUNT SQL 并返回 Builder，不直接返回数字；默认结果列名为 `aggregate`。想保留待构建模板时先 `clone`，使用 FROM 子查询时 `$tableName` 传 `null`。
 - 计数内层是 MySQL 派生表，每个结果列名都必须唯一。请用 `fields()` 显式选列，并为同名列指定不同的别名。通配符由 MySQL 展开。
 - 自定义 `$alias` 是 COUNT 的结果列名，按标识符引用。
@@ -1062,12 +1061,13 @@ $page = $client->paginate($template, 'orders', perPage: 20, page: 2, timeout: 3.
 // ['items' => [...], 'total' => 42, 'page' => 2, 'perPage' => 20, 'lastPage' => 3]
 ```
 
-- 在独立副本上先构建 COUNT 和当前页语句，再依次执行。两条语句的 SQL 和参数在首次查询前确定。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
+- 在同一个模板副本上先构建 COUNT 和当前页语句，再依次执行。两条语句共享 `get()` 最终使用的表、投影和筛选条件。COUNT 采用 `count()` 的结果集行数规则，带 FROM 子查询时将 `$table` 传 `null`。
+- 子类可在 `get()` 中添加公共筛选，再调用并返回 `parent::get()` 的构建结果。分页会把这些筛选同时用于 COUNT 和数据页。
 - JOIN 分页在查询模板上用 `fields()` 显式选列。同名列分别起别名，确保 `items` 能按列名取到各自的值。
 - `$page`、`$perPage` 必须为正整数，偏移超出 PHP 整数范围时报错；页码从 1 开始，不自动调整超出末页的请求。`total = 0` 时 `lastPage = 1`。
 - `total` 和 `lastPage` 超过 PHP_INT_MAX 时返回十进制字符串，保留大数精度；业务不要强制转换为 int 或 float。
 - 页码和偏移只在入口校验一次，计数直接按组件生成的 COUNT 结果读取，不重复审查结果结构。
-- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。两条 SQL 分别在模板副本上构建，COUNT 使用配置好的投影和条件。分页直接使用 Client 的内部执行流程。
+- COUNT 和当前页查询共用一次总超时预算，涵盖预处理、执行、读取和清理。分页直接使用 Client 的内部执行流程。
 - 两次查询不会自动开启事务。需要相同数据快照时，由调用方在同一个 Client 上开启并结束适当事务；否则并发写入可能使 total 与 items 对应不同时间点。
 - 使用包含唯一键的稳定排序。深页仍使用 OFFSET；客户端最后的影响行数是当前页查询的行数，不是 total。
 

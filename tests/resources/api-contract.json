@@ -6981,15 +6981,6 @@
                             "hasDefault": false,
                             "default": null,
                             "type": null
-                        },
-                        {
-                            "name": "tableName",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null,
-                            "type": null
                         }
                     ],
                     "returnType": [

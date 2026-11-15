@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace EasySwoole\Mysqli\Tests;
 
 use EasySwoole\Mysqli\{Expression, QueryBuilder};
-use EasySwoole\Mysqli\QueryBuilder\{SelectPlanner, SqlBuffer};
+use EasySwoole\Mysqli\QueryBuilder\{CompiledQuery, SelectPlanner, SqlBuffer};
 use PHPUnit\Framework\TestCase;
 
 final class SelectPlannerTest extends TestCase
@@ -13,7 +13,8 @@ final class SelectPlannerTest extends TestCase
     public function testFromSubSnapshotsReferencedValues(): void
     {
         $value = 7;
-        $source = SelectPlanner::fromSub('SELECT ? AS id', [&$value], 'odd`.alias');
+        $query = (new QueryBuilder())->raw('SELECT ? AS id', [&$value])->getLastCompiledQuery();
+        $source = SelectPlanner::fromSub($query, 'odd`.alias');
         $value = 99;
         self::assertSame(['sql' => '(SELECT ? AS id) AS `odd``.alias`',
             'params' => [7], 'alias' => 'odd`.alias'], $source);
@@ -23,7 +24,8 @@ final class SelectPlannerTest extends TestCase
     {
         foreach ([[null, 's'], ['UPDATE users SET id=1', 's'], ['SELECT 1', ''], ['SELECT 1', "bad\0alias"]] as [$sql, $alias]) {
             $error = null;
-            try { SelectPlanner::fromSub($sql, [], $alias); }
+            $query = $sql === null ? null : new CompiledQuery($sql, [], [], null);
+            try { SelectPlanner::fromSub($query, $alias); }
             catch (\InvalidArgumentException $caught) { $error = $caught; }
             self::assertNotNull($error);
         }
@@ -42,7 +44,7 @@ final class SelectPlannerTest extends TestCase
 
     public function testFromSourceParametersFollowSelectedExpressionsWithoutApplyingOuterPrefix(): void
     {
-        $source = SelectPlanner::fromSub('SELECT ? AS id', [2], 's');
+        $source = SelectPlanner::fromSub(new CompiledQuery('SELECT ? AS id', [2], [], null), 's');
         [$body, $projection] = SelectPlanner::selectBody(null, [new Expression('? AS marker', [1]), 's.id'], 'outer_', $source,
             ['FORCE' => [], 'USE' => [], 'IGNORE' => []]);
         self::assertSame(' FROM (SELECT ? AS id) AS `s`', $body->sql);

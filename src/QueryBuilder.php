@@ -41,6 +41,8 @@ class QueryBuilder
     private ?CompiledQuery $readyToPublish = null;
     // 调试读取先于可重写的 reset()，并保留最近一次成功构建。
     private ?CompiledQuery $lastBuilt = null;
+    /** @var (\Closure(QueryBuilder, CompiledQuery, mixed, mixed): void)|null */
+    private ?\Closure $capturePage = null;
 
     const TS_OP_START = 1;
     const TS_OP_COMMIT = 2;
@@ -267,7 +269,7 @@ class QueryBuilder
     /** ORDER BY 排序条件。 */
     public function orderBy(mixed $orderByField, SortDirection|string $orderbyDirection = "DESC", mixed $customFieldsOrRegExp = null): QueryBuilder
     {
-        [$key, $order] = SelectCompiler::order($orderByField, $orderbyDirection, $customFieldsOrRegExp, $this->pending['tableName']);
+        [$key, $order] = SelectCompiler::order($orderByField, $orderbyDirection, $customFieldsOrRegExp);
         $this->pending['ordering'][$key] = $order;
         return $this;
     }
@@ -401,12 +403,12 @@ class QueryBuilder
             throw new \TypeError('UNION ALL flag must be a boolean');
         }
         if ($cond instanceof QueryBuilder) {
-            $sql = $cond->getLastPrepareQuery();
-            if ($sql === null) {
+            $query = $cond->getLastCompiledQuery();
+            if ($query === null) {
                 throw new \InvalidArgumentException('UNION requires a built query');
             }
-            $this->pending['unionBranches'][] = [$sql, $cond->getLastBindParams(), $isUnionAll,
-                $cond->compiled?->unionOperandNeedsParentheses ?? true];
+            $this->pending['unionBranches'][] = [$query->sql, $query->parameters, $isUnionAll,
+                $query->unionOperandNeedsParentheses];
         } else {
             if (!is_string($cond)) {
                 throw new \TypeError('UNION requires a QueryBuilder or SQL string');
@@ -475,7 +477,7 @@ class QueryBuilder
     {
         $mode = $method instanceof TableLockMode ? $method : TableLockMode::tryFrom(strtoupper($method));
         if ($mode === null) {
-            throw new Exception("Bad lock type: Can be either READ or WRITE for table {$this->pending['tableName']}");
+            throw new Exception('Bad lock type: Can be either READ or WRITE');
         }
         $this->tableLockMethod = $mode->value;
         return $this;
@@ -514,7 +516,7 @@ class QueryBuilder
         foreach ($options as $option) {
             $option = strtoupper($option);
             if (!QueryCompiler::knowsOption($option)) {
-                throw new Exception('Wrong query option: ' . $option . " for table {$this->pending['tableName']}");
+                throw new Exception('Wrong query option: ' . $option);
             }
             $normalized[] = $option;
         }
@@ -562,9 +564,7 @@ class QueryBuilder
     /** 保存带参数的 FROM 子查询快照；使用 get(null) 或 getFromSub() 完成查询。 */
     public function fromSub(QueryBuilder $subquery, string $alias): QueryBuilder
     {
-        $this->pending['fromSource'] = SelectPlanner::fromSub(
-            $subquery->getLastPrepareQuery(), $subquery->getLastBindParams(), $alias
-        );
+        $this->pending['fromSource'] = SelectPlanner::fromSub($subquery->getLastCompiledQuery(), $alias);
         return $this;
     }
 
@@ -577,7 +577,11 @@ class QueryBuilder
     public function get(mixed $tableName, mixed $numRows = null, mixed $columns = null): QueryBuilder
     {
         $this->readyToPublish = null;
-        return $this->publishBuild($this->compileSelect($tableName, $numRows, $columns));
+        $capturePage = $this->capturePage;
+        $this->capturePage = null;
+        $query = $this->compileSelect($tableName, $numRows, $columns);
+        $capturePage?->__invoke($this, $query, $tableName, $columns);
+        return $this->publishBuild($query);
     }
 
     /** 统计筛选结果的行数或分组数，忽略整体排序、分页和锁。 */
@@ -590,6 +594,31 @@ class QueryBuilder
     public function countQuery(?string $table, string $alias): QueryBuilder
     {
         return (clone $this)->buildCount($table, $alias);
+    }
+
+    /**
+     * @internal 在同一次 get() 编译中取得分页的计数和数据语句。
+     * @return array{CompiledQuery, CompiledQuery}
+     */
+    final public function compilePage(?string $table, int $offset, int $perPage, string $alias): array
+    {
+        $quotedAlias = TableReference::identifier($alias);
+        $page = clone $this;
+        $queries = null;
+        // 在 get() 已应用子类筛选、且尚未通过 reset() 清空状态时构建 COUNT。
+        $page->capturePage = static function (QueryBuilder $builder, CompiledQuery $data, mixed $tableName, mixed $columns)
+            use (&$queries, $quotedAlias): void {
+            $queries = [$builder->compileSelect($tableName, columns: $columns, quotedCountAlias: $quotedAlias), $data];
+        };
+        try {
+            $data = $page->limit($offset, $perPage)->get($table)->compiled;
+        } finally {
+            $page->capturePage = null;
+        }
+        if ($queries === null || $queries[1] !== $data) {
+            throw new \LogicException('Pagination requires the SELECT built by QueryBuilder::get()');
+        }
+        return $queries;
     }
 
     /** 构建聚合 SELECT；UNION 整体聚合应先使用 fromSub()。 */
@@ -1010,10 +1039,6 @@ class QueryBuilder
             $state['fromSource'], ['FORCE' => $state['forceIndexes'],
                 'USE' => $state['useIndexes'], 'IGNORE' => $state['ignoreIndexes']],
         );
-        if ($quotedCountAlias === null) {
-            $this->pending['tableName'] = $buffer->tableName;
-        }
-
         return (new QueryCompiler())->compileSelect(
             $buffer, PendingQuery::parts($state), $projection, $state['queryOptions'],
             $numRows ?? $state['limit'], [$this->noBackslashEscapes, $this->ansiQuotes], $quotedCountAlias,
@@ -1040,11 +1065,7 @@ class QueryBuilder
             throw new \LogicException('A subquery builder cannot build ' . $operation);
         }
         $this->readyToPublish = null;
-        if ($statement !== 'DELETE') {
-            $this->pending['tableName'] = $tableName;
-        }
         $reference = TableReference::resolve($tableName, $this->prefix);
-        $this->pending['tableName'] = $reference['name'];
         $state = $this->pending;
         $compiled = (new QueryCompiler())->compileWriteQuery(
             $statement, $reference, PendingQuery::parts($state), $state['queryOptions'],
