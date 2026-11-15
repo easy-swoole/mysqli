@@ -87,7 +87,7 @@ final class QueryCompiler
     ): array {
         $conditions = new ConditionCompiler($buffer);
         $select = new SelectCompiler($buffer, $conditions);
-        $beforeUnionAndTail = $this->appendSelectBody($buffer, $parts, $select, $conditions, !$includeData);
+        $this->appendSelectBody($parts, $select, $conditions);
         // 计数在追加外层排序、分页和行锁之前生成。
         $count = $quotedCountAlias === null ? null
             : $this->compileCount($buffer, $parts, $projection, $options, $quoteMode, $quotedCountAlias);
@@ -95,37 +95,24 @@ final class QueryCompiler
             return [$count, null];
         }
 
-        $operation = $this->appendSelectTail($buffer, $parts, $select, $numRows, $beforeUnionAndTail);
+        $operation = $this->appendSelectTail($buffer, $parts, $select, $numRows);
         $buffer->sql = self::selectHead($projection ?? '*', $options) . $buffer->sql;
         return [$count, CompiledQuery::fromBuffer($buffer, $options, $operation, $quoteMode)];
     }
 
     private function appendSelectBody(
-        SqlBuffer $buffer,
         QueryParts $parts,
         SelectCompiler $select,
         ConditionCompiler $conditions,
-        bool $countOnly,
-    ): int {
+    ): void {
         if ($parts->updateColumns !== null && $parts->updateColumns !== []) {
             throw new \InvalidArgumentException('ON DUPLICATE KEY UPDATE requires INSERT');
         }
-        if (!$countOnly) {
-            if ($parts->forUpdate && $parts->lockInShareMode) {
-                throw new \InvalidArgumentException('FOR UPDATE and LOCK IN SHARE MODE cannot be combined');
-            }
-            if ($parts->unions !== [] && ($parts->forUpdate || $parts->lockInShareMode)) {
-                throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
-            }
-        }
-
         $select->appendJoins($parts->joins);
         $conditions->append('WHERE', $parts->where);
         $select->appendGroups($parts->groups);
         $conditions->append('HAVING', $parts->having);
-        $beforeUnionAndTail = strlen($buffer->sql);
         $select->appendUnions($parts->unions);
-        return $beforeUnionAndTail;
     }
 
     private function appendSelectTail(
@@ -133,8 +120,13 @@ final class QueryCompiler
         QueryParts $parts,
         SelectCompiler $select,
         mixed $numRows,
-        int $beforeUnionAndTail,
     ): ?int {
+        if ($parts->forUpdate && $parts->lockInShareMode) {
+            throw new \InvalidArgumentException('FOR UPDATE and LOCK IN SHARE MODE cannot be combined');
+        }
+        if ($parts->unions !== [] && ($parts->forUpdate || $parts->lockInShareMode)) {
+            throw new \InvalidArgumentException('UNION row locks must be set on individual query branches');
+        }
         $select->appendOrder($parts->ordering);
         $select->appendLimit($numRows);
         $operation = null;
@@ -148,7 +140,8 @@ final class QueryCompiler
             $buffer->sql .= ' LOCK IN SHARE MODE';
             $operation = QueryBuilder::TS_OP_LOCK_IN_SHARE;
         }
-        $buffer->unionOperandNeedsParentheses = strlen($buffer->sql) !== $beforeUnionAndTail;
+        $buffer->unionOperandNeedsParentheses = $parts->unions !== [] || $parts->ordering !== []
+            || $numRows !== null || $operation !== null;
         return $operation;
     }
 

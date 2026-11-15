@@ -139,7 +139,6 @@ final class Connection
     public function iterateWithDeadline(string $sql, Deadline $deadline): ResultStream
     {
         return $this->startStream(function () use ($sql, $deadline): void {
-            $this->assertSupportedSql($sql);
             $this->writeTextCommand(self::COM_QUERY, $sql, $deadline);
         }, $deadline, false, $sql);
     }
@@ -404,11 +403,7 @@ final class Connection
     private function command(int $command, string $payload, Deadline|float|null $timeout, ?TransactionCompletionFlags $completion = null): array|bool
     {
         return $this->guard(function () use ($command, $payload, $timeout, $completion): array|bool {
-            if ($command === self::COM_QUERY) {
-                $this->assertSupportedSql($payload);
-            }
-            $deadline = $this->resolveDeadline($timeout);
-            $this->writeTextCommand($command, $payload, $deadline);
+            $deadline = $this->writeTextCommand($command, $payload, $timeout);
             $result = $this->readResponse($deadline, false, $payload);
             if ($completion?->releasesConnection()) {
                 $this->invalidateConnection(true);
@@ -422,13 +417,18 @@ final class Connection
         return $timeout instanceof Deadline ? $timeout : Deadline::after($timeout ?? $this->timeout);
     }
 
-    /** 缓冲和流式查询共用文本命令的发包顺序。 */
-    private function writeTextCommand(int $command, string $payload, Deadline $deadline): void
+    /** 缓冲和流式查询共用文本命令的检查和发包顺序。 */
+    private function writeTextCommand(int $command, string $payload, Deadline|float|null $timeout): Deadline
     {
+        if ($command === self::COM_QUERY) {
+            $this->assertSupportedSql($payload);
+        }
+        $deadline = $this->resolveDeadline($timeout);
         $this->requireConnected();
         $this->resetMetadata();
         $this->stream->beginCommand();
         $this->stream->writePacket(chr($command) . $payload, $deadline, 'query');
+        return $deadline;
     }
 
     /** 拒绝以 CALL 开头的语句。 */
